@@ -12,7 +12,7 @@ build() {
   target="$output/$os-$arch/manifold"
   mkdir -p "$(dirname "$target")"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
-    -trimpath -ldflags="-s -w -X main.version=$version" \
+    -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$version" \
     -o "$target" "$source_dir"
 }
 
