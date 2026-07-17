@@ -32,7 +32,7 @@ openapi-check: web
 skill-check:
 	python3 scripts/validate-skill.py skills/manifold
 	go test ./skills/manifold/cmd/manifold
-	skills/manifold/scripts/manifold --version
+	sh skills/manifold/scripts/manifold --version
 
 integration:
 	scripts/integration.sh

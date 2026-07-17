@@ -15,8 +15,12 @@ case "$os" in
 esac
 
 binary="$root/bin/$os-$arch/manifold"
-if [ ! -x "$binary" ]; then
+if [ ! -f "$binary" ]; then
   echo "Manifold CLI: bundled binary is missing for $os-$arch" >&2
+  exit 2
+fi
+if [ ! -x "$binary" ] && ! chmod u+x "$binary"; then
+  echo "Manifold CLI: cannot make the bundled $os-$arch binary executable" >&2
   exit 2
 fi
 exec "$binary" "$@"

@@ -5,7 +5,7 @@ description: Work with a self-hosted Manifold knowledge and memory service throu
 
 # Manifold
 
-Use the bundled `scripts/manifold` launcher for deterministic API calls. It selects a self-contained native binary shipped inside this skill; the user does not need Python, Go, Node.js, or another language runtime.
+Use the bundled launcher as `sh scripts/manifold` for deterministic API calls. It selects a self-contained native binary shipped inside this skill and repairs executable permissions lost by ZIP-based installers; the user does not need Python, Go, Node.js, or another language runtime.
 
 The CLI connects to any network-reachable Manifold deployment and reads:
 
@@ -26,18 +26,18 @@ Never print the key, put it in command arguments, or copy it into notes. The CLI
 ## Commands
 
 ```bash
-scripts/manifold status
-scripts/manifold tree
-scripts/manifold read agent-memory
-scripts/manifold write --id agent-memory --title "Agent memory" --file memory.md
-scripts/manifold search "What did we decide about retention?"
-scripts/manifold context --token-budget 2500 "Retention decision"
-scripts/manifold history agent-memory
-scripts/manifold jobs
-scripts/manifold graph customer-acme
-scripts/manifold conflicts
-scripts/manifold rename-preview document:old-slug:new-slug
-scripts/manifold rename-apply d5vqh9idc6b5u5sctq00
+sh scripts/manifold status
+sh scripts/manifold tree
+sh scripts/manifold read agent-memory
+sh scripts/manifold write --id agent-memory --title "Agent memory" --file memory.md
+sh scripts/manifold search "What did we decide about retention?"
+sh scripts/manifold context --token-budget 2500 "Retention decision"
+sh scripts/manifold history agent-memory
+sh scripts/manifold jobs
+sh scripts/manifold graph customer-acme
+sh scripts/manifold conflicts
+sh scripts/manifold rename-preview document:old-slug:new-slug
+sh scripts/manifold rename-apply d5vqh9idc6b5u5sctq00
 ```
 
 Add `--json` before the command when another program needs the unmodified response.
