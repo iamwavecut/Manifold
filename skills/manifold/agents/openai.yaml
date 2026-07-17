@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manifold"
+  short_description: "Use any remote Manifold knowledge service"
+  default_prompt: "Use $manifold to work with my remote Manifold instance through its REST API."

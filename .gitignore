@@ -1,0 +1,9 @@
+.DS_Store
+.env
+/bin/
+/coverage/
+/node_modules/
+/web/dist/*.map
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m)
+case "$arch" in
+  x86_64|amd64) arch=amd64 ;;
+  arm64|aarch64) arch=arm64 ;;
+  *) echo "Manifold CLI: unsupported architecture $arch" >&2; exit 2 ;;
+esac
+case "$os" in
+  darwin|linux) ;;
+  *) echo "Manifold CLI: unsupported operating system $os" >&2; exit 2 ;;
+esac
+
+binary="$root/bin/$os-$arch/manifold"
+if [ ! -x "$binary" ]; then
+  echo "Manifold CLI: bundled binary is missing for $os-$arch" >&2
+  exit 2
+fi
+exec "$binary" "$@"

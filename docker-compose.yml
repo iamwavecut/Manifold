@@ -1,0 +1,134 @@
+name: manifold
+
+services:
+  manifold:
+    build:
+      context: .
+      args:
+        VERSION: ${MANIFOLD_VERSION:-dev}
+    restart: unless-stopped
+    init: true
+    environment:
+      MANIFOLD_ADDR: :8080
+      MANIFOLD_DB_PATH: /var/lib/manifold/manifold.db
+      MANIFOLD_PUBLIC_URL: ${MANIFOLD_PUBLIC_URL:-http://localhost:8080}
+      MANIFOLD_BOOTSTRAP_API_KEY: ${MANIFOLD_BOOTSTRAP_API_KEY:?set MANIFOLD_BOOTSTRAP_API_KEY}
+      MANIFOLD_LOG_LEVEL: ${MANIFOLD_LOG_LEVEL:-info}
+      MANIFOLD_MAX_BODY_BYTES: ${MANIFOLD_MAX_BODY_BYTES:-5242880}
+      OPENVIKING_URL: http://openviking:1933
+      OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
+      BRAIN_URL: http://brain:3000
+      BRAIN_API_KEY: ${BRAIN_API_KEY:?set BRAIN_API_KEY}
+    ports:
+      - "${MANIFOLD_PORT:-8080}:8080"
+    volumes:
+      - manifold-data:/var/lib/manifold
+    depends_on:
+      openviking:
+        condition: service_healthy
+      brain:
+        condition: service_healthy
+    networks:
+      - private
+      - edge
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  openviking:
+    image: ghcr.io/volcengine/openviking:v0.4.10@sha256:0cf1c6fc75214a2b093b3a8e5df6c8dc2e6b1802c60dee25b5285ac28dbdc988
+    restart: unless-stopped
+    init: true
+    environment:
+      OPENVIKING_CONFIG_FILE: /app/.openviking/ov.conf
+      OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
+    volumes:
+      - ./deploy/openviking/ov.conf:/app/.openviking/ov.conf:ro
+      - openviking-data:/app/.openviking/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1933/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+
+  brain:
+    build:
+      context: .
+      dockerfile: deploy/brain/Dockerfile
+      args:
+        BRAIN_REF: v0.8.1
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      PORT: 3000
+      SURREALDB_URL: ws://surrealdb:8000
+      SURREALDB_USERNAME: ${SURREALDB_USERNAME:-root}
+      SURREALDB_PASSWORD: ${SURREALDB_PASSWORD:?set SURREALDB_PASSWORD}
+      SURREALDB_NAMESPACE: manifold
+      SURREALDB_SCOPED_USER: brain_caller
+      SURREALDB_SCOPED_PASS: ${SURREALDB_SCOPED_PASS:?set SURREALDB_SCOPED_PASS}
+      BRAIN_BASELINES_DIR: /app/.cache/baselines
+      BRAIN_API_KEYS: ${BRAIN_API_KEYS_JSON:?set BRAIN_API_KEYS_JSON}
+      FORGET_HMAC_KEY: ${FORGET_HMAC_KEY:?set FORGET_HMAC_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
+      DOCUMENT_INGEST_ENABLED: "1"
+    volumes:
+      - brain-cache:/app/.cache
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+
+  surrealdb:
+    image: surrealdb/surrealdb:v3.1.5
+    restart: unless-stopped
+    user: root
+    command:
+      - start
+      - --user=${SURREALDB_USERNAME:-root}
+      - --pass=${SURREALDB_PASSWORD:?set SURREALDB_PASSWORD}
+      - --bind=0.0.0.0:8000
+      - rocksdb:/data/db
+    volumes:
+      - surrealdb-data:/data/db
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "/surreal", "is-ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+networks:
+  edge:
+  private:
+    internal: true
+
+volumes:
+  manifold-data:
+  openviking-data:
+  brain-cache:
+  surrealdb-data:

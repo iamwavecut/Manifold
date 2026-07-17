@@ -1,0 +1,18 @@
+{
+  "name": "@iamwavecut/manifold-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild web/src/main.ts --bundle --minify --sourcemap --target=es2022 --outfile=web/dist/app.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "mithril": "2.3.8"
+  },
+  "devDependencies": {
+    "@types/mithril": "2.2.7",
+    "esbuild": "0.28.1",
+    "typescript": "6.0.2"
+  }
+}

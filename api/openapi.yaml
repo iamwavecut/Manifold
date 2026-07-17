@@ -1,0 +1,5152 @@
+components:
+  schemas:
+    APIKey:
+      additionalProperties: false
+      properties:
+        capabilities:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+      required:
+        - id
+        - capabilities
+        - created_at
+      type: object
+    Blocker:
+      additionalProperties: false
+      properties:
+        location:
+          type: string
+        reason:
+          type: string
+        resource:
+          type: string
+      required:
+        - resource
+        - reason
+      type: object
+    Build-contextRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Build-contextRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        graph_depth:
+          default: 2
+          format: int64
+          maximum: 5
+          minimum: 0
+          type: integer
+        include_history:
+          type: boolean
+        query:
+          maxLength: 8000
+          minLength: 1
+          type: string
+        scope:
+          maxLength: 512
+          type: string
+        source_types:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        token_budget:
+          default: 4000
+          format: int64
+          maximum: 50000
+          minimum: 50
+          type: integer
+      required:
+        - query
+        - token_budget
+      type: object
+    Conflict:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Conflict.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        fact_a_id:
+          type: string
+        fact_b_id:
+          type: string
+        id:
+          type: string
+        resolution:
+          type: string
+        status:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - fact_a_id
+        - fact_b_id
+        - status
+        - created_at
+        - updated_at
+      type: object
+    Create-api-keyRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-api-keyRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        capabilities:
+          items:
+            type: string
+          maxItems: 7
+          minItems: 1
+          type:
+            - array
+            - "null"
+        id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+      required:
+        - id
+        - capabilities
+      type: object
+    Create-entityRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-entityRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        kind:
+          maxLength: 80
+          minLength: 1
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        name:
+          maxLength: 240
+          minLength: 1
+          type: string
+      required:
+        - name
+        - kind
+      type: object
+    Create-factRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-factRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        confidence:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        entity_id:
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        object:
+          maxLength: 2000
+          minLength: 1
+          type: string
+        predicate:
+          maxLength: 256
+          minLength: 1
+          type: string
+        source_document_id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        source_revision:
+          pattern: ^r[1-9][0-9]*$
+          type: string
+        valid_from:
+          format: date-time
+          type: string
+        valid_until:
+          format: date-time
+          type: string
+      required:
+        - entity_id
+        - predicate
+        - object
+      type: object
+    Create-relationRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-relationRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        confidence:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        from_entity_id:
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        predicate:
+          maxLength: 256
+          minLength: 1
+          type: string
+        to_entity_id:
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+      required:
+        - from_entity_id
+        - to_entity_id
+        - predicate
+      type: object
+    Create-rename-planRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-rename-planRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        operations:
+          items:
+            $ref: "#/components/schemas/RenameOperation"
+          maxItems: 100
+          minItems: 1
+          type:
+            - array
+            - "null"
+      required:
+        - operations
+      type: object
+    Create-ui-sessionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-ui-sessionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        api_key:
+          maxLength: 512
+          minLength: 16
+          type: string
+      required:
+        - api_key
+      type: object
+    Create-ui-sessionResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Create-ui-sessionResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        capabilities:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        csrf_token:
+          type: string
+        expires_at:
+          type: string
+      required:
+        - csrf_token
+        - capabilities
+        - expires_at
+      type: object
+    CreateDocumentRequestBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateDocumentRequestBody.json
+          format: uri
+          readOnly: true
+          type: string
+        content:
+          maxLength: 5000000
+          type: string
+        folder_id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        format:
+          default: markdown
+          enum:
+            - markdown
+            - text
+            - json
+            - yaml
+            - toml
+            - javascript
+            - typescript
+            - python
+          type: string
+        id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        tags:
+          items:
+            type: string
+          maxItems: 64
+          type:
+            - array
+            - "null"
+        title:
+          maxLength: 240
+          minLength: 1
+          type: string
+      required:
+        - title
+        - content
+      type: object
+    CreateFolderRequestBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateFolderRequestBody.json
+          format: uri
+          readOnly: true
+          type: string
+        id:
+          description: Optional semantic slug. Generated from name when omitted.
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        name:
+          maxLength: 160
+          minLength: 1
+          type: string
+        parent_id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        summary:
+          maxLength: 4000
+          type: string
+      required:
+        - name
+      type: object
+    CreateFolderResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateFolderResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        folder:
+          $ref: "#/components/schemas/Folder"
+      required:
+        - folder
+      type: object
+    CreateKeyResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateKeyResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        key:
+          $ref: "#/components/schemas/APIKey"
+        secret:
+          description: Shown once. Store it securely; Manifold only persists an Argon2id hash.
+          type: string
+      required:
+        - key
+        - secret
+      type: object
+    Document:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Document.json
+          format: uri
+          readOnly: true
+          type: string
+        content:
+          type: string
+        content_hash:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        etag:
+          type: string
+        folder_id:
+          type: string
+        format:
+          type: string
+        id:
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        revision:
+          type: string
+        status:
+          type: string
+        tags:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        title:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - title
+        - format
+        - content_hash
+        - revision
+        - status
+        - etag
+        - created_at
+        - updated_at
+      type: object
+    DocumentAccepted:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentAccepted.json
+          format: uri
+          readOnly: true
+          type: string
+        document:
+          $ref: "#/components/schemas/Document"
+        job:
+          $ref: "#/components/schemas/Job"
+      required:
+        - document
+        - job
+      type: object
+    Entity:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Entity.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        name:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - kind
+        - created_at
+        - updated_at
+      type: object
+    Error:
+      additionalProperties: false
+      examples:
+        - code: cannot_revoke_current_key
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/cannot_revoke_current_key
+          remediation:
+            steps:
+              - Create a second admin key.
+              - Use it to revoke the original key.
+            summary: Authenticate with another administrator key.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          title: cannot revoke current key
+          type: http://localhost:8080/errors/cannot_revoke_current_key
+        - code: csrf_failed
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/csrf_failed
+          remediation:
+            steps:
+              - Create a new UI session if needed.
+              - Send its csrf_token in X-CSRF-Token.
+            summary: Use the CSRF token paired with the current browser session.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 403
+          title: csrf failed
+          type: http://localhost:8080/errors/csrf_failed
+        - code: dependency_unavailable
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/dependency_unavailable
+          remediation:
+            steps:
+              - Inspect /api/v1/status.
+              - Fix provider or network configuration.
+              - Retry the failed job.
+            summary: Restore the named dependency and retry.
+          request_id: d5vqh9idc6b5u5sctq00
+          retry_after: 30s
+          retryable: true
+          status: 503
+          title: dependency unavailable
+          type: http://localhost:8080/errors/dependency_unavailable
+        - code: error_code_not_found
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/error_code_not_found
+          remediation:
+            steps:
+              - Read the original response code field.
+              - Open documentation_url from that response.
+            summary: Use a code returned by a Manifold error response.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 404
+          title: error code not found
+          type: http://localhost:8080/errors/error_code_not_found
+        - code: etag_mismatch
+          current_etag: "\"v3\""
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/etag_mismatch
+          remediation:
+            steps:
+              - GET the resource.
+              - Apply the intended change to the latest state.
+              - Send its ETag in If-Match.
+            summary: Refresh the resource before retrying the update.
+          request_id: d5vqh9idc6b5u5sctq00
+          resource: /api/v1/documents/agent-memory
+          retryable: false
+          status: 409
+          title: etag mismatch
+          type: http://localhost:8080/errors/etag_mismatch
+        - code: idempotency_key_reused
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/idempotency_key_reused
+          remediation:
+            steps:
+              - Keep the original request unchanged when retrying.
+              - Use a new Idempotency-Key for corrected or different mutation content.
+            summary: Use the original key only for an exact replay.
+          request_id: d5vqh9idc6b5u5sctq00
+          resource: /api/v1/documents
+          retryable: false
+          status: 409
+          title: idempotency key reused
+          type: http://localhost:8080/errors/idempotency_key_reused
+        - code: internal_error
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/internal_error
+          remediation:
+            steps:
+              - Inspect the related job if one exists.
+              - Search structured logs by request_id.
+              - Retry only when the mutation outcome is known.
+            summary: Report request_id to the operator before repeating a mutation.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 500
+          title: internal error
+          type: http://localhost:8080/errors/internal_error
+        - code: invalid_api_key
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/invalid_api_key
+          remediation:
+            steps:
+              - "Use Authorization: Bearer <key>."
+              - Ask an administrator to replace a revoked key.
+            summary: Send a valid Manifold API key.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 401
+          title: invalid api key
+          type: http://localhost:8080/errors/invalid_api_key
+        - code: invalid_request
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/invalid_request
+          remediation:
+            steps:
+              - Send valid JSON.
+              - "Use Content-Type: application/json for JSON bodies."
+            summary: Correct the request syntax or content type.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 400
+          title: invalid request
+          type: http://localhost:8080/errors/invalid_request
+          violations:
+            - code: required
+              expected: a non-empty string, for example "Agent memory"
+              message: Title is required.
+              pointer: /body/title
+        - allowed_states:
+            - failed
+            - partially_ready
+          code: invalid_state_transition
+          current_state: ready
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/invalid_state_transition
+          remediation:
+            steps:
+              - Inspect current_state and allowed_states.
+              - Wait for an active job or select an allowed transition.
+            summary: Perform an action allowed by the current state.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          title: invalid state transition
+          type: http://localhost:8080/errors/invalid_state_transition
+        - code: job_failed
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/job_failed
+          job: /api/v1/jobs/d5vqh9idc6b5u5sctq00
+          remediation:
+            steps:
+              - GET the job.
+              - Follow error.remediation.
+              - POST the retry endpoint after correcting the cause.
+            summary: Inspect the job error, correct the cause, and retry the job.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 500
+          title: job failed
+          type: http://localhost:8080/errors/job_failed
+        - code: missing_capability
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/missing_capability
+          remediation:
+            steps:
+              - Inspect required_capabilities.
+              - Ask an administrator to create a suitable key.
+            summary: Use a key with all required capabilities.
+          request_id: d5vqh9idc6b5u5sctq00
+          required_capabilities:
+            - write_documents
+          retryable: false
+          status: 403
+          title: missing capability
+          type: http://localhost:8080/errors/missing_capability
+        - code: request_failed
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/request_failed
+          remediation:
+            steps:
+              - Search structured logs by request_id.
+              - Retry only when remediation is complete.
+            summary: Inspect request_id and correct the reported server-side cause.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 500
+          title: request failed
+          type: http://localhost:8080/errors/request_failed
+        - code: resource_not_found
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/resource_not_found
+          meta:
+            renamed_to: new-slug
+            requested_slug: old-slug
+            resource_type: document
+          remediation:
+            steps:
+              - List the relevant resource type.
+              - Check for a recent rename.
+            summary: Use an existing canonical slug or XID.
+          request_id: d5vqh9idc6b5u5sctq00
+          resource: /api/v1/documents/old-slug
+          retryable: false
+          status: 404
+          title: resource not found
+          type: http://localhost:8080/errors/resource_not_found
+        - code: slug_taken
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/slug_taken
+          remediation:
+            steps:
+              - Read suggested_slug.
+              - Retry with that slug and a new Idempotency-Key.
+            summary: Choose the suggested available slug or another unused slug.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          suggested_slug: agent-memory-2
+          title: slug taken
+          type: http://localhost:8080/errors/slug_taken
+        - code: stale_rename_plan
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/stale_rename_plan
+          remediation:
+            steps:
+              - POST the same operations to /api/v1/rename-plans.
+              - Review the new preview.
+              - Apply the new plan XID.
+            summary: Create a new rename preview.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          title: stale rename plan
+          type: http://localhost:8080/errors/stale_rename_plan
+        - code: state_conflict
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/state_conflict
+          remediation:
+            steps:
+              - Read the latest resource.
+              - Choose a non-conflicting operation.
+              - Retry with a new Idempotency-Key.
+            summary: Refresh the resource and retry without conflicting with its current state.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          title: state conflict
+          type: http://localhost:8080/errors/state_conflict
+        - code: storage_unavailable
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/storage_unavailable
+          remediation:
+            steps:
+              - Check /ready.
+              - Check volume permissions and free space.
+              - Retry after readiness is restored.
+            summary: Restore access to the SQLite data volume before retrying.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: true
+          status: 503
+          title: storage unavailable
+          type: http://localhost:8080/errors/storage_unavailable
+        - blockers:
+            - location: archive@r2
+              reason: Binary content cannot be safely rewritten.
+              resource: documents/archive
+          code: unrewritable_reference
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/unrewritable_reference
+          remediation:
+            steps:
+              - Inspect blockers.
+              - Replace the binary asset with a rewritable text source or edit it externally.
+              - Create a new preview.
+            summary: Remove or convert every blocking binary reference.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          title: unrewritable reference
+          type: http://localhost:8080/errors/unrewritable_reference
+        - code: validation_failed
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/validation_failed
+          remediation:
+            steps:
+              - Use each JSON Pointer to locate the invalid value.
+              - Match the expected constraint shown in the violation.
+            summary: Correct every violation before retrying.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 422
+          title: validation failed
+          type: http://localhost:8080/errors/validation_failed
+          violations:
+            - code: required
+              expected: a non-empty string, for example "Agent memory"
+              message: Title is required.
+              pointer: /body/title
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Error.json
+          format: uri
+          readOnly: true
+          type: string
+        allowed_states:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        blockers:
+          items:
+            $ref: "#/components/schemas/Blocker"
+          type:
+            - array
+            - "null"
+        code:
+          description: Stable machine-readable semantic error code. Never infer behavior from detail.
+          type: string
+        current_etag:
+          type: string
+        current_state:
+          type: string
+        detail:
+          type: string
+        documentation_url:
+          type: string
+        instance:
+          type: string
+        job:
+          type: string
+        meta:
+          additionalProperties: {}
+          type: object
+        remediation:
+          $ref: "#/components/schemas/Remediation"
+        request_id:
+          description: XID used to correlate the response with structured logs.
+          pattern: ^[0-9a-v]{20}$
+          type: string
+        required_capabilities:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        resource:
+          type: string
+        retry_after:
+          type: string
+        retryable:
+          type: boolean
+        status:
+          format: int64
+          type: integer
+        suggested_slug:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        violations:
+          items:
+            $ref: "#/components/schemas/Violation"
+          type:
+            - array
+            - "null"
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - code
+        - request_id
+        - retryable
+        - remediation
+        - documentation_url
+      type: object
+    Fact:
+      additionalProperties: false
+      properties:
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        entity_id:
+          type: string
+        id:
+          type: string
+        object:
+          type: string
+        origin:
+          type: string
+        predicate:
+          type: string
+        source_document_id:
+          type: string
+        source_revision:
+          type: string
+        status:
+          type: string
+        valid_from:
+          format: date-time
+          type: string
+        valid_until:
+          format: date-time
+          type: string
+      required:
+        - id
+        - entity_id
+        - predicate
+        - object
+        - origin
+        - status
+        - confidence
+        - valid_from
+        - created_at
+      type: object
+    Find-graph-pathRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Find-graph-pathRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        from_entity_id:
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        max_depth:
+          default: 4
+          format: int64
+          maximum: 8
+          minimum: 1
+          type: integer
+        to_entity_id:
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+      required:
+        - from_entity_id
+        - to_entity_id
+      type: object
+    Folder:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Folder.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        etag:
+          type: string
+        id:
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        name:
+          type: string
+        parent_id:
+          type: string
+        path:
+          type: string
+        summary:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - path
+        - etag
+        - created_at
+        - updated_at
+      type: object
+    Import-documentsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Import-documentsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        documents:
+          items:
+            $ref: "#/components/schemas/Item"
+          maxItems: 100
+          minItems: 1
+          type:
+            - array
+            - "null"
+      required:
+        - documents
+      type: object
+    Item:
+      additionalProperties: false
+      properties:
+        content:
+          maxLength: 5000000
+          type: string
+        folder_id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        format:
+          default: markdown
+          enum:
+            - markdown
+            - text
+            - json
+            - yaml
+            - toml
+            - javascript
+            - typescript
+            - python
+          type: string
+        id:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        tags:
+          items:
+            type: string
+          maxItems: 64
+          type:
+            - array
+            - "null"
+        title:
+          maxLength: 240
+          minLength: 1
+          type: string
+      required:
+        - title
+        - content
+      type: object
+    Job:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Job.json
+          format: uri
+          readOnly: true
+          type: string
+        attempts:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        error:
+          $ref: "#/components/schemas/Error"
+        finished_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        resource_id:
+          type: string
+        resource_type:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        status:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - kind
+        - resource_type
+        - resource_id
+        - status
+        - attempts
+        - created_at
+        - updated_at
+      type: object
+    PageAPIKey:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageAPIKey.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/APIKey"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageConflict:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageConflict.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Conflict"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageDocument:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageDocument.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Document"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageEntity:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageEntity.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Entity"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageFact:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageFact.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Fact"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageFolder:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageFolder.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Folder"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageJob:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageJob.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Job"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageRelation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageRelation.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Relation"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageRevision:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageRevision.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Revision"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    PageSource:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PageSource.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Source"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
+    Relation:
+      additionalProperties: false
+      properties:
+        confidence:
+          format: double
+          type: number
+        created_at:
+          format: date-time
+          type: string
+        from_entity_id:
+          type: string
+        id:
+          type: string
+        origin:
+          type: string
+        predicate:
+          type: string
+        status:
+          type: string
+        to_entity_id:
+          type: string
+      required:
+        - id
+        - from_entity_id
+        - to_entity_id
+        - predicate
+        - origin
+        - status
+        - confidence
+        - created_at
+      type: object
+    Remediation:
+      additionalProperties: false
+      properties:
+        steps:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        summary:
+          type: string
+      required:
+        - summary
+      type: object
+    RenameOperation:
+      additionalProperties: false
+      properties:
+        from:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        resource_type:
+          enum:
+            - folder
+            - document
+            - entity
+            - api_key
+          type: string
+        to:
+          maxLength: 63
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+      required:
+        - resource_type
+        - from
+        - to
+      type: object
+    RenamePlan:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RenamePlan.json
+          format: uri
+          readOnly: true
+          type: string
+        applied_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        error:
+          $ref: "#/components/schemas/Error"
+        id:
+          type: string
+        preview:
+          $ref: "#/components/schemas/RenamePreview"
+        status:
+          type: string
+      required:
+        - id
+        - status
+        - preview
+        - created_at
+      type: object
+    RenamePreview:
+      additionalProperties: false
+      properties:
+        blockers:
+          items:
+            $ref: "#/components/schemas/Blocker"
+          type:
+            - array
+            - "null"
+        conflicts:
+          items:
+            $ref: "#/components/schemas/Blocker"
+          type:
+            - array
+            - "null"
+        operations:
+          items:
+            $ref: "#/components/schemas/RenameOperation"
+          type:
+            - array
+            - "null"
+        replacements:
+          items:
+            $ref: "#/components/schemas/TextReplacement"
+          type:
+            - array
+            - "null"
+        state_version:
+          format: int64
+          type: integer
+        structured_references:
+          format: int64
+          type: integer
+      required:
+        - operations
+        - replacements
+        - structured_references
+        - state_version
+      type: object
+    Resolve-conflictRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Resolve-conflictRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        resolution:
+          maxLength: 1000
+          minLength: 1
+          type: string
+      required:
+        - resolution
+      type: object
+    Revision:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Revision.json
+          format: uri
+          readOnly: true
+          type: string
+        content:
+          type: string
+        content_hash:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        document_id:
+          type: string
+        revision:
+          type: string
+        snapshot_oid:
+          type: string
+      required:
+        - document_id
+        - revision
+        - content
+        - content_hash
+        - created_at
+      type: object
+    SearchHit:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        provenance:
+          items:
+            $ref: "#/components/schemas/Source"
+          type:
+            - array
+            - "null"
+        revision:
+          type: string
+        score:
+          format: double
+          type: number
+        snippet:
+          type: string
+        source:
+          type: string
+        title:
+          type: string
+      required:
+        - kind
+        - id
+        - title
+        - score
+        - source
+      type: object
+    SearchInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        include_history:
+          type: boolean
+        limit:
+          default: 10
+          format: int64
+          maximum: 100
+          minimum: 1
+          type: integer
+        mode:
+          default: hybrid
+          enum:
+            - hybrid
+            - semantic
+            - lexical
+            - graph
+          type: string
+        query:
+          maxLength: 8000
+          minLength: 1
+          type: string
+        scope:
+          maxLength: 512
+          type: string
+      required:
+        - query
+      type: object
+    SearchResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        degraded_dependencies:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        items:
+          items:
+            $ref: "#/components/schemas/SearchHit"
+          type:
+            - array
+            - "null"
+      required:
+        - items
+      type: object
+    Source:
+      additionalProperties: false
+      properties:
+        confidence:
+          format: double
+          type: number
+        document_id:
+          type: string
+        excerpt:
+          type: string
+        heading:
+          type: string
+        id:
+          type: string
+        ingested_at:
+          format: date-time
+          type: string
+        method:
+          type: string
+        revision:
+          type: string
+      required:
+        - id
+        - document_id
+        - revision
+        - method
+        - confidence
+        - ingested_at
+      type: object
+    TextReplacement:
+      additionalProperties: false
+      properties:
+        document_id:
+          type: string
+        occurrences:
+          format: int64
+          type: integer
+        revision:
+          type: string
+      required:
+        - document_id
+        - revision
+        - occurrences
+      type: object
+    Update-documentRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Update-documentRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        content:
+          maxLength: 5000000
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        tags:
+          items:
+            type: string
+          maxItems: 64
+          type:
+            - array
+            - "null"
+        title:
+          maxLength: 240
+          type: string
+      required:
+        - content
+      type: object
+    Violation:
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        expected: {}
+        message:
+          type: string
+        pointer:
+          type: string
+        received: {}
+      required:
+        - pointer
+        - code
+        - message
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: Manifold API key
+      description: A Manifold API key with the capabilities required by the operation.
+      scheme: bearer
+      type: http
+info:
+  description: A self-hosted knowledge and memory layer for AI agents.
+  title: Manifold API
+  version: 0.1.0
+openapi: 3.1.0
+paths:
+  /api/v1/api-keys:
+    get:
+      operationId: list-api-keys
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageAPIKey"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List API-key records
+      tags:
+        - Authentication
+    post:
+      operationId: create-api-key
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Create-api-keyRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateKeyResponse"
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create an API key
+      tags:
+        - Authentication
+  /api/v1/api-keys/{id}:
+    delete:
+      operationId: delete-api-key
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Revoke an API key
+      tags:
+        - Authentication
+  /api/v1/conflicts:
+    get:
+      operationId: list-conflicts
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageConflict"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List unresolved and resolved conflicts
+      tags:
+        - Graph
+  /api/v1/conflicts/{id}/resolve:
+    post:
+      operationId: resolve-conflict
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Resolve-conflictRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conflict"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Resolve a conflict explicitly
+      tags:
+        - Graph
+  /api/v1/context:
+    post:
+      operationId: build-context
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Build-contextRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Build a token-budgeted evidence pack
+      tags:
+        - Retrieval
+  /api/v1/documents:
+    get:
+      operationId: list-documents
+      parameters:
+        - explode: false
+          in: query
+          name: folder_id
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageDocument"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List active documents
+      tags:
+        - Documents
+    post:
+      operationId: create-document
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocumentRequestBody"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentAccepted"
+          description: Accepted
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create and asynchronously index a document
+      tags:
+        - Documents
+  /api/v1/documents/import:
+    post:
+      operationId: import-documents
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Import-documentsRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Accepted
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Import a batch of UTF-8 documents
+      tags:
+        - Documents
+  /api/v1/documents/{id}:
+    delete:
+      operationId: delete-document
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            minLength: 4
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Accepted
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Delete a document from the active knowledge base
+      tags:
+        - Documents
+    get:
+      operationId: get-document
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read the current document
+      tags:
+        - Documents
+    put:
+      operationId: update-document
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            minLength: 4
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Update-documentRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentAccepted"
+          description: Accepted
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create a new document revision
+      tags:
+        - Documents
+  /api/v1/documents/{id}/revisions:
+    get:
+      operationId: list-document-revisions
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageRevision"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List immutable document revisions
+      tags:
+        - Documents
+  /api/v1/documents/{id}/revisions/{revision}:
+    get:
+      operationId: get-document-revision
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - in: path
+          name: revision
+          required: true
+          schema:
+            pattern: ^r[1-9][0-9]*$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Revision"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read one immutable document revision
+      tags:
+        - Documents
+  /api/v1/entities:
+    get:
+      operationId: list-entities
+      parameters:
+        - explode: false
+          in: query
+          name: query
+          schema:
+            maxLength: 240
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageEntity"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Find entities
+      tags:
+        - Graph
+    post:
+      operationId: create-entity
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Create-entityRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entity"
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create an explicit entity
+      tags:
+        - Graph
+  /api/v1/entities/{id}:
+    get:
+      operationId: get-entity
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read an entity and its active facts
+      tags:
+        - Graph
+  /api/v1/facts:
+    get:
+      operationId: list-facts
+      parameters:
+        - explode: false
+          in: query
+          name: entity_id
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageFact"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List facts
+      tags:
+        - Graph
+    post:
+      operationId: create-fact
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Create-factRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create an authoritative fact
+      tags:
+        - Graph
+  /api/v1/facts/{id}:
+    delete:
+      operationId: retract-fact
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+        - explode: false
+          in: query
+          name: reason
+          schema:
+            maxLength: 500
+            minLength: 3
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Retract a fact while preserving history
+      tags:
+        - Graph
+  /api/v1/folders:
+    get:
+      operationId: list-folders
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageFolder"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List the folder tree
+      tags:
+        - Folders
+    post:
+      operationId: create-folder
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFolderRequestBody"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateFolderResponse"
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create a folder
+      tags:
+        - Folders
+  /api/v1/folders/{id}:
+    delete:
+      operationId: delete-folder
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            minLength: 4
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Delete an empty folder
+      tags:
+        - Folders
+    get:
+      operationId: get-folder
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Folder"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read a folder
+      tags:
+        - Folders
+  /api/v1/graph/path:
+    post:
+      operationId: find-graph-path
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Find-graph-pathRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Find a bounded path between entities
+      tags:
+        - Graph
+  /api/v1/jobs:
+    get:
+      operationId: list-jobs
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageJob"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List background jobs
+      tags:
+        - Jobs
+  /api/v1/jobs/{id}:
+    get:
+      operationId: get-job
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read job status and remediation
+      tags:
+        - Jobs
+  /api/v1/jobs/{id}/retry:
+    post:
+      operationId: retry-job
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+          description: Accepted
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Retry a failed or partially ready job
+      tags:
+        - Jobs
+  /api/v1/metrics:
+    get:
+      operationId: get-metrics
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  format: int64
+                  type: integer
+                type: object
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read operational counters
+      tags:
+        - System
+  /api/v1/relations:
+    get:
+      operationId: list-relations
+      parameters:
+        - explode: false
+          in: query
+          name: entity_id
+          schema:
+            pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageRelation"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List relations and neighbours
+      tags:
+        - Graph
+    post:
+      operationId: create-relation
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Create-relationRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Create an explicit relation
+      tags:
+        - Graph
+  /api/v1/relations/{id}:
+    delete:
+      operationId: delete-relation
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Delete an explicit relation
+      tags:
+        - Graph
+  /api/v1/rename-plans:
+    post:
+      operationId: create-rename-plan
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Create-rename-planRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenamePlan"
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Preview an atomic cascading rename
+      tags:
+        - Renames
+  /api/v1/rename-plans/{id}:
+    get:
+      operationId: get-rename-plan
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenamePlan"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read a rename preview or result
+      tags:
+        - Renames
+  /api/v1/rename-plans/{id}/apply:
+    post:
+      operationId: apply-rename-plan
+      parameters:
+        - description: A caller-generated key that makes this mutation safe to retry.
+          in: header
+          name: Idempotency-Key
+          schema:
+            description: A caller-generated key that makes this mutation safe to retry.
+            maxLength: 128
+            minLength: 8
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-v]{20}$
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+          description: Accepted
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Apply a reviewed cascading rename
+      tags:
+        - Renames
+  /api/v1/search:
+    post:
+      operationId: search-knowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Search documents and graph knowledge
+      tags:
+        - Retrieval
+  /api/v1/sources:
+    get:
+      operationId: list-sources
+      parameters:
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageSource"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: List fact provenance
+      tags:
+        - Provenance
+  /api/v1/status:
+    get:
+      operationId: get-status
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Inspect service and dependency status
+      tags:
+        - System
+  /api/v1/tree:
+    get:
+      operationId: get-tree
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read the path-bearing folder and document tree
+      tags:
+        - Folders
+  /api/v1/ui/session:
+    get:
+      operationId: get-ui-session
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Inspect the active browser session
+      tags:
+        - Authentication
+    post:
+      operationId: create-ui-session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Create-ui-sessionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Create-ui-sessionResponse"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security: []
+      summary: Exchange an API key for a browser session
+      tags:
+        - Authentication
+  /docs/errors/{code}:
+    get:
+      operationId: get-error-remediation
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema:
+            pattern: ^[a-z][a-z0-9_]+$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security: []
+      summary: Read semantic error remediation
+      tags:
+        - Errors
+  /errors/{code}:
+    get:
+      operationId: get-error-documentation
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema:
+            pattern: ^[a-z][a-z0-9_]+$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security: []
+      summary: Read semantic error documentation
+      tags:
+        - Errors
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      security: []
+      summary: Liveness probe
+      tags:
+        - System
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security: []
+      summary: Readiness probe
+      tags:
+        - System
+security:
+  - bearerAuth: []

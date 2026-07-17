@@ -1,0 +1,40 @@
+name: manifold-integration
+
+services:
+  provider:
+    build:
+      context: .
+      dockerfile: deploy/test-provider/Dockerfile
+    environment:
+      EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  openviking:
+    environment:
+      OPENAI_BASE_URL: http://provider:8081/v1
+      OPENAI_API_KEY: deterministic-provider-key
+      OPENAI_CHAT_MODEL: deterministic-chat
+      OPENAI_EMBEDDING_MODEL: deterministic-embedding
+    depends_on:
+      provider:
+        condition: service_healthy
+
+  brain:
+    environment:
+      OPENAI_BASE_URL: http://provider:8081/v1
+      OPENAI_API_KEY: deterministic-provider-key
+      OPENAI_CHAT_MODEL: deterministic-chat
+      OPENAI_EMBEDDING_MODEL: deterministic-embedding
+    depends_on:
+      provider:
+        condition: service_healthy
+
+  manifold:
+    environment:
+      MANIFOLD_PUBLIC_URL: http://127.0.0.1:${MANIFOLD_PORT:-18080}

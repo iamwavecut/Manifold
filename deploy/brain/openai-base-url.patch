@@ -1,0 +1,25 @@
+diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
+index a894331..0f7832f 100644
+--- a/src/ai/openai-client.ts
++++ b/src/ai/openai-client.ts
+@@ -5,6 +5,7 @@ import OpenAI from 'openai';
+ function buildClient(config: ConfigService, apiKey: string): OpenAI {
+   return new OpenAI({
+     apiKey,
++    baseURL: config.get<string>('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+     timeout: parseInt(config.get<string>('OPENAI_TIMEOUT_MS', '30000'), 10),
+     maxRetries: parseInt(config.get<string>('OPENAI_MAX_RETRIES', '3'), 10),
+   });
+diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
+index ac56488..ac8ee48 100644
+--- a/src/common/env-validation.ts
++++ b/src/common/env-validation.ts
+@@ -22,7 +22,7 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
+   required({ env, name: 'SURREALDB_URL', errors, pattern: /^(ws|wss|http|https):\/\// });
+   required({ env, name: 'SURREALDB_USERNAME', errors });
+   required({ env, name: 'SURREALDB_PASSWORD', errors });
+-  required({ env, name: 'OPENAI_API_KEY', errors, pattern: /^sk-/ });
++  required({ env, name: 'OPENAI_API_KEY', errors });
+ 
+   // ── Auth ─────────────────────────────────────────────────────────
+   // BRAIN_API_KEYS is required, but [] is acceptable in dev (no callers).
