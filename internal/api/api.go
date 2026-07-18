@@ -123,6 +123,8 @@ func (a *API) installOpenAPIExamples() {
 			example["suggested_slug"] = "agent-memory-2"
 		case "idempotency_key_reused":
 			example["resource"] = "/api/v1/documents"
+		case "api_key_secret_not_replayable":
+			example["resource"] = "/api/v1/api-keys"
 		case "etag_mismatch":
 			example["current_etag"] = `"v3"`
 			example["resource"] = "/api/v1/documents/agent-memory"
@@ -153,7 +155,7 @@ func semanticErrorStatus(code string) int {
 	case "resource_not_found", "error_code_not_found":
 		return http.StatusNotFound
 	case "slug_taken", "etag_mismatch", "idempotency_key_reused", "state_conflict", "invalid_state_transition",
-		"stale_rename_plan", "unrewritable_reference", "cannot_revoke_current_key":
+		"stale_rename_plan", "unrewritable_reference", "cannot_revoke_current_key", "api_key_secret_not_replayable":
 		return http.StatusConflict
 	case "validation_failed":
 		return http.StatusUnprocessableEntity
@@ -283,6 +285,23 @@ func (a *API) middleware(next http.Handler) http.Handler {
 					writeProblem(recorder, p)
 					return
 				}
+				if isOneTimeSecretMutation(r) {
+					recorder.Header().Set("Idempotency-Replayed", "true")
+					p := problem.New(ctx, a.config.PublicURL, http.StatusConflict, "api_key_secret_not_replayable",
+						"API key secret cannot be replayed",
+						"The original request created the API-key record, but Manifold returned its plaintext secret only once and did not persist it.",
+						problem.Remediation{
+							Summary: "Use the secret from the original response, or revoke the key and issue a replacement if that response was lost.",
+							Steps: []string{
+								"GET /api/v1/api-keys and confirm that the requested key record exists.",
+								"If the original secret was stored safely, use it without repeating this request.",
+								"If the secret was lost, revoke the key and create a replacement with a new Idempotency-Key.",
+							},
+						})
+					p.Resource = r.URL.Path
+					writeProblem(recorder, p)
+					return
+				}
 				recorder.Header().Set("Content-Type", "application/json; charset=utf-8")
 				recorder.Header().Set("Idempotency-Replayed", "true")
 				recorder.WriteHeader(status)
@@ -304,8 +323,12 @@ func (a *API) middleware(next http.Handler) http.Handler {
 		capture := &captureWriter{ResponseWriter: recorder}
 		next.ServeHTTP(capture, r.WithContext(ctx))
 		if cacheable && recorder.status >= 200 && recorder.status < 300 {
+			responseBody := capture.body.Bytes()
+			if isOneTimeSecretMutation(r) {
+				responseBody = []byte{}
+			}
 			if err := a.service.Store().SaveIdempotency(
-				ctx, scopedKey, r.Method, r.URL.Path, requestHash, recorder.status, capture.body.Bytes(),
+				ctx, scopedKey, r.Method, r.URL.Path, requestHash, recorder.status, responseBody,
 			); err != nil {
 				a.logger.Error("save idempotency response", "request_id", requestID, "error", err)
 			}
@@ -437,6 +460,10 @@ func commonErrors() []int {
 
 func isUnsafe(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
+}
+
+func isOneTimeSecretMutation(r *http.Request) bool {
+	return r.Method == http.MethodPost && r.URL.Path == "/api/v1/api-keys"
 }
 
 func validCSRF(token, expectedHash string) bool {

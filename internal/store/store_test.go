@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -60,6 +62,42 @@ func TestAvailableSlugUsesDeterministicSuffixes(t *testing.T) {
 	}
 	if got != "memory-3" {
 		t.Fatalf("available slug = %q, want memory-3", got)
+	}
+}
+
+func TestMigrationScrubsExistingAPIKeyIdempotencyResponses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifold.db")
+	s, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveIdempotency(
+		t.Context(), "bootstrap-admin:create-key", http.MethodPost, "/api/v1/api-keys",
+		"request-hash", http.StatusCreated, []byte(`{"secret":"must-not-remain"}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	_, body, _, err := s.GetIdempotency(
+		t.Context(), "bootstrap-admin:create-key", http.MethodPost, "/api/v1/api-keys",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("migration retained a one-time API key response: %q", body)
 	}
 }
 

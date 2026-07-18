@@ -184,6 +184,61 @@ func TestDocumentIdempotencySlugConflictAndETagRemediation(t *testing.T) {
 	}
 }
 
+func TestAPIKeySecretIsNeverPersistedOrReplayed(t *testing.T) {
+	server := newTestServer(t, nil)
+	const (
+		path           = "/api/v1/api-keys"
+		idempotencyKey = "create-external-agent-key"
+		requestBody    = `{"id":"external-agent","capabilities":["read_documents","search"]}`
+	)
+
+	first := request(t, server.handler, http.MethodPost, path, adminSecret, idempotencyKey, requestBody, nil)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("create API key status = %d; body=%s", first.Code, first.Body.String())
+	}
+	firstObject := decodeObject(t, first)
+	secret, ok := firstObject["secret"].(string)
+	if !ok || secret == "" {
+		t.Fatalf("create API key response did not include its one-time secret: %s", first.Body.String())
+	}
+
+	status, storedBody, _, err := server.store.GetIdempotency(
+		t.Context(), "bootstrap-admin:"+idempotencyKey, http.MethodPost, path,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusCreated {
+		t.Fatalf("stored status = %d, want %d", status, http.StatusCreated)
+	}
+	if len(storedBody) != 0 || strings.Contains(string(storedBody), secret) {
+		t.Fatalf("idempotency record persisted the one-time API key secret")
+	}
+
+	replay := request(t, server.handler, http.MethodPost, path, adminSecret, idempotencyKey, requestBody, nil)
+	problem := assertProblem(t, replay, http.StatusConflict, "api_key_secret_not_replayable")
+	if replay.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay did not identify itself: headers=%v", replay.Header())
+	}
+	if strings.Contains(replay.Body.String(), secret) {
+		t.Fatalf("replay exposed the one-time API key secret")
+	}
+	if problem["retryable"] != false {
+		t.Fatalf("replay retryable = %#v, want false", problem["retryable"])
+	}
+	keys, err := server.store.ListAPIKeys(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 {
+		t.Fatalf("exact replay created another key: %#v", keys)
+	}
+
+	changedReplay := request(t, server.handler, http.MethodPost, path, adminSecret, idempotencyKey,
+		`{"id":"different-agent","capabilities":["read_documents"]}`, nil)
+	assertProblem(t, changedReplay, http.StatusConflict, "idempotency_key_reused")
+}
+
 func TestFailedJobKeepsStructuredDependencyError(t *testing.T) {
 	documents := fakeDocuments{writeErr: &upstream.DependencyError{
 		Dependency: "openviking", Operation: "write", Retryable: true, Cause: errors.New("test outage"),
@@ -272,7 +327,7 @@ func TestOpenAPIUsesTheSemanticErrorContractForEveryFailureResponse(t *testing.T
 	}
 	for _, code := range []string{
 		"validation_failed", "invalid_request", "invalid_api_key", "missing_capability",
-		"resource_not_found", "slug_taken", "etag_mismatch", "idempotency_key_reused", "stale_rename_plan",
+		"resource_not_found", "slug_taken", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
 		"unrewritable_reference", "dependency_unavailable", "invalid_state_transition",
 		"state_conflict", "csrf_failed", "storage_unavailable", "job_failed",
 		"cannot_revoke_current_key", "internal_error", "request_failed", "error_code_not_found",
@@ -287,7 +342,7 @@ func TestEveryPublicSemanticErrorCodeHasReachableDocumentation(t *testing.T) {
 	server := newTestServer(t, nil)
 	codes := []string{
 		"validation_failed", "invalid_request", "invalid_api_key", "missing_capability",
-		"resource_not_found", "slug_taken", "etag_mismatch", "idempotency_key_reused", "stale_rename_plan",
+		"resource_not_found", "slug_taken", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
 		"unrewritable_reference", "dependency_unavailable", "invalid_state_transition",
 		"state_conflict", "csrf_failed", "storage_unavailable", "job_failed",
 		"cannot_revoke_current_key", "internal_error", "request_failed", "error_code_not_found",

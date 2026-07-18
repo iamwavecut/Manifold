@@ -17,6 +17,8 @@ Do not include real API keys, session cookies, CSRF tokens, provider payloads, d
 - Browser sessions are HttpOnly, SameSite=Strict, time-limited, and paired with CSRF tokens.
 - Capabilities are checked per operation.
 - Idempotency records are scoped to the authenticated API-key record.
+- One-time API-key secrets are excluded from idempotency storage, and startup
+  migration scrubs any legacy create-key response bodies.
 - Upstream responses and identifiers remain internal.
 - Error responses are allowlisted semantic fields and never raw exceptions.
 

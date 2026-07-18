@@ -210,6 +210,8 @@ CREATE TABLE IF NOT EXISTS idempotency (
 	created_at TEXT NOT NULL,
 	PRIMARY KEY(key, method, path)
 );
+UPDATE idempotency SET body = X''
+WHERE method = 'POST' AND path = '/api/v1/api-keys';
 
 CREATE TABLE IF NOT EXISTS rename_plans (
 	id TEXT PRIMARY KEY,

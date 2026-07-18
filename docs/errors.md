@@ -14,6 +14,7 @@ Every entry is returned as `application/problem+json`. `request_id` is an XID su
 | `slug_taken` | 409 | A semantic slug is occupied. | Review `suggested_slug`; retry with a new idempotency key. |
 | `etag_mismatch` | 409 | `If-Match` is stale. | GET the current resource, merge, and retry with `current_etag`. |
 | `idempotency_key_reused` | 409 | The same key was used for different mutation content. | Replay the exact request or use a new key for changed intent. |
+| `api_key_secret_not_replayable` | 409 | The key record was created, but its one-time plaintext secret cannot be replayed. | Use the original secret or revoke the key and issue a replacement. |
 | `state_conflict` | 409 | The operation conflicts with active state. | Refresh state and choose a non-conflicting operation. |
 | `invalid_state_transition` | 409 | Workflow state disallows the requested action. | Use `current_state` and `allowed_states`. |
 | `stale_rename_plan` | 409 | State changed after preview. | Create and review a fresh preview. |

@@ -523,6 +523,21 @@ components:
     Error:
       additionalProperties: false
       examples:
+        - code: api_key_secret_not_replayable
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/api_key_secret_not_replayable
+          remediation:
+            steps:
+              - List API-key records and confirm that the requested key exists.
+              - Revoke it if the plaintext secret was lost.
+              - Create a replacement with a new Idempotency-Key.
+            summary: Use the original secret or replace the key if that one-time response was lost.
+          request_id: d5vqh9idc6b5u5sctq00
+          resource: /api/v1/api-keys
+          retryable: false
+          status: 409
+          title: api key secret not replayable
+          type: http://localhost:8080/errors/api_key_secret_not_replayable
         - code: cannot_revoke_current_key
           detail: A safe request-specific explanation is returned here.
           documentation_url: http://localhost:8080/docs/errors/cannot_revoke_current_key

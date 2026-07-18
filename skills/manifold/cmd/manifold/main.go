@@ -449,6 +449,8 @@ func exitCode(code string) int {
 		return 17
 	case "job_failed":
 		return 18
+	case "api_key_secret_not_replayable":
+		return 20
 	default:
 		return 19
 	}
