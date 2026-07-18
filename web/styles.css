@@ -97,6 +97,7 @@ input, select, textarea {
   border-radius: 5px;
   padding: 11px 12px;
 }
+input:disabled, select:disabled, textarea:disabled { cursor: wait; opacity: .65; }
 textarea { min-height: 140px; resize: vertical; line-height: 1.5; }
 
 .primary, .quiet, .danger-button {
@@ -166,7 +167,9 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.5; }
 .topbar h1 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
 .status-dot { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .status-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.status-dot.checking::before { background: var(--faint); }
 .status-dot.degraded::before { background: var(--signal); }
+.status-dot.failed::before { background: var(--danger); }
 
 .content { padding: 28px; }
 .page-head { margin-bottom: 24px; display: flex; gap: 18px; justify-content: space-between; align-items: end; }
@@ -187,6 +190,14 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.5; }
 }
 .panel + .panel { margin-top: 16px; }
 .panel h3 { margin: 0 0 14px; font-size: 14px; }
+.notice {
+  border-left: 4px solid var(--signal);
+  background: #fff8ed;
+  color: #713f12;
+  margin: 14px 0;
+  padding: 12px 14px;
+}
+.notice p { margin: 5px 0 0; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 18px; }
 .toolbar .field { min-width: 150px; margin: 0; flex: 1; }
 .toolbar .field.wide { flex: 3; }
@@ -280,6 +291,9 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.5; }
 .problem h3 { color: #84241d; margin: 0 0 6px; }
 .problem p, .problem li { color: #6c3a36; line-height: 1.5; }
 .problem .mono { color: var(--muted); }
+.job-problem { margin-top: 18px; }
+.job-problem + .job-problem { border-top: 1px solid var(--line); padding-top: 18px; }
+.inline-action { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; min-width: 320px; }
 .empty { color: var(--muted); padding: 34px 10px; text-align: center; }
 
 .split { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, .7fr); gap: 18px; }
@@ -309,6 +323,7 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.5; }
   .explorer, .split { display: block; }
   .explorer > section + section { border-left: 0; border-top: 1px solid var(--line); }
   .toolbar { display: grid; }
+  .inline-action { grid-template-columns: 1fr; min-width: 220px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
