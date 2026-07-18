@@ -47,7 +47,7 @@
 
 - `skills/manifold` is the source of truth for the external agent skill.
 - Distribute and update it with the standard `npx skills` CLI. Do not add a repository-specific installer or document manual copies into agent directories.
-- Public installation instructions must use `--skill manifold --agent '*' --global --yes`: install exactly this skill for every supported agent at user scope without prompts.
+- Public installation instructions must use only `--skill manifold --global`; leave target selection and confirmation to the standard CLI.
 - Installation may require Node.js/npm; the installed skill must remain runtime-free through its bundled native binaries.
 - Keep endpoint and bearer credentials outside the skill. Target an instance only through `MANIFOLD_URL` and `MANIFOLD_API_KEY`.
 

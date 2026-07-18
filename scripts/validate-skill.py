@@ -13,9 +13,7 @@ skill_docs = Path("docs/skill.md")
 install_command = (
     "npx skills add iamwavecut/Manifold \\\n"
     "  --skill manifold \\\n"
-    "  --agent '*' \\\n"
-    "  --global \\\n"
-    "  --yes"
+    "  --global"
 )
 errors = []
 if not skill.is_file():
@@ -51,7 +49,7 @@ if not readme.is_file():
 else:
     readme_text = readme.read_text(encoding="utf-8")
     if install_command not in readme_text:
-        errors.append("README.md must install Manifold globally for all agents without prompts")
+        errors.append("README.md must install Manifold globally with CLI-managed agent selection")
     if 'cp -R skills/manifold' in readme_text or '.codex/skills/manifold' in readme_text:
         errors.append("README.md must not document manual agent-directory installation")
 
@@ -60,7 +58,7 @@ if not skill_docs.is_file():
 else:
     skill_docs_text = skill_docs.read_text(encoding="utf-8")
     if install_command not in skill_docs_text:
-        errors.append("docs/skill.md must install Manifold globally for all agents without prompts")
+        errors.append("docs/skill.md must install Manifold globally with CLI-managed agent selection")
 
 if errors:
     for error in errors:

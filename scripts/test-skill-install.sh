@@ -7,9 +7,7 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 HOME=$tmp npx --yes "skills@${SKILLS_CLI_VERSION:-1.5.19}" add "$root" \
 	--skill manifold \
-	--agent '*' \
 	--global \
-	--yes \
 	--copy
 
 installed="$tmp/.agents/skills/manifold"
