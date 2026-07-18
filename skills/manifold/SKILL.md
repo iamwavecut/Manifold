@@ -7,6 +7,10 @@ description: Work with a self-hosted Manifold knowledge and memory service throu
 
 Use the bundled launcher as `sh scripts/manifold` for deterministic API calls. It selects a self-contained native binary shipped inside this skill and repairs executable permissions lost by ZIP-based installers; the user does not need Python, Go, Node.js, or another language runtime.
 
+This skill is distributed from `iamwavecut/Manifold` with the standard
+`npx skills` CLI. Do not create another installer or copy the skill into
+agent-specific directories manually.
+
 The CLI connects to any network-reachable Manifold deployment and reads:
 
 - `MANIFOLD_URL`, the operator-provided remote base URL, for example `https://memory.example.net`
@@ -43,6 +47,11 @@ sh scripts/manifold rename-apply d5vqh9idc6b5u5sctq00
 Add `--json` before the command when another program needs the unmodified response.
 
 Do not assume the server is local. If `MANIFOLD_URL` is missing, stop and ask the user or deployment operator for the instance URL. Prefer HTTPS for any non-loopback deployment. The bundled binaries support macOS and Linux on `amd64` and `arm64`.
+
+The two environment variables select exactly one instance for the current
+agent process. To switch between production, staging, or another remote
+installation, load a different credential profile and start a new agent
+process. Never store an instance API key in this skill directory.
 
 ## Handle semantic errors
 

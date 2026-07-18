@@ -55,6 +55,7 @@ services:
       - openviking-data:/app/.openviking/data
     networks:
       - private
+      - provider
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1933/health >/dev/null || exit 1"]
       interval: 20s
@@ -95,6 +96,7 @@ services:
         condition: service_healthy
     networks:
       - private
+      - provider
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 15s
@@ -124,6 +126,7 @@ services:
 
 networks:
   edge:
+  provider:
   private:
     internal: true
 
