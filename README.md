@@ -232,19 +232,20 @@ to any operator-provided, network-reachable Manifold instance and has no
 localhost default.
 
 Install it with the standard [`skills`](https://github.com/vercel-labs/skills)
-CLI. For a global Codex installation:
+CLI. The canonical command installs Manifold globally for every supported agent
+without confirmation prompts:
 
 ```bash
 npx skills add iamwavecut/Manifold \
   --skill manifold \
-  --agent codex \
+  --agent '*' \
   --global \
   --yes
 ```
 
-Omit `--agent codex` to let the CLI select from detected agents, and omit
-`--global` for a project-scoped installation. The same command supports Claude
-Code, Cursor, OpenCode, and other agents recognized by the `skills` CLI.
+`--agent '*'` targets every agent recognized by the `skills` CLI, `--global`
+makes the skill available at user scope, and `--yes` makes installation
+non-interactive.
 
 Set `MANIFOLD_URL` to the selected remote instance and set
 `MANIFOLD_API_KEY`, then ask an agent to use `$manifold`. The `npx` installation

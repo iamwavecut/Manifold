@@ -9,26 +9,20 @@ server and does not use MCP.
 Use the standard [`skills`](https://github.com/vercel-labs/skills) CLI. It can
 discover `skills/manifold` directly from the GitHub repository.
 
-Install globally for Codex:
+Install Manifold globally for every supported agent without confirmation
+prompts:
 
 ```bash
 npx skills add iamwavecut/Manifold \
   --skill manifold \
-  --agent codex \
+  --agent '*' \
   --global \
   --yes
 ```
 
-Install into the current project and choose among detected agents
-interactively:
-
-```bash
-npx skills add iamwavecut/Manifold --skill manifold
-```
-
-Use another supported agent identifier in place of `codex`, or pass
-`--agent '*'` to target every supported agent. Inspect discovery without
-installing:
+The quoted `'*'` prevents shell expansion and tells the CLI to install for all
+agents it supports. `--global` selects user scope, and `--yes` skips every
+confirmation prompt. Inspect discovery without installing:
 
 ```bash
 npx skills add iamwavecut/Manifold --list
@@ -85,7 +79,7 @@ The exact canonical directory is managed by the `skills` CLI and can vary by
 scope and agent. Discover installed paths instead of hard-coding them:
 
 ```bash
-npx skills list --global --agent codex
+npx skills list --global --agent '*'
 ```
 
 ## Update or remove
@@ -96,10 +90,8 @@ Update the global skill from its recorded source:
 npx skills update manifold --global
 ```
 
-Remove it from Codex:
+Remove it globally from every supported agent:
 
 ```bash
-npx skills remove manifold --agent codex --global --yes
+npx skills remove manifold --agent '*' --global --yes
 ```
-
-Project-scoped installations use the same commands without `--global`.

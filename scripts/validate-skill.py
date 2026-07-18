@@ -9,6 +9,14 @@ from pathlib import Path
 root = Path(sys.argv[1] if len(sys.argv) > 1 else "skills/manifold")
 skill = root / "SKILL.md"
 readme = Path("README.md")
+skill_docs = Path("docs/skill.md")
+install_command = (
+    "npx skills add iamwavecut/Manifold \\\n"
+    "  --skill manifold \\\n"
+    "  --agent '*' \\\n"
+    "  --global \\\n"
+    "  --yes"
+)
 errors = []
 if not skill.is_file():
     errors.append(f"missing {skill}")
@@ -42,10 +50,17 @@ if not readme.is_file():
     errors.append("missing README.md")
 else:
     readme_text = readme.read_text(encoding="utf-8")
-    if "npx skills add iamwavecut/Manifold" not in readme_text:
-        errors.append("README.md must install the skill with npx skills")
+    if install_command not in readme_text:
+        errors.append("README.md must install Manifold globally for all agents without prompts")
     if 'cp -R skills/manifold' in readme_text or '.codex/skills/manifold' in readme_text:
         errors.append("README.md must not document manual agent-directory installation")
+
+if not skill_docs.is_file():
+    errors.append("missing docs/skill.md")
+else:
+    skill_docs_text = skill_docs.read_text(encoding="utf-8")
+    if install_command not in skill_docs_text:
+        errors.append("docs/skill.md must install Manifold globally for all agents without prompts")
 
 if errors:
     for error in errors:
