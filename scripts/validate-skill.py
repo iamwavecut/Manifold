@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal portable validation for the repository's Codex skill."""
+"""Minimal portable validation for the repository's external agent skill."""
 
 import re
 import sys
@@ -8,6 +8,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else "skills/manifold")
 skill = root / "SKILL.md"
+readme = Path("README.md")
 errors = []
 if not skill.is_file():
     errors.append(f"missing {skill}")
@@ -36,6 +37,15 @@ else:
     ]:
         if not (root / relative).is_file():
             errors.append(f"missing {relative}")
+
+if not readme.is_file():
+    errors.append("missing README.md")
+else:
+    readme_text = readme.read_text(encoding="utf-8")
+    if "npx skills add iamwavecut/Manifold" not in readme_text:
+        errors.append("README.md must install the skill with npx skills")
+    if 'cp -R skills/manifold' in readme_text or '.codex/skills/manifold' in readme_text:
+        errors.append("README.md must not document manual agent-directory installation")
 
 if errors:
     for error in errors:

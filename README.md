@@ -54,8 +54,9 @@ Deploy:
    Python: use a standard SHA-256 utility or a temporary container. Keep .env
    mode 0600, never commit it, and never print secrets into logs or chat.
 5. Run `docker compose --env-file .env config --quiet`, then
-   `docker compose up -d --build`. OpenViking, Brain, and SurrealDB must remain
-   on the internal network; publish only Manifold.
+   `docker compose up -d --build`. Keep OpenViking, Brain, and SurrealDB on the
+   private data network. OpenViking and Brain also need the un-published
+   provider network for outbound model API access. Publish only Manifold.
 6. Put Manifold behind the server's HTTPS reverse proxy when one is available.
    Do not weaken the firewall or expose dependency ports.
 
@@ -105,7 +106,9 @@ docker compose ps
 curl --fail http://localhost:8080/health
 ```
 
-Only Manifold is published to the host. OpenViking, Brain, and SurrealDB stay on an internal Docker network.
+Only Manifold is published to the host. OpenViking, Brain, and SurrealDB share
+an internal data network; OpenViking and Brain also have outbound provider
+access on an un-published network.
 
 - Workbench: <http://localhost:8080/app/>
 - Interactive API docs: <http://localhost:8080/docs/api>
@@ -221,14 +224,35 @@ The SQLite phase is transactional and supports batches, swaps, and cycles via re
 
 ## Agent skill
 
-The repository skill lives at [`skills/manifold`](skills/manifold). It connects to any operator-provided, network-reachable Manifold instance; it has no localhost default. Install it for Codex:
+The repository skill lives at [`skills/manifold`](skills/manifold). It connects
+to any operator-provided, network-reachable Manifold instance and has no
+localhost default.
+
+Install it with the standard [`skills`](https://github.com/vercel-labs/skills)
+CLI. For a global Codex installation:
 
 ```bash
-mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
-cp -R skills/manifold "${CODEX_HOME:-$HOME/.codex}/skills/manifold"
+npx skills add iamwavecut/Manifold \
+  --skill manifold \
+  --agent codex \
+  --global \
+  --yes
 ```
 
-Set `MANIFOLD_URL` to the remote instance URL and set `MANIFOLD_API_KEY`, then ask an agent to use `$manifold`. The skill ships self-contained native clients for macOS and Linux on `amd64` and `arm64`; the user's machine does not need Python, Go, Node.js, or another language runtime. The client maps semantic error codes to stable exit statuses.
+Omit `--agent codex` to let the CLI select from detected agents, and omit
+`--global` for a project-scoped installation. The same command supports Claude
+Code, Cursor, OpenCode, and other agents recognized by the `skills` CLI.
+
+Set `MANIFOLD_URL` to the selected remote instance and set
+`MANIFOLD_API_KEY`, then ask an agent to use `$manifold`. The `npx` installation
+step requires Node.js/npm. After installation, the skill ships self-contained
+native clients for macOS and Linux on `amd64` and `arm64`; using Manifold does
+not require Python, Go, Node.js, or another language runtime. The client maps
+semantic error codes to stable exit statuses.
+
+See [docs/skill.md](docs/skill.md) for project/global installation, updates,
+removal, verification, secure instance targeting, and multiple-instance
+profiles.
 
 ## Development
 

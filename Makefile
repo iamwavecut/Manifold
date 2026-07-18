@@ -33,6 +33,7 @@ skill-check:
 	python3 scripts/validate-skill.py skills/manifold
 	go test ./skills/manifold/cmd/manifold
 	sh skills/manifold/scripts/manifold --version
+	scripts/test-skill-install.sh
 
 integration:
 	scripts/integration.sh
