@@ -15,5 +15,6 @@ The CLI uses the response `code`, not free-form text.
 | 17 | `dependency_unavailable`, `storage_unavailable` | Wait for readiness and follow `retry_after`. |
 | 18 | `job_failed` | Inspect the stored job remediation before retrying. |
 | 19 | any other semantic server error | Give the operator `request_id`; do not expose secrets or private content. |
+| 20 | `api_key_secret_not_replayable` | Use the original one-time secret or revoke the key and issue a replacement. |
 
 An idempotent mutation may be retried with the same `Idempotency-Key`. A corrected request that changes intended data should use a new key.

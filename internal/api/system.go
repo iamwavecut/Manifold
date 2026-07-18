@@ -140,6 +140,10 @@ var semanticErrorDocs = map[string]problem.Remediation{
 		Summary: "Use the original key only for an exact replay.",
 		Steps:   []string{"Keep the original request unchanged when retrying.", "Use a new Idempotency-Key for corrected or different mutation content."},
 	},
+	"api_key_secret_not_replayable": {
+		Summary: "Use the original secret or replace the key if that one-time response was lost.",
+		Steps:   []string{"List API-key records and confirm that the requested key exists.", "Revoke it if the plaintext secret was lost.", "Create a replacement with a new Idempotency-Key."},
+	},
 	"stale_rename_plan": {
 		Summary: "Create a new rename preview.",
 		Steps:   []string{"POST the same operations to /api/v1/rename-plans.", "Review the new preview.", "Apply the new plan XID."},

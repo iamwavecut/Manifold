@@ -30,6 +30,9 @@ func TestProblemRenderingUsesCodeAndRemediation(t *testing.T) {
 	if exitCode("idempotency_key_reused") != 15 {
 		t.Fatalf("idempotency_key_reused exit code = %d", exitCode("idempotency_key_reused"))
 	}
+	if exitCode("api_key_secret_not_replayable") != 20 {
+		t.Fatalf("api_key_secret_not_replayable exit code = %d", exitCode("api_key_secret_not_replayable"))
+	}
 }
 
 func TestIdempotencyKeyIsNotAnXID(t *testing.T) {

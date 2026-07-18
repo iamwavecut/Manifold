@@ -115,6 +115,9 @@ access on an un-published network.
 - OpenAPI YAML: <http://localhost:8080/openapi.yaml>
 
 On the first start, `MANIFOLD_BOOTSTRAP_API_KEY` creates the `bootstrap-admin` record. Manifold stores only its Argon2id hash.
+New API-key secrets are shown once and are never stored in idempotency responses.
+An exact replay returns `api_key_secret_not_replayable` without creating a
+second key; revoke and replace the key if the original response was lost.
 
 ## Architecture
 
