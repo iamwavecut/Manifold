@@ -56,6 +56,179 @@ func TestTokenEstimateUsesRunesAndNeverReturnsZeroForText(t *testing.T) {
 	}
 }
 
+func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
+	var writes, snapshots, ingests int
+	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/content/write":
+			writes++
+			if writes > 1 {
+				http.Error(w, `{"error":"resource already exists"}`, http.StatusConflict)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+		case "/api/v1/snapshot/commit":
+			snapshots++
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-retry"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer openViking.Close()
+
+	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ingest/document" {
+			http.NotFound(w, r)
+			return
+		}
+		ingests++
+		if ingests == 1 {
+			http.Error(w, `{"error":"provider unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"documentId":"brain-retry","committed":{"entityIds":[],"factIds":[],"edgeIds":[]}}`))
+	}))
+	defer brain.Close()
+
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	svc := New(
+		db,
+		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
+		upstream.NewBrain(brain.URL, "brain-key", brain.Client()),
+		"https://memory.example.test",
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		time.Millisecond,
+	)
+	_, job, err := svc.CreateDocument(t.Context(), model.Document{
+		ID: "retry-memory", Title: "Retry memory", Format: "markdown", Content: "Resume from the durable checkpoint.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.processOne(t.Context()); err == nil {
+		t.Fatal("initial sync unexpectedly succeeded while Brain was unavailable")
+	}
+	partiallyReady, err := db.GetJob(t.Context(), job.ID)
+	if err != nil || partiallyReady.Status != model.JobPartiallyReady {
+		t.Fatalf("initial job = %#v, err = %v", partiallyReady, err)
+	}
+	revision, err := db.GetRevision(t.Context(), "retry-memory", 1)
+	if err != nil || revision.SnapshotOID != "snapshot-retry" {
+		t.Fatalf("checkpoint revision = %#v, err = %v", revision, err)
+	}
+
+	if err := db.RetryJob(t.Context(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.processOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := db.GetJob(t.Context(), job.ID)
+	if err != nil || completed.Status != model.JobReady {
+		t.Fatalf("retried job = %#v, err = %v", completed, err)
+	}
+	document, err := db.GetDocument(t.Context(), "retry-memory", true)
+	if err != nil || document.Status != model.JobReady || document.BrainID != "brain-retry" {
+		t.Fatalf("retried document = %#v, err = %v", document, err)
+	}
+	if writes != 1 || snapshots != 1 || ingests != 2 {
+		t.Fatalf("upstream calls: writes=%d snapshots=%d ingests=%d", writes, snapshots, ingests)
+	}
+}
+
+func TestDocumentRetryReconcilesCreateBeforeCheckpoint(t *testing.T) {
+	var writeModes []string
+	snapshotAttempts := 0
+	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/content/write":
+			var body struct {
+				Mode string `json:"mode"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			writeModes = append(writeModes, body.Mode)
+			if len(writeModes) == 2 {
+				http.Error(w, `{"error":"resource already exists"}`, http.StatusConflict)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+		case "/api/v1/fs/stat":
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"uri":"viking://resources/manifold/retry-before-checkpoint.md"}}`))
+		case "/api/v1/snapshot/commit":
+			snapshotAttempts++
+			if snapshotAttempts == 1 {
+				http.Error(w, `{"error":"snapshot unavailable"}`, http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-reconciled"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer openViking.Close()
+
+	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ingest/document" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"documentId":"brain-reconciled","committed":{"entityIds":[],"factIds":[],"edgeIds":[]}}`))
+	}))
+	defer brain.Close()
+
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	svc := New(
+		db,
+		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
+		upstream.NewBrain(brain.URL, "brain-key", brain.Client()),
+		"https://memory.example.test",
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		time.Millisecond,
+	)
+	_, job, err := svc.CreateDocument(t.Context(), model.Document{
+		ID: "retry-before-checkpoint", Title: "Retry before checkpoint", Format: "markdown",
+		Content: "The canonical body must win when create is reconciled.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.processOne(t.Context()); err == nil {
+		t.Fatal("initial sync unexpectedly succeeded while snapshots were unavailable")
+	}
+	failed, err := db.GetJob(t.Context(), job.ID)
+	if err != nil || failed.Status != model.JobFailed {
+		t.Fatalf("initial job = %#v, err = %v", failed, err)
+	}
+
+	if err := db.RetryJob(t.Context(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.processOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := db.GetJob(t.Context(), job.ID)
+	if err != nil || completed.Status != model.JobReady {
+		t.Fatalf("retried job = %#v, err = %v", completed, err)
+	}
+	if !slices.Equal(writeModes, []string{"create", "create", "replace"}) {
+		t.Fatalf("write modes = %#v, want create/create/replace reconciliation", writeModes)
+	}
+	if snapshotAttempts != 2 {
+		t.Fatalf("snapshot attempts = %d, want 2", snapshotAttempts)
+	}
+}
+
 func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	var openVikingMoves []string
 	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

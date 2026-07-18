@@ -383,16 +383,42 @@ func (s *Service) syncDocument(ctx context.Context, job model.Job) error {
 		Create bool `json:"create"`
 	}
 	_ = json.Unmarshal(job.Payload, &payload)
-	if err := s.documents.Write(ctx, doc.OVURI, doc.Content, payload.Create); err != nil {
-		return err
-	}
-	snapshot, err := s.documents.Snapshot(ctx,
-		fmt.Sprintf("%s %s %s", job.Kind, doc.ID, doc.Revision), []string{doc.OVURI})
-	if err != nil {
-		return err
-	}
-	if err := s.store.SetDocumentSync(ctx, doc.ID, string(model.JobExtracting), "", snapshot); err != nil {
-		return err
+
+	var snapshot string
+	if doc.Status == model.JobExtracting || doc.Status == model.JobPartiallyReady {
+		var revisionNumber int
+		if _, err := fmt.Sscanf(doc.Revision, "r%d", &revisionNumber); err != nil {
+			return fmt.Errorf("parse document revision %q: %w", doc.Revision, err)
+		}
+		revision, err := s.store.GetRevision(ctx, doc.ID, revisionNumber)
+		if err != nil {
+			return err
+		}
+		if revision.SnapshotOID == "" {
+			return fmt.Errorf("document %s has no OpenViking checkpoint for %s", doc.ID, doc.Revision)
+		}
+		snapshot = revision.SnapshotOID
+	} else {
+		if err := s.documents.Write(ctx, doc.OVURI, doc.Content, payload.Create); err != nil {
+			if !payload.Create {
+				return err
+			}
+			exists, existsErr := s.documents.Exists(ctx, doc.OVURI)
+			if existsErr != nil || !exists {
+				return err
+			}
+			if replaceErr := s.documents.Write(ctx, doc.OVURI, doc.Content, false); replaceErr != nil {
+				return replaceErr
+			}
+		}
+		snapshot, err = s.documents.Snapshot(ctx,
+			fmt.Sprintf("%s %s %s", job.Kind, doc.ID, doc.Revision), []string{doc.OVURI})
+		if err != nil {
+			return err
+		}
+		if err := s.store.SetDocumentSync(ctx, doc.ID, string(model.JobExtracting), "", snapshot); err != nil {
+			return err
+		}
 	}
 	ingest, err := s.graph.IngestDocument(ctx, upstream.GraphDocument{
 		ID: doc.ID, Title: doc.Title, Format: doc.Format, Content: doc.Content,
