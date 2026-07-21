@@ -146,6 +146,17 @@ func TestValidationReturnsAllIndependentViolations(t *testing.T) {
 	}
 }
 
+func TestSearchSelectorValidationReportsAllIndependentProblems(t *testing.T) {
+	server := newTestServer(t, nil)
+	recorder := request(t, server.handler, http.MethodPost, "/api/v1/search", adminSecret, "",
+		`{"query":"memory","scope_glob":"shared/[ab]","source_types":["chunk","relation"]}`, nil)
+	problem := assertProblem(t, recorder, http.StatusUnprocessableEntity, "validation_failed")
+	violations, _ := problem["violations"].([]any)
+	if len(violations) != 3 {
+		t.Fatalf("selector violations = %#v, want invalid glob and both invalid source types", violations)
+	}
+}
+
 func TestDocumentIdempotencySlugConflictAndETagRemediation(t *testing.T) {
 	server := newTestServer(t, nil)
 	body := `{"id":"agent-memory","title":"Agent memory","content":"Canonical text"}`
@@ -327,7 +338,7 @@ func TestOpenAPIUsesTheSemanticErrorContractForEveryFailureResponse(t *testing.T
 	}
 	for _, code := range []string{
 		"validation_failed", "invalid_request", "invalid_api_key", "missing_capability",
-		"resource_not_found", "slug_taken", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
+		"resource_not_found", "slug_taken", "folder_path_conflict", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
 		"unrewritable_reference", "dependency_unavailable", "invalid_state_transition",
 		"state_conflict", "csrf_failed", "storage_unavailable", "job_failed",
 		"cannot_revoke_current_key", "internal_error", "request_failed", "error_code_not_found",
@@ -342,7 +353,7 @@ func TestEveryPublicSemanticErrorCodeHasReachableDocumentation(t *testing.T) {
 	server := newTestServer(t, nil)
 	codes := []string{
 		"validation_failed", "invalid_request", "invalid_api_key", "missing_capability",
-		"resource_not_found", "slug_taken", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
+		"resource_not_found", "slug_taken", "folder_path_conflict", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
 		"unrewritable_reference", "dependency_unavailable", "invalid_state_transition",
 		"state_conflict", "csrf_failed", "storage_unavailable", "job_failed",
 		"cannot_revoke_current_key", "internal_error", "request_failed", "error_code_not_found",
@@ -417,6 +428,63 @@ func TestListEndpointsExposeCursorPaginationAndTree(t *testing.T) {
 	}
 	if _, ok := treeBody["documents"]; !ok {
 		t.Fatalf("tree lacks documents: %#v", treeBody)
+	}
+}
+
+func TestDocumentCreateBuildsNestedPathAndTreeGlobFindsCanonicalItems(t *testing.T) {
+	server := newTestServer(t, nil)
+	create := request(t, server.handler, http.MethodPost, "/api/v1/documents", adminSecret,
+		"create-shared-memory-policy", `{
+			"id":"memory-policy",
+			"folder_path":"shared/agent-practice",
+			"title":"Memory placement policy",
+			"content":"Search before creating durable knowledge."
+		}`, nil)
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
+	}
+	created := decodeObject(t, create)
+	folders, _ := created["folders_created"].([]any)
+	if len(folders) != 2 {
+		t.Fatalf("folders_created = %#v", created["folders_created"])
+	}
+
+	tree := request(t, server.handler, http.MethodGet,
+		"/api/v1/tree?glob=shared%2F**&types=document", adminSecret, "", "", nil)
+	if tree.Code != http.StatusOK {
+		t.Fatalf("tree status = %d: %s", tree.Code, tree.Body.String())
+	}
+	items, _ := decodeObject(t, tree)["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("tree items = %#v", items)
+	}
+	item, _ := items[0].(map[string]any)
+	if item["type"] != "document" || item["path"] != "shared/agent-practice/memory-policy" {
+		t.Fatalf("tree item = %#v", item)
+	}
+
+	invalid := request(t, server.handler, http.MethodGet,
+		"/api/v1/tree?glob=shared%2F%5Bab%5D", adminSecret, "", "", nil)
+	problem := assertProblem(t, invalid, http.StatusUnprocessableEntity, "validation_failed")
+	violations, _ := problem["violations"].([]any)
+	if len(violations) != 1 || violations[0].(map[string]any)["code"] != "invalid_glob" {
+		t.Fatalf("glob violations = %#v", violations)
+	}
+
+	conflict := request(t, server.handler, http.MethodPost, "/api/v1/documents", adminSecret,
+		"create-conflicting-task-path", `{
+			"id":"isolated-task",
+			"folder_path":"tasks/agent-practice",
+			"title":"Isolated task",
+			"content":"Temporary task evidence."
+		}`, nil)
+	pathProblem := assertProblem(t, conflict, http.StatusConflict, "folder_path_conflict")
+	meta, _ := pathProblem["meta"].(map[string]any)
+	if meta["existing_path"] != "shared/agent-practice" || meta["requested_path"] != "tasks/agent-practice" {
+		t.Fatalf("path conflict metadata = %#v", meta)
+	}
+	if _, err := server.store.GetFolder(t.Context(), "tasks"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("conflicting request left a partial tasks folder: %v", err)
 	}
 }
 

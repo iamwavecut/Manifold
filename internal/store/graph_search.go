@@ -165,6 +165,18 @@ func (s *Store) ListFacts(ctx context.Context, entityID string, limit int) ([]mo
 	return facts, rows.Err()
 }
 
+func (s *Store) GetFactByUpstreamID(ctx context.Context, upstreamID string) (model.Fact, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM facts WHERE upstream_id = ? LIMIT 1`, upstreamID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Fact{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Fact{}, err
+	}
+	return s.GetFact(ctx, id)
+}
+
 func (s *Store) CreateRelation(ctx context.Context, relation model.Relation) (model.Relation, error) {
 	timestamp := now()
 	relation.CreatedAt = parseTime(timestamp)

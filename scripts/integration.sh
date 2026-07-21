@@ -37,6 +37,33 @@ MANIFOLD_URL=$url \
 MANIFOLD_API_KEY=$api_key \
 	go test -tags=integration -count=1 -v ./test/integration
 
+skill_result=$(MANIFOLD_URL=$url \
+	MANIFOLD_API_KEY=$api_key \
+	sh skills/manifold/scripts/manifold --json remember \
+		--new \
+		--reason "Runtime-free CLI integration evidence" \
+		--id skill-integration-memory \
+		--title "Skill integration memory" \
+		--folder-path tasks/skill-integration-memory \
+		--content "The bundled Manifold skill completed discovery, nested creation, and terminal job verification.")
+case "$skill_result" in
+	*'"status": "ready"'*) ;;
+	*)
+		echo "Bundled skill did not return ready canonical memory" >&2
+		exit 1
+		;;
+esac
+skill_tree=$(MANIFOLD_URL=$url \
+	MANIFOLD_API_KEY=$api_key \
+	sh skills/manifold/scripts/manifold --json tree --glob 'tasks/**' --types document)
+case "$skill_tree" in
+	*'"path": "tasks/skill-integration-memory/skill-integration-memory"'*) ;;
+	*)
+		echo "Bundled skill tree did not return the nested canonical path" >&2
+		exit 1
+		;;
+esac
+
 $compose stop brain
 state_file=$(mktemp)
 MANIFOLD_URL=$url \

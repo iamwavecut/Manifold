@@ -57,6 +57,10 @@ components:
         scope:
           maxLength: 512
           type: string
+        scope_glob:
+          description: Filter canonical document paths with slash-aware *, ?, and ** glob syntax.
+          maxLength: 1024
+          type: string
         source_types:
           items:
             type: string
@@ -316,6 +320,10 @@ components:
           maxLength: 63
           pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
           type: string
+        folder_path:
+          maxLength: 1024
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$
+          type: string
         format:
           default: markdown
           enum:
@@ -482,6 +490,12 @@ components:
           type: string
         document:
           $ref: "#/components/schemas/Document"
+        folders_created:
+          items:
+            $ref: "#/components/schemas/Folder"
+          type:
+            - array
+            - "null"
         job:
           $ref: "#/components/schemas/Job"
       required:
@@ -608,6 +622,24 @@ components:
           status: 409
           title: etag mismatch
           type: http://localhost:8080/errors/etag_mismatch
+        - code: folder_path_conflict
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/folder_path_conflict
+          meta:
+            existing_path: shared/operations/runbooks
+            requested_path: tasks/incident-42/runbooks
+            segment: runbooks
+          remediation:
+            steps:
+              - Inspect meta.existing_path and the surrounding tree.
+              - Choose whether the knowledge belongs in the existing branch.
+              - Retry with a distinct segment only when the concepts are genuinely different.
+            summary: Reuse the canonical folder path or choose a distinct slug for the new branch.
+          request_id: d5vqh9idc6b5u5sctq00
+          retryable: false
+          status: 409
+          title: folder path conflict
+          type: http://localhost:8080/errors/folder_path_conflict
         - code: idempotency_key_reused
           detail: A safe request-specific explanation is returned here.
           documentation_url: http://localhost:8080/docs/errors/idempotency_key_reused
@@ -1056,6 +1088,10 @@ components:
         folder_id:
           maxLength: 63
           pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          type: string
+        folder_path:
+          maxLength: 1024
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$
           type: string
         format:
           default: markdown
@@ -1535,9 +1571,13 @@ components:
     SearchHit:
       additionalProperties: false
       properties:
+        canonical_ref:
+          type: string
         id:
           type: string
         kind:
+          type: string
+        path:
           type: string
         provenance:
           items:
@@ -1596,6 +1636,18 @@ components:
         scope:
           maxLength: 512
           type: string
+        scope_glob:
+          description: Filter canonical document paths with slash-aware *, ?, and ** glob syntax.
+          maxLength: 1024
+          type: string
+        source_types:
+          description: Return only document and/or fact hits.
+          items:
+            type: string
+          maxItems: 2
+          type:
+            - array
+            - "null"
       required:
         - query
       type: object
@@ -1667,6 +1719,64 @@ components:
         - document_id
         - revision
         - occurrences
+      type: object
+    TreeItem:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        revision:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+        - path
+        - id
+        - title
+      type: object
+    TreeResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TreeResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        documents:
+          description: Deprecated compatibility view. Prefer items.
+          items:
+            $ref: "#/components/schemas/Document"
+          type:
+            - array
+            - "null"
+        folders:
+          description: Deprecated compatibility view. Prefer items.
+          items:
+            $ref: "#/components/schemas/Folder"
+          type:
+            - array
+            - "null"
+        items:
+          items:
+            $ref: "#/components/schemas/TreeItem"
+          type:
+            - array
+            - "null"
+        next_cursor:
+          type: string
+      required:
+        - items
+        - folders
+        - documents
       type: object
     Update-documentRequest:
       additionalProperties: false
@@ -4859,13 +4969,44 @@ paths:
   /api/v1/tree:
     get:
       operationId: get-tree
+      parameters:
+        - description: Slash-aware glob. * and ? match within a segment; ** matches recursively.
+          explode: false
+          in: query
+          name: glob
+          schema:
+            description: Slash-aware glob. * and ? match within a segment; ** matches recursively.
+            maxLength: 1024
+            type: string
+        - description: Comma-separated folder and document selectors.
+          explode: false
+          in: query
+          name: types
+          schema:
+            description: Comma-separated folder and document selectors.
+            maxLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            pattern: ^c[0-9a-z]+$
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
       responses:
         "200":
           content:
             application/json:
               schema:
-                additionalProperties: {}
-                type: object
+                $ref: "#/components/schemas/TreeResponse"
           description: OK
         "400":
           content:

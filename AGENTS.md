@@ -42,6 +42,9 @@
 - API-key secrets, session cookies, CSRF tokens, and idempotency keys may be cryptographically random. Never use XIDs as secrets.
 - UI sessions stay HttpOnly/SameSite and unsafe session requests require CSRF.
 - OpenViking and Brain need outbound provider access but no published ports. Keep data traffic on the internal `private` network and model API egress on the un-published `provider` network.
+- Canonicalize all retrieval hits through SQLite before returning them. Never expose internal OpenViking resources or unmapped Brain/OpenViking IDs.
+- Document creation by `folder_path` must create missing nested folders and the document in one SQLite transaction. Keep `folder_id` and `folder_path` mutually exclusive.
+- Path selectors use slash-aware `*`, `?`, and whole-segment `**`; validate them before querying.
 
 ## Skill distribution
 
@@ -50,6 +53,7 @@
 - Public installation instructions must use only `--skill manifold --global`; leave target selection and confirmation to the standard CLI.
 - Installation may require Node.js/npm; the installed skill must remain runtime-free through its bundled native binaries.
 - Keep endpoint and bearer credentials outside the skill. Target an instance only through `MANIFOLD_URL` and `MANIFOLD_API_KEY`.
+- Keep `remember` discovery-first: read candidates before update/new decisions, require an explicit reason to create beside related memory, never blind-retry ETag conflicts, and wait for terminal job state.
 
 ## Generated surfaces
 

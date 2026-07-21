@@ -42,15 +42,11 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("status state = %q, want ready; body=%s", got, mustJSON(status.Body))
 	}
 
-	c.expectStatus(t, ctx, http.MethodPost, "/api/v1/folders", map[string]any{
-		"id": "integration", "name": "Integration", "summary": "Deterministic end-to-end evidence.",
-	}, "integration-folder-1", "", http.StatusCreated)
-
 	documentBody := map[string]any{
-		"id":        "integration-note",
-		"folder_id": "integration",
-		"title":     "Integration note",
-		"format":    "markdown",
+		"id":          "integration-note",
+		"folder_path": "integration/integration-evidence",
+		"title":       "Integration note",
+		"format":      "markdown",
 		"content": "# Manifold integration evidence\n\nSee [[integration-note]] and " +
 			"manifold://documents/integration-note.\n",
 		"metadata": map[string]any{"canonical": "integration-note"},
@@ -58,6 +54,9 @@ func TestEndToEnd(t *testing.T) {
 	}
 	created := c.expectStatus(t, ctx, http.MethodPost, "/api/v1/documents", documentBody,
 		"integration-document-1", "", http.StatusAccepted)
+	if len(arrayField(t, created.Body, "folders_created")) != 2 {
+		t.Fatalf("nested create = %s, want two atomically created folders", mustJSON(created.Body))
+	}
 	jobID := nestedStringField(t, created.Body, "job", "id")
 	waitForJob(t, ctx, c, jobID, "ready")
 
@@ -76,7 +75,13 @@ func TestEndToEnd(t *testing.T) {
 	}
 	c.expectStatus(t, ctx, http.MethodGet, "/api/v1/documents/integration-note/revisions/r1",
 		nil, "", "", http.StatusOK)
-	c.expectStatus(t, ctx, http.MethodGet, "/api/v1/tree", nil, "", "", http.StatusOK)
+	tree := c.expectStatus(t, ctx, http.MethodGet,
+		"/api/v1/tree?glob=integration%2F**&types=document", nil, "", "", http.StatusOK)
+	treeItems := arrayField(t, tree.Body, "items")
+	if len(treeItems) != 1 || stringField(t, treeItems[0].(map[string]any), "path") !=
+		"integration/integration-evidence/integration-note" {
+		t.Fatalf("scoped tree = %s", mustJSON(tree.Body))
+	}
 
 	for _, entity := range []map[string]any{
 		{"id": "manifold-service", "name": "Manifold", "kind": "service"},
@@ -144,9 +149,18 @@ func TestEndToEnd(t *testing.T) {
 
 	search := c.expectStatus(t, ctx, http.MethodPost, "/api/v1/search", map[string]any{
 		"query": "Manifold integration evidence", "mode": "hybrid", "limit": 10,
+		"scope_glob": "integration/**", "source_types": []string{"document"},
 	}, "", "", http.StatusOK)
-	if _, exists := search.Body["items"]; !exists {
-		t.Fatalf("search response has no items field: %s", mustJSON(search.Body))
+	searchItems := arrayField(t, search.Body, "items")
+	if len(searchItems) == 0 {
+		t.Fatalf("search response has no canonical items: %s", mustJSON(search.Body))
+	}
+	for _, raw := range searchItems {
+		hit := raw.(map[string]any)
+		if strings.HasPrefix(stringField(t, hit, "id"), "viking://") ||
+			stringField(t, hit, "canonical_ref") == "" || stringField(t, hit, "path") == "" {
+			t.Fatalf("search exposed a non-canonical hit: %s", mustJSON(hit))
+		}
 	}
 	contextPack := c.expectStatus(t, ctx, http.MethodPost, "/api/v1/context", map[string]any{
 		"query": "What did the integration agent verify?", "token_budget": 600,

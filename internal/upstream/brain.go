@@ -91,6 +91,7 @@ func (b *Brain) Search(ctx context.Context, query string, limit int, includeHist
 				Kind: "fact", ID: fact.FactID, Title: entity.CanonicalName,
 				Snippet: fmt.Sprintf("%s %s", fact.Predicate, fact.Object),
 				Score:   max(entity.Score, fact.Score), Source: "brain",
+				UpstreamSourceRef: fact.SourceKey,
 			})
 		}
 	}

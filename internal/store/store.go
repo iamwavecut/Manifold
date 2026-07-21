@@ -21,6 +21,20 @@ var (
 	ErrConflict = errors.New("resource conflict")
 )
 
+type FolderPathConflictError struct {
+	Segment       string
+	ExistingPath  string
+	RequestedPath string
+}
+
+func (e *FolderPathConflictError) Error() string {
+	return fmt.Sprintf("folder segment %q already belongs to %q instead of %q", e.Segment, e.ExistingPath, e.RequestedPath)
+}
+
+func (e *FolderPathConflictError) Unwrap() error {
+	return ErrConflict
+}
+
 type Store struct {
 	db *sql.DB
 }

@@ -56,6 +56,52 @@ func TestTokenEstimateUsesRunesAndNeverReturnsZeroForText(t *testing.T) {
 	}
 }
 
+func TestSearchModesAndScopeGlobUseCanonicalPaths(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := New(db, fakeDocumentStore{}, fakeGraphStore{}, "https://memory.example.test", logger, time.Millisecond)
+	for _, item := range []struct {
+		id      string
+		path    string
+		content string
+	}{
+		{id: "shared-policy", path: "shared/agent-practice", content: "canonical memory workflow"},
+		{id: "task-note", path: "tasks/incident-42", content: "canonical memory workflow"},
+	} {
+		if _, _, _, err := svc.CreateDocumentAtPath(t.Context(), item.path, model.Document{
+			ID: item.id, Title: item.id, Format: "markdown", Content: item.content,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lexical, err := svc.Search(t.Context(), SearchRequest{
+		Query: "canonical memory", Mode: model.SearchLexical, ScopeGlob: "shared/**", Limit: 10,
+		SourceTypes: []string{"document"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lexical.Items) != 1 || lexical.Items[0].ID != "shared-policy" ||
+		lexical.Items[0].Path != "shared/agent-practice/shared-policy" {
+		t.Fatalf("scoped lexical search = %#v", lexical)
+	}
+
+	semantic, err := svc.Search(t.Context(), SearchRequest{
+		Query: "canonical memory", Mode: model.SearchSemantic, Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(semantic.Items) != 0 {
+		t.Fatalf("semantic mode leaked lexical results: %#v", semantic)
+	}
+}
+
 func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 	var writes, snapshots, ingests int
 	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +297,7 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 		case "/api/v1/snapshot/commit":
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-1"}}`))
 		case "/api/v1/search/find":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"resources":[{"uri":"viking://resources/manifold/new-memory.md","score":0.8,"overview":"Canonical retention evidence"}]}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"resources":[{"uri":"viking://resources/manifold/old-memory.md","score":0.8,"overview":"Canonical retention evidence"},{"uri":"viking://resources/manifold/.overview.md","score":0.99,"overview":"Internal index metadata"}]}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -265,7 +311,7 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 		case "/v1/ingest/document":
 			_, _ = w.Write([]byte(`{"documentId":"brain-doc-1","committed":{"entityIds":["entity-1"],"factIds":["fact-1"],"edgeIds":[]}}`))
 		case "/v1/search":
-			_, _ = w.Write([]byte(`{"results":[{"entityId":"entity-1","entityType":"decision","canonicalName":"Retention","score":0.9,"facts":[{"factId":"fact-1","predicate":"retention","object":"canonical","score":0.9,"sourceKey":"document"}]}]}`))
+			_, _ = w.Write([]byte(`{"results":[{"entityId":"entity-1","entityType":"decision","canonicalName":"Retention","score":0.9,"facts":[{"factId":"fact-1","predicate":"retention","object":"canonical","score":0.9,"sourceKey":"brain-doc-1"}]}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -307,8 +353,12 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(search.Items) < 2 || len(search.DegradedDependencies) != 0 {
+	if len(search.Items) != 1 || len(search.DegradedDependencies) != 0 {
 		t.Fatalf("hybrid search = %#v", search)
+	}
+	if search.Items[0].ID != "old-memory" || search.Items[0].CanonicalRef != "manifold://documents/old-memory@r1" ||
+		search.Items[0].Path != "old-memory" {
+		t.Fatalf("hybrid search exposed a non-canonical hit: %#v", search.Items[0])
 	}
 	contextPack, degraded, err := svc.Context(t.Context(), SearchRequest{
 		Query: "canonical", Mode: model.SearchHybrid, Limit: 10,
@@ -585,6 +635,21 @@ func TestEmptyFolderSwapUsesTwoPhaseOpenVikingMoves(t *testing.T) {
 }
 
 type fakeGraphStore struct{}
+
+type fakeDocumentStore struct{}
+
+func (fakeDocumentStore) Health(context.Context) error                      { return nil }
+func (fakeDocumentStore) Exists(context.Context, string) (bool, error)      { return false, nil }
+func (fakeDocumentStore) Mkdir(context.Context, string, string) error       { return nil }
+func (fakeDocumentStore) Write(context.Context, string, string, bool) error { return nil }
+func (fakeDocumentStore) Move(context.Context, string, string) error        { return nil }
+func (fakeDocumentStore) Delete(context.Context, string, bool) error        { return nil }
+func (fakeDocumentStore) Snapshot(context.Context, string, []string) (string, error) {
+	return "snapshot", nil
+}
+func (fakeDocumentStore) Search(context.Context, string, string, int) ([]model.SearchHit, error) {
+	return nil, nil
+}
 
 func (fakeGraphStore) Health(context.Context) error {
 	return nil

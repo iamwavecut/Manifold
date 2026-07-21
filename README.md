@@ -13,6 +13,8 @@ Manifold does **not** implement or publish MCP. Its public integration surface i
 - INITE Brain-backed entities, facts, relations, provenance, and conflict extraction.
 - A SQLite control plane for public IDs, upstream mappings, jobs, revisions, idempotency, rename plans, API-key hashes, and UI sessions.
 - Hybrid retrieval with reciprocal-rank fusion and token-budgeted evidence packs.
+- Canonical search hits that expose public slugs, revisions, paths, and `manifold://` references instead of upstream IDs.
+- Atomic document creation by nested `folder_path`, plus slash-aware glob browsing across folders and documents.
 - Durable document indexing jobs with structured, persisted remediation.
 - Preview-first batch rename plans that support swaps and cycles.
 - Bearer capabilities, Argon2id key hashes, ETags, idempotency, HttpOnly sessions, and CSRF protection.
@@ -154,6 +156,7 @@ curl -X POST "$MANIFOLD_URL/api/v1/documents" \
   -H "Idempotency-Key: import-agent-memory-1" \
   -d '{
     "id": "agent-memory",
+    "folder_path": "shared/agent-practice",
     "title": "Agent memory",
     "format": "markdown",
     "content": "# Decisions\n\nCanonical evidence lives here."
@@ -162,10 +165,22 @@ curl -X POST "$MANIFOLD_URL/api/v1/documents" \
 curl -X POST "$MANIFOLD_URL/api/v1/context" \
   -H "Authorization: Bearer $MANIFOLD_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query":"Where does canonical evidence live?","token_budget":1200}'
+  -d '{"query":"Where does canonical evidence live?","scope_glob":"shared/**","source_types":["document"],"token_budget":1200}'
+
+curl "$MANIFOLD_URL/api/v1/tree?glob=shared%2F**&types=folder,document" \
+  -H "Authorization: Bearer $MANIFOLD_API_KEY"
 ```
 
 Document mutations return `202 Accepted` with a job XID. Poll `GET /api/v1/jobs/{xid}` until it reaches `ready`, `partially_ready`, or `failed`.
+When `folder_path` names missing semantic path segments, the document and all
+missing folders are committed atomically. `folder_id` remains available for
+callers that already know the direct parent; do not send both selectors.
+
+Search results are canonicalized through SQLite before they leave Manifold.
+Internal OpenViking overview resources and unmapped Brain/OpenViking IDs are
+discarded; each returned document includes its public `id`, `path`, `revision`,
+and immutable `canonical_ref`. `scope_glob` uses `*` and `?` within a segment
+and a whole `**` segment for recursive matching.
 
 The generated contract covers:
 
@@ -250,6 +265,28 @@ step requires Node.js/npm. After installation, the skill ships self-contained
 native clients for macOS and Linux on `amd64` and `arm64`; using Manifold does
 not require Python, Go, Node.js, or another language runtime. The client maps
 semantic error codes to stable exit statuses.
+
+The skill treats Manifold as first-class memory. It searches and reads before
+creation, requires new knowledge to have a nested destination, stops on related
+candidates until the agent chooses an update or explicitly justified new
+document, and waits for the indexing job to reach `ready`. A key used by
+`remember` needs `search`, `read_documents`, and `write_documents`.
+
+```bash
+sh scripts/manifold search --type document "retention decision"
+sh scripts/manifold tree --glob 'shared/**'
+sh scripts/manifold remember \
+  --id retention-policy \
+  --title "Retention policy" \
+  --folder-path shared/operations \
+  --file retention-policy.md
+```
+
+Use `shared/<domain>` for durable cross-agent knowledge,
+`projects/<project>/<project-qualified-topic>` for durable project knowledge,
+and a distinct `tasks/<task-slug>` folder for isolated work. Reuse a matching
+existing hierarchy instead of creating equivalent branches or a catch-all
+folder.
 
 See [docs/skill.md](docs/skill.md) for project/global installation, updates,
 removal, verification, secure instance targeting, and multiple-instance

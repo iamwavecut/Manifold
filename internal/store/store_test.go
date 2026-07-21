@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,51 @@ func TestAvailableSlugUsesDeterministicSuffixes(t *testing.T) {
 	}
 	if got != "memory-3" {
 		t.Fatalf("available slug = %q, want memory-3", got)
+	}
+}
+
+func TestCreateDocumentAtPathCreatesAndReusesHierarchyAtomically(t *testing.T) {
+	s := openTestStore(t)
+	create := func(id string, segments []string) ([]model.Folder, error) {
+		_, _, folders, err := s.CreateDocumentAtPath(t.Context(), segments, model.Document{
+			ID: id, Title: id, Format: "markdown", Content: id,
+			OVURI: "viking://resources/manifold/" + strings.Join(segments, "/") + "/" + id + ".md",
+		}, model.Job{
+			ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: id,
+		})
+		return folders, err
+	}
+
+	created, err := create("memory-policy", []string{"shared", "agent-practice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 2 || created[0].Path != "/shared" || created[1].Path != "/shared/agent-practice" {
+		t.Fatalf("created folders = %#v", created)
+	}
+	reused, err := create("memory-procedure", []string{"shared", "agent-practice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reused) != 0 {
+		t.Fatalf("reused path created duplicate folders: %#v", reused)
+	}
+	path, err := s.DocumentPath(t.Context(), "memory-procedure")
+	if err != nil || path != "shared/agent-practice/memory-procedure" {
+		t.Fatalf("document path = %q, err = %v", path, err)
+	}
+
+	_, err = create("isolated-task", []string{"tasks", "agent-practice"})
+	var conflict *FolderPathConflictError
+	if !errors.As(err, &conflict) || conflict.ExistingPath != "shared/agent-practice" ||
+		conflict.RequestedPath != "tasks/agent-practice" {
+		t.Fatalf("path conflict = %#v, err = %v", conflict, err)
+	}
+	if _, err := s.GetFolder(t.Context(), "tasks"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("failed path left a partial tasks folder: %v", err)
+	}
+	if _, err := s.GetDocument(t.Context(), "isolated-task", false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("failed path left a partial document: %v", err)
 	}
 }
 

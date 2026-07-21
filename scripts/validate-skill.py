@@ -32,6 +32,17 @@ else:
             errors.append("frontmatter description must explain concrete triggers")
     if "TODO" in text:
         errors.append("SKILL.md still contains TODO")
+    for required in [
+        "remember",
+        "memory_candidates_found",
+        "folder_path_conflict",
+        "shared/<domain>",
+        "tasks/<task-slug>",
+        "MANIFOLD_URL",
+        "MANIFOLD_API_KEY",
+    ]:
+        if required not in text:
+            errors.append(f"SKILL.md must document {required}")
     for relative in [
         "agents/openai.yaml",
         "scripts/manifold",

@@ -14,6 +14,7 @@ import (
 	"github.com/iamwavecut/Manifold/internal/identity"
 	"github.com/iamwavecut/Manifold/internal/model"
 	"github.com/iamwavecut/Manifold/internal/problem"
+	"github.com/iamwavecut/Manifold/internal/selector"
 	"github.com/iamwavecut/Manifold/internal/store"
 	"github.com/iamwavecut/Manifold/internal/upstream"
 )
@@ -39,6 +40,8 @@ type SearchRequest struct {
 	Query          string
 	Mode           model.SearchMode
 	Scope          string
+	ScopeGlob      string
+	SourceTypes    []string
 	Limit          int
 	IncludeHistory bool
 }
@@ -149,6 +152,31 @@ func (s *Service) CreateDocument(ctx context.Context, doc model.Document) (model
 	return s.store.CreateDocument(ctx, doc, job)
 }
 
+func (s *Service) CreateDocumentAtPath(
+	ctx context.Context,
+	folderPath string,
+	doc model.Document,
+) (model.Document, model.Job, []model.Folder, error) {
+	folderPath = strings.Trim(folderPath, "/")
+	segments := strings.Split(folderPath, "/")
+	for _, segment := range segments {
+		if !identity.IsSlug(segment) {
+			return model.Document{}, model.Job{}, nil, fmt.Errorf("invalid folder path segment %q", segment)
+		}
+	}
+	doc.OVURI = "viking://resources/manifold/" + folderPath + "/" + doc.ID + extension(doc.Format)
+	folderPaths := make([]string, 0, len(segments))
+	for index := range segments {
+		folderPaths = append(folderPaths, strings.Join(segments[:index+1], "/"))
+	}
+	payload, _ := json.Marshal(map[string]any{"create": true, "folder_paths": folderPaths})
+	job := model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: doc.ID,
+		Payload: payload,
+	}
+	return s.store.CreateDocumentAtPath(ctx, segments, doc, job)
+}
+
 func (s *Service) UpdateDocument(ctx context.Context, id, ifMatch, title, content string, metadata map[string]any, tags []string) (model.Document, model.Job, error) {
 	payload, _ := json.Marshal(map[string]any{"create": false})
 	job := model.Job{
@@ -249,8 +277,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (SearchResp
 	if request.Limit <= 0 {
 		request.Limit = 10
 	}
-	local, err := s.store.SearchDocuments(ctx, request.Query, request.Limit*2)
-	if err != nil {
+	if err := selector.ValidateGlob(request.ScopeGlob); err != nil {
 		return SearchResponse{}, err
 	}
 	type sourceResult struct {
@@ -260,7 +287,19 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (SearchResp
 	}
 	results := make(chan sourceResult, 2)
 	var wg sync.WaitGroup
-	if request.Mode != model.SearchGraph {
+	lists := make([][]model.SearchHit, 0, 3)
+	if request.Mode == model.SearchHybrid || request.Mode == model.SearchLexical {
+		local, err := s.store.SearchDocuments(ctx, request.Query, request.Limit*2)
+		if err != nil {
+			return SearchResponse{}, err
+		}
+		canonical, err := s.canonicalizeSearchHits(ctx, local, request)
+		if err != nil {
+			return SearchResponse{}, err
+		}
+		lists = append(lists, canonical)
+	}
+	if request.Mode == model.SearchHybrid || request.Mode == model.SearchSemantic {
 		wg.Go(func() {
 			hits, err := s.documents.Search(ctx, request.Query, request.Scope, request.Limit*2)
 			results <- sourceResult{name: "openviking", hits: hits, err: err}
@@ -276,17 +315,123 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (SearchResp
 		wg.Wait()
 		close(results)
 	}()
-	lists := [][]model.SearchHit{local}
 	response := SearchResponse{}
 	for result := range results {
 		if result.err != nil {
 			response.DegradedDependencies = append(response.DegradedDependencies, result.name)
 			continue
 		}
-		lists = append(lists, result.hits)
+		canonical, err := s.canonicalizeSearchHits(ctx, result.hits, request)
+		if err != nil {
+			return SearchResponse{}, err
+		}
+		lists = append(lists, canonical)
 	}
 	response.Items = reciprocalRankFusion(lists, request.Limit)
 	return response, nil
+}
+
+func (s *Service) canonicalizeSearchHits(
+	ctx context.Context,
+	hits []model.SearchHit,
+	request SearchRequest,
+) ([]model.SearchHit, error) {
+	allowedKinds := map[string]bool{}
+	for _, kind := range request.SourceTypes {
+		allowedKinds[strings.TrimSpace(kind)] = true
+	}
+	canonical := make([]model.SearchHit, 0, len(hits))
+	for _, hit := range hits {
+		var mapped model.SearchHit
+		var ok bool
+		var err error
+		switch hit.Kind {
+		case "document":
+			mapped, ok, err = s.canonicalizeDocumentHit(ctx, hit)
+		case "fact":
+			mapped, ok, err = s.canonicalizeFactHit(ctx, hit)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !ok || (len(allowedKinds) > 0 && !allowedKinds[mapped.Kind]) {
+			continue
+		}
+		if request.ScopeGlob != "" && (mapped.Path == "" || !selector.Match(request.ScopeGlob, mapped.Path)) {
+			continue
+		}
+		canonical = append(canonical, mapped)
+	}
+	return canonical, nil
+}
+
+func (s *Service) canonicalizeDocumentHit(ctx context.Context, hit model.SearchHit) (model.SearchHit, bool, error) {
+	var doc model.Document
+	var err error
+	if hit.Source == "openviking" {
+		doc, err = s.store.GetDocumentByOVURI(ctx, hit.ID)
+	} else {
+		doc, err = s.store.GetDocument(ctx, hit.ID, false)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return model.SearchHit{}, false, nil
+	}
+	if err != nil {
+		return model.SearchHit{}, false, err
+	}
+	path, err := s.store.DocumentPath(ctx, doc.ID)
+	if err != nil {
+		return model.SearchHit{}, false, err
+	}
+	hit.Kind = "document"
+	hit.ID = doc.ID
+	hit.Title = doc.Title
+	hit.Revision = doc.Revision
+	hit.Path = path
+	hit.CanonicalRef = "manifold://documents/" + doc.ID + "@" + doc.Revision
+	hit.UpstreamSourceRef = ""
+	return hit, true, nil
+}
+
+func (s *Service) canonicalizeFactHit(ctx context.Context, hit model.SearchHit) (model.SearchHit, bool, error) {
+	fact, err := s.store.GetFactByUpstreamID(ctx, hit.ID)
+	if err == nil {
+		hit.ID = fact.ID
+		hit.CanonicalRef = "manifold://facts/" + fact.ID
+		hit.UpstreamSourceRef = ""
+		if fact.SourceDocumentID != "" {
+			hit.Path, err = s.store.DocumentPath(ctx, fact.SourceDocumentID)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return model.SearchHit{}, false, err
+			}
+		}
+		return hit, true, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return model.SearchHit{}, false, err
+	}
+	if hit.UpstreamSourceRef == "" {
+		return model.SearchHit{}, false, nil
+	}
+	doc, err := s.store.GetDocumentByUpstreamRef(ctx, hit.UpstreamSourceRef)
+	if errors.Is(err, store.ErrNotFound) {
+		return model.SearchHit{}, false, nil
+	}
+	if err != nil {
+		return model.SearchHit{}, false, err
+	}
+	path, err := s.store.DocumentPath(ctx, doc.ID)
+	if err != nil {
+		return model.SearchHit{}, false, err
+	}
+	hit.Kind = "document"
+	hit.ID = doc.ID
+	hit.Title = doc.Title
+	hit.Revision = doc.Revision
+	hit.Path = path
+	hit.CanonicalRef = "manifold://documents/" + doc.ID + "@" + doc.Revision
+	hit.UpstreamSourceRef = ""
+	return hit, true, nil
 }
 
 func (s *Service) Context(ctx context.Context, request SearchRequest, budget int) (model.ContextPack, []string, error) {
@@ -380,9 +525,16 @@ func (s *Service) syncDocument(ctx context.Context, job model.Job) error {
 		return err
 	}
 	var payload struct {
-		Create bool `json:"create"`
+		Create      bool     `json:"create"`
+		FolderPaths []string `json:"folder_paths"`
 	}
 	_ = json.Unmarshal(job.Payload, &payload)
+	for _, path := range payload.FolderPaths {
+		uri := "viking://resources/manifold/" + strings.Trim(path, "/") + "/"
+		if err := s.ensureFolder(ctx, uri, "Manifold folder "+path); err != nil {
+			return err
+		}
+	}
 
 	var snapshot string
 	if doc.Status == model.JobExtracting || doc.Status == model.JobPartiallyReady {

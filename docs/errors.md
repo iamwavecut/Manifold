@@ -12,6 +12,7 @@ Every entry is returned as `application/problem+json`. `request_id` is an XID su
 | `resource_not_found` | 404 | The slug or XID is not active. | Inspect close slugs and any `meta.renamed_to` audit hint. |
 | `error_code_not_found` | 404 | The requested documentation code is unknown. | Use `code` from an actual problem response. |
 | `slug_taken` | 409 | A semantic slug is occupied. | Review `suggested_slug`; retry with a new idempotency key. |
+| `folder_path_conflict` | 409 | A folder segment already belongs to another canonical parent. | Inspect `meta.existing_path`; reuse it or choose a genuinely distinct segment. |
 | `etag_mismatch` | 409 | `If-Match` is stale. | GET the current resource, merge, and retry with `current_etag`. |
 | `idempotency_key_reused` | 409 | The same key was used for different mutation content. | Replay the exact request or use a new key for changed intent. |
 | `api_key_secret_not_replayable` | 409 | The key record was created, but its one-time plaintext secret cannot be replayed. | Use the original secret or revoke the key and issue a replacement. |

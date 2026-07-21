@@ -171,6 +171,48 @@ SELECT '/' || path FROM ancestors WHERE parent_id IS NULL LIMIT 1`
 	return path, nil
 }
 
+func (s *Store) DocumentPath(ctx context.Context, id string) (string, error) {
+	doc, err := s.GetDocument(ctx, id, false)
+	if err != nil {
+		return "", err
+	}
+	if doc.FolderID == "" {
+		return doc.ID, nil
+	}
+	folderPath, err := s.FolderPath(ctx, doc.FolderID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(folderPath, "/") + "/" + doc.ID, nil
+}
+
+func (s *Store) GetDocumentByOVURI(ctx context.Context, uri string) (model.Document, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM documents WHERE ov_uri = ? AND deleted = 0`, uri).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Document{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Document{}, err
+	}
+	return s.GetDocument(ctx, id, false)
+}
+
+func (s *Store) GetDocumentByUpstreamRef(ctx context.Context, ref string) (model.Document, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM documents
+		WHERE deleted = 0 AND (id = ? OR ov_uri = ? OR brain_id = ?)
+		LIMIT 1`, ref, ref, ref).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Document{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Document{}, err
+	}
+	return s.GetDocument(ctx, id, false)
+}
+
 func (s *Store) DeleteFolder(ctx context.Context, id string) error {
 	return s.InTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `DELETE FROM folders WHERE id = ?`, id)
@@ -198,6 +240,101 @@ func (s *Store) FolderEmpty(ctx context.Context, id string) (bool, error) {
 
 func (s *Store) CreateDocument(ctx context.Context, doc model.Document, job model.Job) (model.Document, model.Job, error) {
 	timestamp := now()
+	prepareDocumentCreate(&doc, &job, timestamp)
+	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		if err := insertDocumentCreate(ctx, tx, doc, job, timestamp); err != nil {
+			return err
+		}
+		return bumpVersion(ctx, tx)
+	})
+	if err != nil {
+		return model.Document{}, model.Job{}, err
+	}
+	return doc, job, nil
+}
+
+func (s *Store) CreateDocumentAtPath(
+	ctx context.Context,
+	segments []string,
+	doc model.Document,
+	job model.Job,
+) (model.Document, model.Job, []model.Folder, error) {
+	timestamp := now()
+	prepareDocumentCreate(&doc, &job, timestamp)
+	created := make([]model.Folder, 0, len(segments))
+	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		parentID := ""
+		for index, segment := range segments {
+			var existingParent sql.NullString
+			err := tx.QueryRowContext(ctx, `SELECT parent_id FROM folders WHERE id = ?`, segment).Scan(&existingParent)
+			switch {
+			case err == nil:
+				if existingParent.String != parentID {
+					existingPath, _ := folderPathTx(ctx, tx, segment)
+					return &FolderPathConflictError{
+						Segment: segment, ExistingPath: strings.TrimPrefix(existingPath, "/"),
+						RequestedPath: strings.Join(segments[:index+1], "/"),
+					}
+				}
+			case errors.Is(err, sql.ErrNoRows):
+				var reserved int
+				if err := tx.QueryRowContext(ctx, `
+					SELECT EXISTS(SELECT 1 FROM rename_reservations WHERE resource_type = 'folder' AND slug = ?)`,
+					segment).Scan(&reserved); err != nil {
+					return err
+				}
+				if reserved != 0 {
+					return ErrConflict
+				}
+				folder := model.Folder{
+					ID: segment, Name: segment, ParentID: parentID,
+					Path: "/" + strings.Join(segments[:index+1], "/"), ETag: `"v1"`,
+					CreatedAt: parseTime(timestamp), UpdatedAt: parseTime(timestamp),
+				}
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO folders(id, name, parent_id, summary, metadata_json, created_at, updated_at)
+					VALUES (?, ?, NULLIF(?, ''), '', '{}', ?, ?)`,
+					folder.ID, folder.Name, folder.ParentID, timestamp, timestamp); err != nil {
+					return err
+				}
+				created = append(created, folder)
+			default:
+				return err
+			}
+			parentID = segment
+		}
+		doc.FolderID = parentID
+		if err := insertDocumentCreate(ctx, tx, doc, job, timestamp); err != nil {
+			return err
+		}
+		return bumpVersion(ctx, tx)
+	})
+	if err != nil {
+		return model.Document{}, model.Job{}, nil, err
+	}
+	return doc, job, created, nil
+}
+
+func folderPathTx(ctx context.Context, tx *sql.Tx, id string) (string, error) {
+	const query = `
+WITH RECURSIVE ancestors(id, parent_id, path) AS (
+	SELECT id, parent_id, id FROM folders WHERE id = ?
+	UNION ALL
+	SELECT f.id, f.parent_id, f.id || '/' || a.path
+	FROM folders f JOIN ancestors a ON a.parent_id = f.id
+)
+SELECT '/' || path FROM ancestors WHERE parent_id IS NULL LIMIT 1`
+	var path string
+	if err := tx.QueryRowContext(ctx, query, id).Scan(&path); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return path, nil
+}
+
+func prepareDocumentCreate(doc *model.Document, job *model.Job, timestamp string) {
 	doc.Revision = "r1"
 	doc.Status = model.JobAccepted
 	doc.ContentHash = contentHash(doc.Content)
@@ -207,37 +344,31 @@ func (s *Store) CreateDocument(ctx context.Context, doc model.Document, job mode
 	job.Status = model.JobAccepted
 	job.CreatedAt = doc.CreatedAt
 	job.UpdatedAt = doc.CreatedAt
-	err := s.InTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO documents(id, folder_id, title, format, content, content_hash, revision, status, ov_uri,
-				metadata_json, tags_json, created_at, updated_at)
-			VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
-			doc.ID, doc.FolderID, doc.Title, doc.Format, doc.Content, doc.ContentHash, doc.Status, doc.OVURI,
-			jsonString(doc.Metadata), jsonString(doc.Tags), timestamp, timestamp)
-		if err != nil {
-			if strings.Contains(err.Error(), "UNIQUE") {
-				return ErrConflict
-			}
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO revisions(document_id, revision, content, content_hash, ov_uri, created_at)
-			VALUES (?, 1, ?, ?, ?, ?)`, doc.ID, doc.Content, doc.ContentHash, doc.OVURI, timestamp); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO document_fts(id, title, content) VALUES (?, ?, ?)`,
-			doc.ID, doc.Title, doc.Content); err != nil {
-			return err
-		}
-		if err := insertJob(ctx, tx, job, timestamp); err != nil {
-			return err
-		}
-		return bumpVersion(ctx, tx)
-	})
+}
+
+func insertDocumentCreate(ctx context.Context, tx *sql.Tx, doc model.Document, job model.Job, timestamp string) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO documents(id, folder_id, title, format, content, content_hash, revision, status, ov_uri,
+			metadata_json, tags_json, created_at, updated_at)
+		VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+		doc.ID, doc.FolderID, doc.Title, doc.Format, doc.Content, doc.ContentHash, doc.Status, doc.OVURI,
+		jsonString(doc.Metadata), jsonString(doc.Tags), timestamp, timestamp)
 	if err != nil {
-		return model.Document{}, model.Job{}, err
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return ErrConflict
+		}
+		return err
 	}
-	return doc, job, nil
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO revisions(document_id, revision, content, content_hash, ov_uri, created_at)
+		VALUES (?, 1, ?, ?, ?, ?)`, doc.ID, doc.Content, doc.ContentHash, doc.OVURI, timestamp); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO document_fts(id, title, content) VALUES (?, ?, ?)`,
+		doc.ID, doc.Title, doc.Content); err != nil {
+		return err
+	}
+	return insertJob(ctx, tx, job, timestamp)
 }
 
 func (s *Store) GetDocument(ctx context.Context, id string, includeContent bool) (model.Document, error) {

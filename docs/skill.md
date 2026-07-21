@@ -61,10 +61,63 @@ The key needs only the capabilities required by the workflow. Prefer a
 read-only key for search and context workflows; use an admin key only for key
 administration.
 
+## Use Manifold as memory
+
+Start non-trivial work with retrieval, then read relevant canonical documents:
+
+```bash
+sh scripts/manifold context --token-budget 2500 "task, prior decisions, constraints, and runbooks"
+sh scripts/manifold search --type document "specific decision or incident"
+sh scripts/manifold read candidate-slug
+```
+
+Before preserving new knowledge, inspect the existing hierarchy with
+`tree --glob '**'`. Keep durable cross-agent knowledge under `shared/<domain>`,
+durable project knowledge under
+`projects/<project>/<project-qualified-topic>`, and isolated work under a
+distinct `tasks/<task-slug>`. Reuse a matching canonical folder instead of
+creating a synonym or catch-all branch. Folder slugs are globally unique in
+v1, so qualify ambiguous child slugs.
+
+Use `remember` for mutation:
+
+The selected key needs `search`, `read_documents`, and `write_documents` for
+this guarded workflow.
+
+```bash
+sh scripts/manifold remember \
+  --id agent-memory-practice \
+  --title "Agent memory practice" \
+  --folder-path shared/agent-practice \
+  --file memory-practice.md
+```
+
+`remember` performs semantic discovery again. If it exits with
+`memory_candidates_found`, read the listed candidates and then either update a
+canonical document or justify a distinct lifecycle:
+
+```bash
+sh scripts/manifold remember --update existing-slug --file reconciled.md
+
+sh scripts/manifold remember \
+  --new \
+  --reason "Incident-specific evidence with a short operational lifetime" \
+  --id incident-42-findings \
+  --title "Incident 42 findings" \
+  --folder-path tasks/incident-42 \
+  --file findings.md
+```
+
+The command creates missing nested folders atomically and succeeds only after
+the durable job reaches `ready`. It returns nonzero for `partially_ready`,
+`failed`, or a wait timeout. It never blind-retries `etag_mismatch`; reread,
+merge, and issue a new update instead. It also refuses every mutation with
+`discovery_degraded` when OpenViking or Brain search is incomplete.
+
 ## Verify
 
 Start a new agent session after installation, then ask it to use `$manifold`
-for a status check. From a shell, the bundled client can be verified without
+for a status check and a scoped memory search. From a shell, the bundled client can be verified without
 another runtime:
 
 ```bash

@@ -23,7 +23,17 @@ type Document = {
   updated_at: string
 }
 type Job = {id: string; kind: string; resource_id: string; status: string; attempts: number; error?: Problem; updated_at: string}
-type SearchHit = {kind: string; id: string; title: string; snippet?: string; score: number; source: string; revision?: string}
+type SearchHit = {
+  kind: string
+  id: string
+  canonical_ref?: string
+  path?: string
+  title: string
+  snippet?: string
+  score: number
+  source: string
+  revision?: string
+}
 type Entity = {id: string; name: string; kind: string; updated_at: string}
 type Relation = {id: string; from_entity_id: string; to_entity_id: string; predicate: string; status: string}
 type Conflict = {id: string; fact_a_id: string; fact_b_id: string; status: string; resolution?: string}
@@ -478,6 +488,18 @@ const SearchPage: m.FactoryComponent = () => {
             "hybrid", "semantic", "lexical", "graph",
             ].map(value => m("option", {value}, value))),
           ]),
+          m(".field", [
+            m("label", {for: "search-scope"}, "Path scope"),
+            m("input", {
+              id: "search-scope",
+              value: component.scopeGlob,
+              disabled: component.loading,
+              oninput: (event: InputEvent) => {
+                component.scopeGlob = (event.target as HTMLInputElement).value
+              },
+              placeholder: "shared/**",
+            }),
+          ]),
           m("button.primary", {
             type: "submit",
             disabled: component.loading || component.query.trim().length === 0,
@@ -490,7 +512,12 @@ const SearchPage: m.FactoryComponent = () => {
         component.results.length === 0 ? m(".empty", "Ask a question to trace evidence across documents and graph facts.") :
           component.results.map(hit => m(".result", [
             m(".result-thread"),
-            m("div", [m("h3", hit.title), m("p", hit.snippet || hit.id), m("small.mono", `${hit.kind} · ${hit.source} · ${hit.revision ?? "current"}`)]),
+            m("div", [
+              m("h3", hit.title),
+              m("p", hit.snippet || hit.id),
+              m("small.mono", `${hit.path ?? hit.id} · ${hit.source} · ${hit.revision ?? "current"}`),
+              hit.canonical_ref && m("small.mono", hit.canonical_ref),
+            ]),
             m(".score", hit.score.toFixed(4)),
           ])),
       ]),
@@ -501,6 +528,7 @@ const SearchPage: m.FactoryComponent = () => {
 class SearchState {
   query = ""
   mode = "hybrid"
+  scopeGlob = ""
   loading = false
   results: SearchHit[] = []
   degradedDependencies: string[] = []
@@ -512,7 +540,12 @@ class SearchState {
     try {
       const result = await api<{items: SearchHit[]; degraded_dependencies?: string[]}>("/api/v1/search", {
         method: "POST",
-        body: JSON.stringify({query: this.query, mode: this.mode, limit: 20}),
+        body: JSON.stringify({
+          query: this.query,
+          mode: this.mode,
+          scope_glob: this.scopeGlob,
+          limit: 20,
+        }),
       })
       this.results = result.items ?? []
       this.degradedDependencies = result.degraded_dependencies ?? []

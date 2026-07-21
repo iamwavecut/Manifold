@@ -132,6 +132,10 @@ var semanticErrorDocs = map[string]problem.Remediation{
 		Summary: "Choose the suggested available slug or another unused slug.",
 		Steps:   []string{"Read suggested_slug.", "Retry with that slug and a new Idempotency-Key."},
 	},
+	"folder_path_conflict": {
+		Summary: "Reuse the canonical folder path or choose a distinct slug for the new branch.",
+		Steps:   []string{"Inspect meta.existing_path and the surrounding tree.", "Choose whether the knowledge belongs in the existing branch.", "Retry with a distinct segment only when the concepts are genuinely different."},
+	},
 	"etag_mismatch": {
 		Summary: "Refresh the resource before retrying the update.",
 		Steps:   []string{"GET the resource.", "Apply the intended change to the latest state.", "Send its ETag in If-Match."},

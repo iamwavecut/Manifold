@@ -121,6 +121,11 @@ func (a *API) installOpenAPIExamples() {
 			example["meta"] = map[string]any{"resource_type": "document", "requested_slug": "old-slug", "renamed_to": "new-slug"}
 		case "slug_taken":
 			example["suggested_slug"] = "agent-memory-2"
+		case "folder_path_conflict":
+			example["meta"] = map[string]any{
+				"segment": "runbooks", "existing_path": "shared/operations/runbooks",
+				"requested_path": "tasks/incident-42/runbooks",
+			}
 		case "idempotency_key_reused":
 			example["resource"] = "/api/v1/documents"
 		case "api_key_secret_not_replayable":
@@ -154,7 +159,7 @@ func semanticErrorStatus(code string) int {
 		return http.StatusForbidden
 	case "resource_not_found", "error_code_not_found":
 		return http.StatusNotFound
-	case "slug_taken", "etag_mismatch", "idempotency_key_reused", "state_conflict", "invalid_state_transition",
+	case "slug_taken", "folder_path_conflict", "etag_mismatch", "idempotency_key_reused", "state_conflict", "invalid_state_transition",
 		"stale_rename_plan", "unrewritable_reference", "cannot_revoke_current_key", "api_key_secret_not_replayable":
 		return http.StatusConflict
 	case "validation_failed":

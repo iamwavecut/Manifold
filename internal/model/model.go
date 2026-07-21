@@ -142,14 +142,17 @@ const (
 )
 
 type SearchHit struct {
-	Kind       string   `json:"kind"`
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	Snippet    string   `json:"snippet,omitempty"`
-	Score      float64  `json:"score"`
-	Source     string   `json:"source"`
-	Revision   string   `json:"revision,omitempty"`
-	Provenance []Source `json:"provenance,omitempty"`
+	Kind              string   `json:"kind"`
+	ID                string   `json:"id"`
+	CanonicalRef      string   `json:"canonical_ref,omitempty"`
+	Path              string   `json:"path,omitempty"`
+	Title             string   `json:"title"`
+	Snippet           string   `json:"snippet,omitempty"`
+	Score             float64  `json:"score"`
+	Source            string   `json:"source"`
+	Revision          string   `json:"revision,omitempty"`
+	Provenance        []Source `json:"provenance,omitempty"`
+	UpstreamSourceRef string   `json:"-"`
 }
 
 type ContextPack struct {
