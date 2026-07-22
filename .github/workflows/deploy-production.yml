@@ -56,7 +56,7 @@ jobs:
           scp -i ~/.ssh/manifold_deploy scripts/deploy-production.sh \
             "$DEPLOY_USER@$DEPLOY_HOST:/tmp/manifold-deploy-$DEPLOY_SHA.sh"
           ssh -i ~/.ssh/manifold_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
-            "bash /tmp/manifold-deploy-$DEPLOY_SHA.sh '$DEPLOY_SHA'; status=\$?; rm -f /tmp/manifold-deploy-$DEPLOY_SHA.sh; exit \$status"
+            "bash /tmp/manifold-deploy-$DEPLOY_SHA.sh '$DEPLOY_SHA'; deploy_exit_code=\$?; rm -f /tmp/manifold-deploy-$DEPLOY_SHA.sh; exit \$deploy_exit_code"
       - name: Verify public build identity
         run: |
           meta=$(curl --fail --silent --show-error "$MANIFOLD_PUBLIC_URL/api/v1/meta")
