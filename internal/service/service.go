@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -148,8 +149,31 @@ func (s *Service) DeleteFolder(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.documents.Delete(ctx, "viking://resources/manifold"+path+"/", false); err != nil {
-		return err
+	uri := "viking://resources/manifold" + path + "/"
+	for attempt := range 6 {
+		err = s.documents.Delete(ctx, uri, true)
+		if err == nil {
+			break
+		}
+		var dependency *upstream.DependencyError
+		if !errors.As(err, &dependency) || dependency.Dependency != "openviking" {
+			return err
+		}
+		if dependency.Status == http.StatusNotFound {
+			break
+		}
+		if dependency.Status != http.StatusConflict {
+			return err
+		}
+		dependency.Retryable = true
+		if attempt == 5 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	return s.store.DeleteFolder(ctx, id)
 }

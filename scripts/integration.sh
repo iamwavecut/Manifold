@@ -134,3 +134,8 @@ MANIFOLD_URL=$url \
 curl --fail --silent --show-error \
 	-H "Authorization: Bearer $api_key" \
 	"$url/api/v1/documents/integration-note-renamed" >/dev/null
+
+MANIFOLD_URL=$url \
+MANIFOLD_API_KEY=$api_key \
+MANIFOLD_INTEGRATION_PHASE=cleanup \
+	go test -tags=integration -count=1 -v ./test/integration

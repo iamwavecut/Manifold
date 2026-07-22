@@ -634,9 +634,67 @@ func TestEmptyFolderSwapUsesTwoPhaseOpenVikingMoves(t *testing.T) {
 	}
 }
 
+func TestDeleteFolderRecursivelyRetriesOpenVikingDerivedEntryLocks(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.CreateFolder(t.Context(), model.Folder{
+		ID: "release-evidence", Name: "Release evidence",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	documents := &recordingDocumentStore{conflictsRemaining: 2}
+	svc := New(
+		db,
+		documents,
+		fakeGraphStore{},
+		"https://memory.example.test",
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		time.Millisecond,
+	)
+
+	if err := svc.DeleteFolder(t.Context(), "release-evidence"); err != nil {
+		t.Fatal(err)
+	}
+	if documents.deletedURI != "viking://resources/manifold/release-evidence/" || !documents.recursive {
+		t.Fatalf("OpenViking delete = (%q, recursive=%t), want the empty folder recursively removed",
+			documents.deletedURI, documents.recursive)
+	}
+	if documents.deleteCalls != 3 {
+		t.Fatalf("OpenViking delete calls = %d, want two path-lock conflicts followed by success",
+			documents.deleteCalls)
+	}
+	if _, err := db.GetFolder(t.Context(), "release-evidence"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted folder remained in the control plane: %v", err)
+	}
+}
+
 type fakeGraphStore struct{}
 
 type fakeDocumentStore struct{}
+
+type recordingDocumentStore struct {
+	fakeDocumentStore
+	deletedURI         string
+	recursive          bool
+	deleteCalls        int
+	conflictsRemaining int
+}
+
+func (r *recordingDocumentStore) Delete(_ context.Context, uri string, recursive bool) error {
+	r.deletedURI = uri
+	r.recursive = recursive
+	r.deleteCalls++
+	if r.conflictsRemaining > 0 {
+		r.conflictsRemaining--
+		return &upstream.DependencyError{
+			Dependency: "openviking", Operation: "delete folder", Status: http.StatusConflict,
+		}
+	}
+	return nil
+}
 
 func (fakeDocumentStore) Health(context.Context) error                      { return nil }
 func (fakeDocumentStore) Exists(context.Context, string) (bool, error)      { return false, nil }

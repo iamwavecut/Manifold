@@ -223,6 +223,28 @@ func TestEndToEnd(t *testing.T) {
 	if got := stringField(t, reused.Body, "code"); got != "idempotency_key_reused" {
 		t.Fatalf("idempotency reuse code = %q, want idempotency_key_reused; body=%s", got, mustJSON(reused.Body))
 	}
+
+}
+
+func TestCleanup(t *testing.T) {
+	if os.Getenv("MANIFOLD_INTEGRATION_PHASE") != "cleanup" {
+		t.Skip("cleanup phase is not selected")
+	}
+	c := newClient(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+
+	document := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/documents/integration-note-renamed", nil,
+		"", "", http.StatusOK)
+	deleted := c.expectStatus(t, ctx, http.MethodDelete, "/api/v1/documents/integration-note-renamed", nil,
+		"integration-document-delete-1", document.Header.Get("ETag"), http.StatusAccepted)
+	waitForJob(t, ctx, c, nestedStringField(t, deleted.Body, "job", "id"), "ready")
+	for _, folderID := range []string{"integration-evidence", "integration"} {
+		folder := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/folders/"+folderID, nil,
+			"", "", http.StatusOK)
+		c.expectStatus(t, ctx, http.MethodDelete, "/api/v1/folders/"+folderID, nil,
+			"integration-folder-delete-"+folderID, folder.Header.Get("ETag"), http.StatusNoContent)
+	}
 }
 
 func TestCreateDependencyFailure(t *testing.T) {
