@@ -9,7 +9,8 @@ COPY web ./web
 RUN npm run check && npm run build
 
 FROM golang:1.26-alpine AS build
-ARG VERSION=dev
+ARG VERSION
+ARG COMMIT=unknown
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
@@ -18,7 +19,8 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist/app.js /src/web/dist/app.js
 RUN CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH}" \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/manifold ./cmd/manifold
+    version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
+    && go build -trimpath -ldflags="-s -w -X main.version=${version} -X main.commit=${COMMIT}" -o /out/manifold ./cmd/manifold
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata wget \

@@ -4,7 +4,12 @@ FROM alpine/git:2.49.1 AS source
 ARG BRAIN_REF=v0.8.1
 RUN git clone --depth 1 --branch "${BRAIN_REF}" https://github.com/inite-ai/inite-brain-service.git /source
 COPY deploy/brain/openai-base-url.patch /tmp/openai-base-url.patch
-RUN cd /source && git apply --check /tmp/openai-base-url.patch && git apply /tmp/openai-base-url.patch
+COPY deploy/brain/scoped-session-recovery.patch /tmp/scoped-session-recovery.patch
+RUN cd /source \
+    && git apply --check /tmp/openai-base-url.patch \
+    && git apply /tmp/openai-base-url.patch \
+    && git apply --check /tmp/scoped-session-recovery.patch \
+    && git apply /tmp/scoped-session-recovery.patch
 
 FROM node:22-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS builder
 WORKDIR /app

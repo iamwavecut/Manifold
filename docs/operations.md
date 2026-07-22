@@ -46,6 +46,36 @@ curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
 
 Retry only `failed` or `partially_ready` jobs. Other states return `invalid_state_transition`.
 
+## Release and production deployment
+
+`GET /api/v1/meta` is public and contains only service version, exact build
+commit, API major, protocol revision, and advertised feature names. Use it to
+compare a remote deployment with its skill before authentication or mutation.
+
+The `Deploy production` workflow runs only after a successful push CI run on
+`main` (or an explicit manual dispatch). It checks out the event's immutable
+SHA and invokes `scripts/deploy-production.sh` on the host. The script requires
+a clean `/home/wavecut/Manifold` checkout on `main`, `.env` mode `0600`, and a
+target commit reachable from `origin/main`. It uses `docker compose up` without
+`down`, preserves every named volume, and verifies:
+
+- health and readiness through the public URL;
+- exact version/commit/protocol metadata;
+- authenticated status with every component ready;
+- scoped semantic search, context, and tree without degraded dependencies;
+- the running binary's build identity.
+
+If deep smoke fails after source activation, the script restores the recorded
+clean source SHA, rebuilds that stack, verifies health, and returns failure to
+GitHub. A green CI run, published GHCR image, GitHub release, and live
+deployment are distinct states; report their SHAs separately.
+
+The GitHub `production` environment holds only deployment transport material:
+`MANIFOLD_DEPLOY_SSH_KEY` and pinned `MANIFOLD_DEPLOY_KNOWN_HOSTS` secrets,
+plus `MANIFOLD_DEPLOY_HOST`, `MANIFOLD_DEPLOY_USER`, and
+`MANIFOLD_PUBLIC_URL` variables. The Manifold API key remains only in the
+host's protected `.env`; it is never copied into GitHub Actions.
+
 ## Key rotation
 
 Create a new admin key, verify it, switch clients, then revoke the old key from the new credential. Manifold refuses self-revocation to prevent accidental lockout.

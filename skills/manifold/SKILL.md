@@ -114,5 +114,10 @@ Trust `code`, never classify by parsing `detail`. The client prints remediation 
 - `unrewritable_reference`: resolve every blocker manually.
 - `dependency_unavailable`: inspect `status` and obey `retry_after`.
 - `job_wait_timeout`: inspect the job; do not claim persistence until it is terminal.
+- `server_incompatible`: the remote server does not advertise behavior required
+  by this command. Ask the operator to deploy a compatible Manifold release.
+  For a read-only request only, an unscoped fallback is allowed when removing
+  the filter does not change the task's meaning. Never use that fallback for
+  `remember` or another mutation.
 
 Read [references/error-codes.md](references/error-codes.md) when handling failures or scripting exit statuses.

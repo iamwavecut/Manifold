@@ -1,0 +1,109 @@
+diff --git a/src/db/surreal.service.ts b/src/db/surreal.service.ts
+index 1a0c081..6df73e5 100644
+--- a/src/db/surreal.service.ts
++++ b/src/db/surreal.service.ts
+@@ -92,6 +92,11 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+    *  auth, leaving queries to fail with "IAM error". The robust fix is
+    *  to drop the conn entirely and create a fresh one on failure. */
+   private rootCreds!: { username: string; password: string };
++  private scopedCreds?: {
++    username: string;
++    password: string;
++    namespace: string;
++  };
+   private surrealUrl!: string;
+ 
+   constructor(private readonly configService: ConfigService) {
+@@ -143,6 +148,45 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     }
+   }
+ 
++  /**
++   * Re-authenticate every acquired scoped connection before it is used.
++   * SurrealDB can restore a websocket without restoring its IAM session;
++   * in that state the socket looks healthy but every scoped query fails as
++   * anonymous. Rebuild the connection when a bounded signin cannot recover it.
++   */
++  private async ensureScopedSession(conn: Surreal): Promise<Surreal> {
++    if (!this.scopedCreds) return conn;
++    try {
++      await withTimeout(conn.signin(this.scopedCreds), 3000, 'scoped signin');
++      return conn;
++    } catch (e) {
++      this.logger.warn(
++        `Scoped signin failed (${(e as Error).message?.slice(0, 120)}) — rebuilding conn`,
++      );
++      try {
++        await withTimeout(conn.close(), 1000, 'scoped close').catch(
++          () => undefined,
++        );
++      } catch {
++        // Closing a dead connection can throw — ignored intentionally.
++      }
++      const fresh = new Surreal();
++      await withTimeout(
++        fresh.connect(this.surrealUrl),
++        5000,
++        'scoped connect',
++      );
++      await withTimeout(
++        fresh.signin(this.scopedCreds),
++        3000,
++        'scoped signin',
++      );
++      const oldIdx = this.all.indexOf(conn);
++      if (oldIdx >= 0) this.all[oldIdx] = fresh;
++      return fresh;
++    }
++  }
++
+   async onModuleInit() {
+     const url = this.configService.getOrThrow<string>('SURREALDB_URL');
+     const username = this.configService.getOrThrow<string>('SURREALDB_USERNAME');
+@@ -200,6 +244,11 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     const scopedUser = this.configService.get<string>('SURREALDB_SCOPED_USER');
+     const scopedPass = this.configService.get<string>('SURREALDB_SCOPED_PASS');
+     if (scopedUser && scopedPass) {
++      this.scopedCreds = {
++        username: scopedUser,
++        password: scopedPass,
++        namespace: this.namespace,
++      };
+       // Apply migrations on a root conn FIRST so brain_caller user exists.
+       // The first withCompany call that targets a fresh tenant DB still
+       // runs the migrations queue — but the root pool is already up,
+@@ -356,14 +405,25 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+       throw new Error(`Invalid companyId: ${companyId}`);
+     }
+     const database = `co_${companyId}`;
+-    const conn = await this.acquireScoped();
++    let conn = await this.acquireScoped();
+     try {
++      // On an established schema, recover a lost scoped IAM session before
++      // any query. During first boot the pool may still be root-signed until
++      // migration 0005 creates brain_caller, so bootstrap schema first.
++      if (this.scopedPasswordSynced) {
++        conn = await this.ensureScopedSession(conn);
++      }
+       await conn.use({ namespace: this.namespace, database });
+       // Migrations are idempotent and already serialised through
+       // schemaQueue; running on a scoped connection works because
+       // EDITOR role can DEFINE in v2 against an existing database
+       // it has access to (NS-level USER + DB exists).
+       await this.ensureSchema(conn, database);
++      // The current connection is not in scopedIdle while migrations re-sign
++      // idle peers. Re-authenticate it explicitly, then restore DB selection
++      // because signin resets session scope.
++      conn = await this.ensureScopedSession(conn);
++      await conn.use({ namespace: this.namespace, database });
+       // Bind scopes + policy-deny for this request. The variables live
+       // until the next LET on this connection — releasing back to the
+       // pool doesn't reset them, but the next withScopedCompany call
+@@ -540,6 +600,7 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+           // (DEFINE USER OVERWRITE replaces in place).
+           await this.overwriteScopedUserPassword();
+           await this.resignScopedConns();
++          this.scopedPasswordSynced = true;
+         }
+       } else if (
+         this.scopedEnabled &&

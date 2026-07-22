@@ -1079,6 +1079,42 @@ components:
       required:
         - documents
       type: object
+    Info:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Info.json
+          format: uri
+          readOnly: true
+          type: string
+        api_major:
+          format: int64
+          type: integer
+        commit:
+          type: string
+        features:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        protocol_revision:
+          format: int64
+          type: integer
+        service:
+          type: string
+        version:
+          type: string
+      required:
+        - service
+        - version
+        - commit
+        - api_major
+        - protocol_revision
+        - features
+      type: object
     Item:
       additionalProperties: false
       properties:
@@ -1705,6 +1741,56 @@ components:
         - confidence
         - ingested_at
       type: object
+    Status:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Status.json
+          format: uri
+          readOnly: true
+          type: string
+        api_major:
+          format: int64
+          type: integer
+        commit:
+          type: string
+        components:
+          additionalProperties:
+            type: string
+          type: object
+        counts:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        features:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        protocol_revision:
+          format: int64
+          type: integer
+        service:
+          type: string
+        state:
+          type: string
+        version:
+          type: string
+      required:
+        - service
+        - version
+        - commit
+        - api_major
+        - protocol_revision
+        - features
+        - state
+        - components
+        - counts
+      type: object
     TextReplacement:
       additionalProperties: false
       properties:
@@ -1832,7 +1918,7 @@ components:
 info:
   description: A self-hosted knowledge and memory layer for AI agents.
   title: Manifold API
-  version: 0.1.0
+  version: 0.2.0
 openapi: 3.1.0
 paths:
   /api/v1/api-keys:
@@ -4175,6 +4261,26 @@ paths:
       summary: Retry a failed or partially ready job
       tags:
         - Jobs
+  /api/v1/meta:
+    get:
+      operationId: get-meta
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Info"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      security: []
+      summary: Inspect API protocol compatibility
+      tags:
+        - System
   /api/v1/metrics:
     get:
       operationId: get-metrics
@@ -4907,7 +5013,8 @@ paths:
         "200":
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: "#/components/schemas/Status"
           description: OK
         "400":
           content:

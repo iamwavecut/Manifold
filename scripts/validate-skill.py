@@ -36,6 +36,7 @@ else:
         "remember",
         "memory_candidates_found",
         "folder_path_conflict",
+        "server_incompatible",
         "shared/<domain>",
         "tasks/<task-slug>",
         "MANIFOLD_URL",

@@ -78,6 +78,8 @@ For changes to the pinned Brain integration, also verify:
 
 ```bash
 git -C /path/to/inite-brain-service-v0.8.1 apply --check deploy/brain/openai-base-url.patch
+git -C /path/to/inite-brain-service-v0.8.1 apply deploy/brain/openai-base-url.patch
+git -C /path/to/inite-brain-service-v0.8.1 apply --check deploy/brain/scoped-session-recovery.patch
 ```
 
 Report skipped checks explicitly. Never claim a real-provider integration passed when only deterministic fakes ran.

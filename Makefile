@@ -1,11 +1,15 @@
 .PHONY: build run test test-race vet web web-check openapi openapi-check skill-check integration compose-up compose-down verify
 
+VERSION := $(shell tr -d '[:space:]' < VERSION)
+COMMIT ?= unknown
+LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+
 build: web
 	mkdir -p bin
-	go build -trimpath -o bin/manifold ./cmd/manifold
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/manifold ./cmd/manifold
 
 run: web
-	go run ./cmd/manifold
+	go run -ldflags="$(LDFLAGS)" ./cmd/manifold
 
 test:
 	go test ./...
@@ -24,10 +28,10 @@ web-check:
 
 openapi: web
 	mkdir -p api
-	go run ./cmd/manifold openapi > api/openapi.yaml
+	go run -ldflags="$(LDFLAGS)" ./cmd/manifold openapi > api/openapi.yaml
 
 openapi-check: web
-	@tmp=$$(mktemp); go run ./cmd/manifold openapi > $$tmp; diff -u api/openapi.yaml $$tmp; rm -f $$tmp
+	@tmp=$$(mktemp); go run -ldflags="$(LDFLAGS)" ./cmd/manifold openapi > $$tmp; diff -u api/openapi.yaml $$tmp; rm -f $$tmp
 
 skill-check:
 	python3 scripts/validate-skill.py skills/manifold

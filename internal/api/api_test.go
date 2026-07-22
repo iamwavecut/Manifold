@@ -16,6 +16,7 @@ import (
 
 	manifoldapi "github.com/iamwavecut/Manifold/internal/api"
 	"github.com/iamwavecut/Manifold/internal/auth"
+	"github.com/iamwavecut/Manifold/internal/buildinfo"
 	"github.com/iamwavecut/Manifold/internal/config"
 	"github.com/iamwavecut/Manifold/internal/identity"
 	"github.com/iamwavecut/Manifold/internal/model"
@@ -52,7 +53,7 @@ func newTestServer(t *testing.T, documents upstream.DocumentStore) testServer {
 	if documents == nil {
 		documents = fakeDocuments{}
 	}
-	svc := service.New(db, documents, fakeGraph{}, cfg.PublicURL, logger, cfg.WorkerInterval)
+	svc := service.New(db, documents, fakeGraph{}, cfg.PublicURL, logger, cfg.WorkerInterval, buildinfo.New("0.2.0-test", "test-commit"))
 	api := manifoldapi.New(svc, manager, cfg, logger, nil)
 	return testServer{handler: api.Handler, store: db, service: svc, spec: api.Spec}
 }
@@ -110,6 +111,45 @@ func assertProblem(t *testing.T, recorder *httptest.ResponseRecorder, status int
 		t.Fatalf("semantic error leaked internals: %s", recorder.Body.String())
 	}
 	return problem
+}
+
+func TestBuildAndProtocolMetadataStayConsistent(t *testing.T) {
+	server := newTestServer(t, nil)
+
+	metaResponse := request(t, server.handler, http.MethodGet, "/api/v1/meta", "", "", "", nil)
+	if metaResponse.Code != http.StatusOK {
+		t.Fatalf("meta status = %d; body=%s", metaResponse.Code, metaResponse.Body.String())
+	}
+	meta := decodeObject(t, metaResponse)
+	if meta["service"] != "manifold" || meta["version"] != "0.2.0-test" || meta["commit"] != "test-commit" {
+		t.Fatalf("meta build identity = %#v", meta)
+	}
+	if meta["api_major"] != float64(buildinfo.APIMajor) || meta["protocol_revision"] != float64(buildinfo.ProtocolRevision) {
+		t.Fatalf("meta protocol identity = %#v", meta)
+	}
+	features, ok := meta["features"].([]any)
+	if !ok || len(features) != 5 {
+		t.Fatalf("meta features = %#v", meta["features"])
+	}
+	for _, privateField := range []string{"components", "counts", "state", "openviking", "brain"} {
+		if _, exists := meta[privateField]; exists {
+			t.Fatalf("public metadata exposed %q: %#v", privateField, meta)
+		}
+	}
+
+	statusResponse := request(t, server.handler, http.MethodGet, "/api/v1/status", adminSecret, "", "", nil)
+	if statusResponse.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", statusResponse.Code, statusResponse.Body.String())
+	}
+	status := decodeObject(t, statusResponse)
+	for _, field := range []string{"service", "version", "commit", "api_major", "protocol_revision"} {
+		if status[field] != meta[field] {
+			t.Errorf("status %s = %#v, meta = %#v", field, status[field], meta[field])
+		}
+	}
+	if server.spec.Info.Version != "0.2.0-test" {
+		t.Fatalf("OpenAPI version = %q", server.spec.Info.Version)
+	}
 }
 
 func TestAuthenticationAndCapabilityErrorsAreSemantic(t *testing.T) {

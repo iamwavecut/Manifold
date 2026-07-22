@@ -65,7 +65,7 @@ Deploy:
 Verify before reporting success:
 1. Wait for every Compose healthcheck and inspect failing service logs if a
    service does not become healthy.
-2. Verify `/health`, `/ready`, `/openapi.yaml`, and authenticated
+2. Verify `/health`, `/ready`, `/api/v1/meta`, `/openapi.yaml`, and authenticated
    `/api/v1/status` through the public URL.
 3. Create one small test document through the REST API with an Idempotency-Key,
    poll its job to a terminal state, read the document, then delete the test
@@ -106,6 +106,7 @@ Copy the printed `BRAIN_API_KEYS_JSON=...` line into `.env`, then start the stac
 docker compose up -d --build
 docker compose ps
 curl --fail http://localhost:8080/health
+curl --fail http://localhost:8080/api/v1/meta
 ```
 
 Only Manifold is published to the host. OpenViking, Brain, and SurrealDB share
@@ -184,7 +185,7 @@ and a whole `**` segment for recursive matching.
 
 The generated contract covers:
 
-- health, readiness, status, and metrics;
+- health, readiness, public protocol/build metadata, authenticated status, and metrics;
 - folders and a path-bearing tree;
 - document creation, batch import, current content, immutable revisions, and deletion;
 - durable jobs and retry;
@@ -266,6 +267,13 @@ native clients for macOS and Linux on `amd64` and `arm64`; using Manifold does
 not require Python, Go, Node.js, or another language runtime. The client maps
 semantic error codes to stable exit statuses.
 
+The bundled client negotiates protocol features with the selected server.
+Unscoped reads remain usable against a legacy instance because optional fields
+are omitted. Explicit selectors and `remember` fail locally with
+`server_incompatible`/exit 23 when their guarantees are not advertised; the
+client never silently removes a requested filter or mutates through an
+unverified legacy contract.
+
 The skill treats Manifold as first-class memory. It searches and reads before
 creation, requires new knowledge to have a nested destination, stops on related
 candidates until the agent chooses an update or explicitly justified new
@@ -317,6 +325,13 @@ make integration
 It starts an isolated `manifold-integration` Compose project with a repository-owned OpenAI-compatible test provider and removes only that project's volumes when finished. It does not validate a production provider.
 
 Native container images are built for `linux/amd64` and `linux/arm64`. See [docs/operations.md](docs/operations.md) for backup, restore, and recovery.
+
+Every successful `main` CI run is deployed to the configured GitHub
+`production` environment by exact commit SHA. The host-side deployment keeps
+`.env` and named volumes intact, serializes deployments, verifies public build
+metadata plus authenticated semantic retrieval, and rolls back the clean
+checkout if deep smoke fails. Tags publish multi-architecture GHCR images;
+production metadata is the source of truth for the running version and commit.
 
 ## Built on
 

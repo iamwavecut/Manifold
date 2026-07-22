@@ -61,6 +61,14 @@ The key needs only the capabilities required by the workflow. Prefer a
 read-only key for search and context workflows; use an admin key only for key
 administration.
 
+The client negotiates advanced behavior through public `GET /api/v1/meta`.
+Against a legacy server it keeps unscoped `search`, `context`, and bare `tree`
+usable by omitting fields unknown to that server. It returns
+`server_incompatible` (exit 23) before a filtered request or any `remember`
+operation whose guarantees are not advertised. It never silently drops an
+explicit scope/type filter and never writes through an unverified legacy
+contract.
+
 ## Use Manifold as memory
 
 Start non-trivial work with retrieval, then read relevant canonical documents:

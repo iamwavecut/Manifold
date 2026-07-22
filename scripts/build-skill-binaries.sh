@@ -4,7 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 source_dir="$root/skills/manifold/cmd/manifold"
 output="$root/skills/manifold/bin"
-version=${VERSION:-dev}
+version=${VERSION:-$(tr -d '[:space:]' < "$root/VERSION")}
 
 build() {
   os=$1

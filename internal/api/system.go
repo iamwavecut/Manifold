@@ -9,10 +9,19 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/iamwavecut/Manifold/internal/auth"
+	"github.com/iamwavecut/Manifold/internal/buildinfo"
 	"github.com/iamwavecut/Manifold/internal/problem"
+	"github.com/iamwavecut/Manifold/internal/service"
 )
 
 func (a *API) registerSystem() {
+	huma.Register(a.huma, huma.Operation{
+		OperationID: "get-meta", Method: http.MethodGet, Path: "/api/v1/meta",
+		Summary: "Inspect API protocol compatibility", Tags: []string{"System"}, Security: []map[string][]string{},
+	}, func(ctx context.Context, _ *struct{}) (*body[buildinfo.Info], error) {
+		return &body[buildinfo.Info]{Body: a.service.BuildInfo()}, nil
+	})
+
 	huma.Register(a.huma, huma.Operation{
 		OperationID: "health", Method: http.MethodGet, Path: "/health",
 		Summary: "Liveness probe", Tags: []string{"System"}, Security: []map[string][]string{},
@@ -39,7 +48,7 @@ func (a *API) registerSystem() {
 	huma.Register(a.huma, huma.Operation{
 		OperationID: "get-status", Method: http.MethodGet, Path: "/api/v1/status",
 		Summary: "Inspect service and dependency status", Tags: []string{"System"}, Errors: commonErrors(),
-	}, func(ctx context.Context, _ *struct{}) (*body[any], error) {
+	}, func(ctx context.Context, _ *struct{}) (*body[service.Status], error) {
 		if _, err := a.require(ctx, auth.ReadDocuments); err != nil {
 			return nil, err
 		}
@@ -47,7 +56,7 @@ func (a *API) registerSystem() {
 		if err != nil {
 			return nil, err
 		}
-		return &body[any]{Body: status}, nil
+		return &body[service.Status]{Body: status}, nil
 	})
 
 	huma.Register(a.huma, huma.Operation{

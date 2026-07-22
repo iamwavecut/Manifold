@@ -8,6 +8,10 @@ api_key=${MANIFOLD_BOOTSTRAP_API_KEY:-replace-with-a-long-random-secret}
 compose="docker compose --project-name ${project} -f docker-compose.yml -f docker-compose.integration.yml --env-file .env.example"
 state_file=
 
+has_degraded_dependencies() {
+	printf '%s\n' "$1" | grep -Eq '"degraded_dependencies"[[:space:]]*:[[:space:]]*\[[[:space:]]*"'
+}
+
 cleanup() {
 	if [ -n "$state_file" ]; then
 		rm -f "$state_file"
@@ -60,6 +64,43 @@ case "$skill_tree" in
 	*'"path": "tasks/skill-integration-memory/skill-integration-memory"'*) ;;
 	*)
 		echo "Bundled skill tree did not return the nested canonical path" >&2
+		exit 1
+		;;
+esac
+
+# Keep Brain running while SurrealDB restarts. Its scoped pool must restore
+# authentication rather than remaining connected as an anonymous session.
+$compose restart surrealdb
+attempt=0
+while :; do
+	recovery_search=$(MANIFOLD_URL=$url \
+		MANIFOLD_API_KEY=$api_key \
+		sh skills/manifold/scripts/manifold --json search "scoped session recovery" 2>/dev/null || true)
+	case "$recovery_search" in
+		*'"items"'*)
+			if ! has_degraded_dependencies "$recovery_search"; then
+				break
+			fi
+			;;
+	esac
+	attempt=$((attempt + 1))
+	if [ "$attempt" -ge 60 ]; then
+		echo "Brain did not recover its scoped SurrealDB session" >&2
+		exit 1
+	fi
+	sleep 1
+done
+recovery_context=$(MANIFOLD_URL=$url \
+	MANIFOLD_API_KEY=$api_key \
+	sh skills/manifold/scripts/manifold --json context "scoped session recovery")
+if has_degraded_dependencies "$recovery_context"; then
+	echo "Context remained degraded after SurrealDB restart" >&2
+	exit 1
+fi
+case "$recovery_context" in
+	*'"context"'*) ;;
+	*)
+		echo "Context recovery response was incomplete" >&2
 		exit 1
 		;;
 esac

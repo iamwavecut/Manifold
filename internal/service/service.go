@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iamwavecut/Manifold/internal/buildinfo"
 	"github.com/iamwavecut/Manifold/internal/identity"
 	"github.com/iamwavecut/Manifold/internal/model"
 	"github.com/iamwavecut/Manifold/internal/problem"
@@ -26,14 +27,19 @@ type Service struct {
 	publicURL  string
 	logger     *slog.Logger
 	workerTick time.Duration
+	build      buildinfo.Info
 }
 
 type Status struct {
-	Service    string            `json:"service"`
-	Version    string            `json:"version"`
-	State      string            `json:"state"`
-	Components map[string]string `json:"components"`
-	Counts     map[string]int    `json:"counts"`
+	Service          string            `json:"service"`
+	Version          string            `json:"version"`
+	Commit           string            `json:"commit"`
+	APIMajor         int               `json:"api_major"`
+	ProtocolRevision int               `json:"protocol_revision"`
+	Features         []string          `json:"features"`
+	State            string            `json:"state"`
+	Components       map[string]string `json:"components"`
+	Counts           map[string]int    `json:"counts"`
 }
 
 type SearchRequest struct {
@@ -67,10 +73,14 @@ type resourceMove struct {
 	phase int
 }
 
-func New(s *store.Store, documents upstream.DocumentStore, graph upstream.GraphStore, publicURL string, logger *slog.Logger, workerTick time.Duration) *Service {
+func New(s *store.Store, documents upstream.DocumentStore, graph upstream.GraphStore, publicURL string, logger *slog.Logger, workerTick time.Duration, builds ...buildinfo.Info) *Service {
+	build := buildinfo.New("dev", "unknown")
+	if len(builds) > 0 {
+		build = builds[0]
+	}
 	return &Service{
 		store: s, documents: documents, graph: graph, publicURL: publicURL,
-		logger: logger, workerTick: workerTick,
+		logger: logger, workerTick: workerTick, build: build,
 	}
 }
 
@@ -78,9 +88,15 @@ func (s *Service) Store() *store.Store {
 	return s.store
 }
 
+func (s *Service) BuildInfo() buildinfo.Info {
+	return s.build
+}
+
 func (s *Service) Status(ctx context.Context) (Status, error) {
 	status := Status{
-		Service: "manifold", Version: "0.1.0", State: "ready",
+		Service: s.build.Service, Version: s.build.Version, Commit: s.build.Commit,
+		APIMajor: s.build.APIMajor, ProtocolRevision: s.build.ProtocolRevision,
+		Features: s.build.Features, State: "ready",
 		Components: map[string]string{"sqlite": "ready", "openviking": "unknown", "brain": "unknown"},
 	}
 	if err := s.store.Ping(ctx); err != nil {

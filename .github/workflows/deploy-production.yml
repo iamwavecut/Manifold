@@ -1,0 +1,66 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit SHA from main; defaults to the selected ref
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manifold-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == 'iamwavecut/Manifold')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}
+      DEPLOY_HOST: ${{ vars.MANIFOLD_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.MANIFOLD_DEPLOY_USER }}
+      MANIFOLD_PUBLIC_URL: ${{ vars.MANIFOLD_PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - name: Configure pinned SSH identity
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MANIFOLD_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.MANIFOLD_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/manifold_deploy
+          chmod 600 ~/.ssh/manifold_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Deploy exact green SHA
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          scp -i ~/.ssh/manifold_deploy scripts/deploy-production.sh \
+            "$DEPLOY_USER@$DEPLOY_HOST:/tmp/manifold-deploy-$DEPLOY_SHA.sh"
+          ssh -i ~/.ssh/manifold_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash /tmp/manifold-deploy-$DEPLOY_SHA.sh '$DEPLOY_SHA'; status=\$?; rm -f /tmp/manifold-deploy-$DEPLOY_SHA.sh; exit \$status"
+      - name: Verify public build identity
+        run: |
+          meta=$(curl --fail --silent --show-error "$MANIFOLD_PUBLIC_URL/api/v1/meta")
+          case "$meta" in
+            *'"commit":"'"$DEPLOY_SHA"'"'*) ;;
+            *) echo "public metadata commit does not match $DEPLOY_SHA" >&2; exit 1 ;;
+          esac

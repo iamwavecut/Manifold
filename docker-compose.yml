@@ -5,7 +5,8 @@ services:
     build:
       context: .
       args:
-        VERSION: ${MANIFOLD_VERSION:-dev}
+        VERSION: ${MANIFOLD_BUILD_VERSION:-}
+        COMMIT: ${MANIFOLD_BUILD_COMMIT:-unknown}
     restart: unless-stopped
     init: true
     environment:

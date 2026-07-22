@@ -15,6 +15,7 @@ import (
 
 	manifoldapi "github.com/iamwavecut/Manifold/internal/api"
 	"github.com/iamwavecut/Manifold/internal/auth"
+	"github.com/iamwavecut/Manifold/internal/buildinfo"
 	"github.com/iamwavecut/Manifold/internal/config"
 	"github.com/iamwavecut/Manifold/internal/service"
 	"github.com/iamwavecut/Manifold/internal/store"
@@ -22,7 +23,10 @@ import (
 	"github.com/iamwavecut/Manifold/web"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -42,7 +46,7 @@ func run() error {
 		case "openapi":
 			return writeOpenAPI(cfg, logger)
 		case "version":
-			fmt.Println(version)
+			fmt.Printf("%s (%s) protocol=%d\n", version, commit, buildinfo.ProtocolRevision)
 			return nil
 		default:
 			return fmt.Errorf("unknown command %q; supported commands: openapi, version", os.Args[1])
@@ -69,7 +73,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	httpClient := &http.Client{Timeout: cfg.HTTPTimeout}
 	documents := upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient)
 	graph := upstream.NewBrain(cfg.BrainURL, cfg.BrainKey, httpClient)
-	svc := service.New(db, documents, graph, cfg.PublicURL, logger, cfg.WorkerInterval)
+	svc := service.New(db, documents, graph, cfg.PublicURL, logger, cfg.WorkerInterval, buildinfo.New(version, commit))
 	handler := manifoldapi.New(svc, authManager, cfg, logger, web.Handler()).Handler
 
 	server := &http.Server{
@@ -129,6 +133,7 @@ func writeOpenAPI(cfg config.Config, logger *slog.Logger) error {
 		cfg.PublicURL,
 		logger,
 		cfg.WorkerInterval,
+		buildinfo.New(version, commit),
 	)
 	api := manifoldapi.New(svc, auth.NewManager(db), cfg, logger, nil)
 	data, err := api.Spec.YAML()

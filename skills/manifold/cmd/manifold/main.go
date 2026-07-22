@@ -20,10 +20,20 @@ import (
 
 var version = "dev"
 
+const (
+	protocolRevision   = 2
+	featureScopeGlob   = "retrieval.scope_glob"
+	featureSourceTypes = "retrieval.source_types"
+	featureTreeGlob    = "tree.glob"
+	featureRemember    = "memory.remember.v1"
+)
+
 type client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL  string
+	apiKey   string
+	http     *http.Client
+	meta     serverMetadata
+	metaRead bool
 }
 
 type apiError struct {
@@ -54,6 +64,17 @@ type problem struct {
 	} `json:"blockers"`
 	Candidates           []memoryCandidate `json:"candidates,omitempty"`
 	DegradedDependencies []string          `json:"degraded_dependencies,omitempty"`
+	RequiredFeatures     []string          `json:"required_features,omitempty"`
+	ServerVersion        string            `json:"server_version,omitempty"`
+}
+
+type serverMetadata struct {
+	Service          string   `json:"service"`
+	Version          string   `json:"version"`
+	Commit           string   `json:"commit"`
+	APIMajor         int      `json:"api_major"`
+	ProtocolRevision int      `json:"protocol_revision"`
+	Features         []string `json:"features"`
 }
 
 type memoryCandidate struct {
@@ -94,7 +115,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *showVersion {
-		fmt.Fprintln(stdout, version)
+		fmt.Fprintf(stdout, "%s protocol=%d\n", version, protocolRevision)
 		return 0
 	}
 	remaining := global.Args()
@@ -147,6 +168,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func execute(c *client, args []string) (json.RawMessage, error) {
 	switch args[0] {
+	case "meta":
+		meta, err := c.serverMetadata()
+		if err != nil {
+			return nil, err
+		}
+		if meta.Service == "" {
+			return nil, incompatibleServerProblem("protocol metadata", meta, "api.meta.v1")
+		}
+		return json.Marshal(meta)
 	case "status":
 		return c.request(http.MethodGet, "/api/v1/status", nil, "", "")
 	case "tree", "browse":
@@ -228,6 +258,12 @@ func executeTree(c *client, args []string) (json.RawMessage, error) {
 	if err := flags.Parse(args); err != nil {
 		return nil, err
 	}
+	if *glob == "**" && *types == "folder,document" && *limit == 200 && *cursor == "" {
+		return c.request(http.MethodGet, "/api/v1/tree", nil, "", "")
+	}
+	if err := c.requireFeatures("filtered tree", featureTreeGlob); err != nil {
+		return nil, err
+	}
 	query := url.Values{}
 	query.Set("glob", *glob)
 	query.Set("types", *types)
@@ -253,10 +289,13 @@ func executeSearch(c *client, args []string) (json.RawMessage, error) {
 	if query == "" {
 		return nil, fmt.Errorf("search requires a query")
 	}
-	return c.request(http.MethodPost, "/api/v1/search", map[string]any{
-		"query": query, "mode": *mode, "limit": *limit, "include_history": *history,
-		"scope_glob": *scopeGlob, "source_types": []string(sourceTypes),
-	}, "", "")
+	required := retrievalFeatures(*scopeGlob, sourceTypes)
+	if err := c.requireFeatures("scoped search", required...); err != nil {
+		return nil, err
+	}
+	body := map[string]any{"query": query, "mode": *mode, "limit": *limit, "include_history": *history}
+	addRetrievalSelectors(body, *scopeGlob, sourceTypes)
+	return c.request(http.MethodPost, "/api/v1/search", body, "", "")
 }
 
 func executeContext(c *client, args []string) (json.RawMessage, error) {
@@ -273,10 +312,13 @@ func executeContext(c *client, args []string) (json.RawMessage, error) {
 	if query == "" {
 		return nil, fmt.Errorf("context requires a query")
 	}
-	return c.request(http.MethodPost, "/api/v1/context", map[string]any{
-		"query": query, "token_budget": *budget, "include_history": *history,
-		"scope_glob": *scopeGlob, "source_types": []string(sourceTypes),
-	}, "", "")
+	required := retrievalFeatures(*scopeGlob, sourceTypes)
+	if err := c.requireFeatures("scoped context", required...); err != nil {
+		return nil, err
+	}
+	body := map[string]any{"query": query, "token_budget": *budget, "include_history": *history}
+	addRetrievalSelectors(body, *scopeGlob, sourceTypes)
+	return c.request(http.MethodPost, "/api/v1/context", body, "", "")
 }
 
 func executeRemember(c *client, args []string) (json.RawMessage, error) {
@@ -309,6 +351,9 @@ func executeRemember(c *client, args []string) (json.RawMessage, error) {
 	}
 	if (*content == "" && *file == "") || (*content != "" && *file != "") {
 		return nil, fmt.Errorf("remember requires exactly one of --content or --file")
+	}
+	if err := c.requireFeatures("remember", featureRemember, featureSourceTypes); err != nil {
+		return nil, err
 	}
 	if *file != "" {
 		data, err := os.ReadFile(filepath.Clean(*file))
@@ -559,6 +604,94 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+func retrievalFeatures(scopeGlob string, sourceTypes []string) []string {
+	var required []string
+	if scopeGlob != "" {
+		required = append(required, featureScopeGlob)
+	}
+	if len(sourceTypes) > 0 {
+		required = append(required, featureSourceTypes)
+	}
+	return required
+}
+
+func addRetrievalSelectors(body map[string]any, scopeGlob string, sourceTypes []string) {
+	if scopeGlob != "" {
+		body["scope_glob"] = scopeGlob
+	}
+	if len(sourceTypes) > 0 {
+		body["source_types"] = sourceTypes
+	}
+}
+
+func (c *client) requireFeatures(command string, required ...string) error {
+	if len(required) == 0 {
+		return nil
+	}
+	meta, err := c.serverMetadata()
+	if err != nil {
+		return err
+	}
+	available := make(map[string]struct{}, len(meta.Features))
+	for _, feature := range meta.Features {
+		available[feature] = struct{}{}
+	}
+	missing := make([]string, 0, len(required))
+	for _, feature := range required {
+		if _, ok := available[feature]; !ok {
+			missing = append(missing, feature)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return incompatibleServerProblem(command, meta, missing...)
+}
+
+func incompatibleServerProblem(command string, meta serverMetadata, missing ...string) error {
+	serverVersion := meta.Version
+	if serverVersion == "" {
+		serverVersion = "legacy-or-unknown"
+	}
+	var p problem
+	p.Code = "server_incompatible"
+	p.Title = "Manifold server does not support this command"
+	p.Detail = fmt.Sprintf("%s requires features not advertised by Manifold %s: %s.", command, serverVersion, strings.Join(missing, ", "))
+	p.RequestID = "local"
+	p.RequiredFeatures = missing
+	p.ServerVersion = serverVersion
+	p.Remediation.Summary = "Deploy a compatible Manifold server before retrying this operation."
+	p.Remediation.Steps = []string{
+		"Ask the operator to deploy Manifold v0.2.0 or newer.",
+		"Run manifold meta and confirm the required features are advertised.",
+		"For read-only retrieval, use an unscoped search only if removing the filter preserves the task intent.",
+	}
+	return &apiError{Status: http.StatusConflict, Body: p}
+}
+
+func (c *client) serverMetadata() (serverMetadata, error) {
+	if c.metaRead {
+		return c.meta, nil
+	}
+	payload, err := c.request(http.MethodGet, "/api/v1/meta", nil, "", "")
+	if err != nil {
+		var semantic *apiError
+		if errors.As(err, &semantic) && semantic.Status == http.StatusNotFound {
+			c.metaRead = true
+			return serverMetadata{}, nil
+		}
+		return serverMetadata{}, err
+	}
+	var meta serverMetadata
+	if json.Unmarshal(payload, &meta) != nil || meta.Service != "manifold" || meta.APIMajor != 1 {
+		c.metaRead = true
+		return serverMetadata{}, nil
+	}
+	c.meta = meta
+	c.metaRead = true
+	return meta, nil
+}
+
 func (c *client) request(method, path string, body any, etag, idempotencyKey string) (json.RawMessage, error) {
 	payload, _, err := c.requestWithHeaders(method, path, body, etag, idempotencyKey)
 	return payload, err
@@ -667,6 +800,12 @@ func renderProblem(out io.Writer, p problem) {
 	if len(p.DegradedDependencies) > 0 {
 		fmt.Fprintln(out, "Unavailable discovery dependencies:", strings.Join(p.DegradedDependencies, ", "))
 	}
+	if len(p.RequiredFeatures) > 0 {
+		fmt.Fprintln(out, "Required server features:", strings.Join(p.RequiredFeatures, ", "))
+	}
+	if p.ServerVersion != "" {
+		fmt.Fprintln(out, "Server version:", p.ServerVersion)
+	}
 	if p.RetryAfter != "" {
 		fmt.Fprintln(out, "Retry after:", p.RetryAfter)
 	}
@@ -730,6 +869,8 @@ func exitCode(code string) int {
 		return 21
 	case "job_wait_timeout":
 		return 22
+	case "server_incompatible":
+		return 23
 	default:
 		return 19
 	}
@@ -737,7 +878,7 @@ func exitCode(code string) int {
 
 func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "Usage: manifold [--json] [--timeout 30s] COMMAND [ARGS]")
-	fmt.Fprintln(out, "Commands: status tree browse read remember write search context history jobs job retry-job graph facts relations conflicts resolve-conflict rename-preview rename-apply")
+	fmt.Fprintln(out, "Commands: meta status tree browse read remember write search context history jobs job retry-job graph facts relations conflicts resolve-conflict rename-preview rename-apply")
 }
 
 type stringList []string

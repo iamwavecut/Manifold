@@ -18,6 +18,7 @@ The CLI uses the response `code`, not free-form text.
 | 20 | `api_key_secret_not_replayable` | Use the original one-time secret or revoke the key and issue a replacement. |
 | 21 | `memory_candidates_found` (local skill decision) | Read relevant candidates, then choose `--update` or explicitly justified `--new`. |
 | 22 | `job_wait_timeout` (local skill state) | Inspect the job and wait for a terminal state before claiming persistence. |
+| 23 | `server_incompatible` (local protocol gate) | Deploy a compatible server; never silently remove requested filters or write through an unverified legacy contract. |
 
 An idempotent mutation may be retried with the same `Idempotency-Key`. A corrected request that changes intended data should use a new key.
 The `remember` command does not retry `etag_mismatch`; the agent must reread and reconcile concurrent content first.

@@ -42,7 +42,7 @@ type API struct {
 
 func New(svc *service.Service, manager *auth.Manager, cfg config.Config, logger *slog.Logger, web http.Handler) *API {
 	mux := http.NewServeMux()
-	humaConfig := huma.DefaultConfig("Manifold API", "0.1.0")
+	humaConfig := huma.DefaultConfig("Manifold API", svc.BuildInfo().Version)
 	humaConfig.Info.Description = "A self-hosted knowledge and memory layer for AI agents."
 	humaConfig.OpenAPIPath = "/openapi"
 	humaConfig.DocsPath = "/docs/api"

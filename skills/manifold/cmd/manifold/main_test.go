@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const currentServerMetadata = `{"service":"manifold","version":"0.2.0","commit":"test","api_major":1,"protocol_revision":2,"features":["documents.folder_path","memory.remember.v1","retrieval.scope_glob","retrieval.source_types","tree.glob"]}`
+
 func TestProblemRenderingUsesCodeAndRemediation(t *testing.T) {
 	var p problem
 	p.Code = "slug_taken"
@@ -47,9 +49,133 @@ func TestIdempotencyKeyIsNotAnXID(t *testing.T) {
 	}
 }
 
+func TestLegacyServerReceivesOnlyTheBaseRetrievalContract(t *testing.T) {
+	searchSeen := false
+	contextSeen := false
+	treeSeen := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/search":
+			searchSeen = true
+			assertJSONFields(t, r, "query", "mode", "limit", "include_history")
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case "/api/v1/context":
+			contextSeen = true
+			assertJSONFields(t, r, "query", "token_budget", "include_history")
+			_, _ = w.Write([]byte(`{"context":{"text":""}}`))
+		case "/api/v1/tree":
+			treeSeen = true
+			if r.URL.RawQuery != "" {
+				t.Errorf("legacy tree query = %q, want empty", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"folders":[],"documents":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	c := &client{baseURL: server.URL, apiKey: "test", http: server.Client()}
+
+	if _, err := executeSearch(c, []string{"memory"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeContext(c, []string{"memory"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeTree(c, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !searchSeen || !contextSeen || !treeSeen {
+		t.Fatalf("legacy requests seen: search=%v context=%v tree=%v", searchSeen, contextSeen, treeSeen)
+	}
+}
+
+func TestLegacyServerRejectsAdvancedReadsAndRememberBeforeMutation(t *testing.T) {
+	applicationCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/meta" {
+			http.NotFound(w, r)
+			return
+		}
+		applicationCalls++
+		http.Error(w, "unexpected application request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	c := &client{baseURL: server.URL, apiKey: "test", http: server.Client()}
+
+	for _, operation := range []func() error{
+		func() error { _, err := execute(c, []string{"meta"}); return err },
+		func() error { _, err := executeSearch(c, []string{"--scope-glob", "shared/**", "memory"}); return err },
+		func() error { _, err := executeContext(c, []string{"--type", "document", "memory"}); return err },
+		func() error { _, err := executeTree(c, []string{"--types", "document"}); return err },
+		func() error {
+			_, err := executeRemember(c, []string{"--id", "memory", "--title", "Memory", "--folder-path", "shared", "--content", "text"})
+			return err
+		},
+	} {
+		var semantic *apiError
+		if err := operation(); !errors.As(err, &semantic) || semantic.Body.Code != "server_incompatible" {
+			t.Fatalf("compatibility error = %#v", err)
+		}
+		if exitCode(semantic.Body.Code) != 23 || len(semantic.Body.RequiredFeatures) == 0 {
+			t.Fatalf("compatibility problem = %#v", semantic.Body)
+		}
+	}
+	if applicationCalls != 0 {
+		t.Fatalf("legacy compatibility gate allowed %d application requests", applicationCalls)
+	}
+}
+
+func TestCurrentServerReceivesExplicitRetrievalSelectors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/meta":
+			_, _ = w.Write([]byte(currentServerMetadata))
+		case "/api/v1/search":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["scope_glob"] != "shared/**" {
+				t.Errorf("scope_glob = %#v", body["scope_glob"])
+			}
+			types, _ := body["source_types"].([]any)
+			if len(types) != 1 || types[0] != "document" {
+				t.Errorf("source_types = %#v", body["source_types"])
+			}
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	c := &client{baseURL: server.URL, apiKey: "test", http: server.Client()}
+	if _, err := executeSearch(c, []string{"--scope-glob", "shared/**", "--type", "document", "memory"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertJSONFields(t *testing.T, r *http.Request, expected ...string) {
+	t.Helper()
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != len(expected) {
+		t.Errorf("request body = %#v; expected only %v", body, expected)
+	}
+	for _, field := range expected {
+		if _, ok := body[field]; !ok {
+			t.Errorf("request body lacks %q: %#v", field, body)
+		}
+	}
+}
+
 func TestRememberRequiresReadingCandidatesBeforeChoosingCreateOrUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v1/meta":
+			_, _ = w.Write([]byte(currentServerMetadata))
 		case r.URL.Path == "/api/v1/search":
 			_, _ = w.Write([]byte(`{"items":[{"kind":"document","id":"memory-policy","path":"shared/agent-practice/memory-policy","title":"Memory policy","revision":"r3","canonical_ref":"manifold://documents/memory-policy@r3","snippet":"Search before creating."}]}`))
 		case r.URL.Path == "/api/v1/documents/new-policy":
@@ -85,6 +211,8 @@ func TestRememberCreatesNestedPathOnlyAfterExplicitDistinctDecisionAndWaitsForRe
 	created := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v1/meta":
+			_, _ = w.Write([]byte(currentServerMetadata))
 		case r.URL.Path == "/api/v1/search":
 			_, _ = w.Write([]byte(`{"items":[{"kind":"document","id":"existing","path":"shared/existing","title":"Existing","revision":"r1","canonical_ref":"manifold://documents/existing@r1"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/documents/incident-note":
@@ -146,6 +274,10 @@ func TestRememberCreatesNestedPathOnlyAfterExplicitDistinctDecisionAndWaitsForRe
 func TestRememberRefusesToMutateWhenSemanticDiscoveryIsDegraded(t *testing.T) {
 	postCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/meta" {
+			_, _ = w.Write([]byte(currentServerMetadata))
+			return
+		}
 		if r.URL.Path == "/api/v1/search" {
 			_, _ = w.Write([]byte(`{"items":[],"degraded_dependencies":["openviking"]}`))
 			return
@@ -175,6 +307,8 @@ func TestRememberDoesNotBlindlyRetryAnETagMismatch(t *testing.T) {
 	putCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v1/meta":
+			_, _ = w.Write([]byte(currentServerMetadata))
 		case r.URL.Path == "/api/v1/search":
 			_, _ = w.Write([]byte(`{"items":[]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/documents/memory-policy":
