@@ -91,7 +91,7 @@ func TestBrainAdapterMatchesPinnedV081DocumentContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewBrain(server.URL, "brain-secret", server.Client())
+	client := NewBrain(server.URL, "brain-secret", server.Client(), server.Client())
 	result, err := client.IngestDocument(t.Context(), GraphDocument{
 		ID: "agent-memory", Title: "Agent memory", Format: "markdown", Content: "content",
 		OriginURI: "viking://resources/manifold/agent-memory.md", Revision: "r1",
@@ -126,9 +126,36 @@ func TestBrainSearchClampsCandidateLimitToPinnedContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewBrain(server.URL, "brain-secret", server.Client())
+	client := NewBrain(server.URL, "brain-secret", server.Client(), server.Client())
 	if _, err := client.Search(t.Context(), "release evidence", 200, false); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBrainDocumentIngestUsesDedicatedLongRunningClient(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ingest/document" {
+			http.NotFound(w, r)
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"documentId":"brain-document-1","committed":{}}`))
+	}))
+	defer server.Close()
+
+	ordinaryClient := &http.Client{Timeout: 5 * time.Millisecond}
+	ingestClient := &http.Client{Timeout: 200 * time.Millisecond}
+	client := NewBrain(server.URL, "brain-secret", ordinaryClient, ingestClient)
+	result, err := client.IngestDocument(t.Context(), GraphDocument{
+		ID: "release-evidence", Title: "Release evidence", Format: "markdown", Content: "verified",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DocumentID != "brain-document-1" {
+		t.Fatalf("document ID = %q", result.DocumentID)
 	}
 }
 
@@ -153,7 +180,7 @@ func TestDependencyErrorsClassifyRetrySafetyAndOmitProviderBodies(t *testing.T) 
 			}))
 			defer server.Close()
 
-			err := NewBrain(server.URL, "key", server.Client()).Health(t.Context())
+			err := NewBrain(server.URL, "key", server.Client(), server.Client()).Health(t.Context())
 			var dependency *DependencyError
 			if !errors.As(err, &dependency) {
 				t.Fatalf("error = %T %v, want DependencyError", err, err)
@@ -176,7 +203,7 @@ func TestProviderTimeoutIsRetryable(t *testing.T) {
 	}))
 	defer server.Close()
 	client := &http.Client{Timeout: 5 * time.Millisecond}
-	err := NewBrain(server.URL, "key", client).Health(context.Background())
+	err := NewBrain(server.URL, "key", client, client).Health(context.Background())
 	var dependency *DependencyError
 	if !errors.As(err, &dependency) || !dependency.Retryable {
 		t.Fatalf("timeout error = %#v, want retryable DependencyError", err)

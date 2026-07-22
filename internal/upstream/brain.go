@@ -11,16 +11,18 @@ import (
 )
 
 type Brain struct {
-	http httpClient
+	http       httpClient
+	ingestHTTP httpClient
 }
 
 const brainSearchMaxLimit = 100
 
-func NewBrain(base, key string, client *http.Client) *Brain {
-	return &Brain{http: httpClient{
-		name: "brain", base: base, key: key, client: client,
-		auth: func(req *http.Request, key string) { req.Header.Set("Authorization", "Bearer "+key) },
-	}}
+func NewBrain(base, key string, client, ingestClient *http.Client) *Brain {
+	auth := func(req *http.Request, key string) { req.Header.Set("Authorization", "Bearer "+key) }
+	return &Brain{
+		http:       httpClient{name: "brain", base: base, key: key, client: client, auth: auth},
+		ingestHTTP: httpClient{name: "brain", base: base, key: key, client: ingestClient, auth: auth},
+	}
 }
 
 func (b *Brain) Health(ctx context.Context) error {
@@ -51,7 +53,7 @@ func (b *Brain) IngestDocument(ctx context.Context, document GraphDocument) (Gra
 			EdgeIDs   []string `json:"edgeIds"`
 		} `json:"committed"`
 	}
-	if err := b.http.do(ctx, http.MethodPost, "/v1/ingest/document", body, &response); err != nil {
+	if err := b.ingestHTTP.do(ctx, http.MethodPost, "/v1/ingest/document", body, &response); err != nil {
 		return GraphIngestResult{}, err
 	}
 	return GraphIngestResult{

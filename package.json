@@ -1,7 +1,7 @@
 {
   "name": "@iamwavecut/manifold-web",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "build": "esbuild web/src/main.ts --bundle --minify --sourcemap --target=es2022 --outfile=web/dist/app.js",

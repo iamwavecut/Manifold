@@ -144,7 +144,7 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 	svc := New(
 		db,
 		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		upstream.NewBrain(brain.URL, "brain-key", brain.Client()),
+		upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client()),
 		"https://memory.example.test",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		time.Millisecond,
@@ -237,7 +237,7 @@ func TestDocumentRetryReconcilesCreateBeforeCheckpoint(t *testing.T) {
 	svc := New(
 		db,
 		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		upstream.NewBrain(brain.URL, "brain-key", brain.Client()),
+		upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client()),
 		"https://memory.example.test",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		time.Millisecond,
@@ -325,7 +325,7 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	documents := upstream.NewOpenViking(openViking.URL, "", openViking.Client())
-	graph := upstream.NewBrain(brain.URL, "brain-key", brain.Client())
+	graph := upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client())
 	svc := New(db, documents, graph, "https://memory.example.test", logger, time.Millisecond)
 
 	_, initialJob, err := svc.CreateDocument(t.Context(), model.Document{
@@ -499,7 +499,7 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 	svc := New(
 		db,
 		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		upstream.NewBrain(brain.URL, "brain-key", brain.Client()),
+		upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client()),
 		"https://memory.example.test",
 		logger,
 		time.Millisecond,

@@ -38,6 +38,13 @@ Do not restore only SQLite over newer OpenViking or Brain state. Public mappings
 
 Jobs in `indexing` or `extracting` are returned to `accepted` when Manifold restarts. Completed semantic errors persist in SQLite. After a dependency recovers:
 
+Ordinary dependency requests use `MANIFOLD_HTTP_TIMEOUT` (30 seconds by
+default). Synchronous Brain document extraction runs only in the durable worker
+and uses `MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes by default), because model
+providers can legitimately take longer than an interactive health or search
+request. Increase the ingest timeout when the configured provider has a higher
+document-processing latency; do not disable timeouts.
+
 ```bash
 curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
   -H "Authorization: Bearer $MANIFOLD_API_KEY" \
