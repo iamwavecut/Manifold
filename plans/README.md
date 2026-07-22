@@ -32,9 +32,9 @@ release after the discovery-first memory work.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| [001](001-negotiate-skill-server-capabilities.md) | Make the skill/server protocol skew-safe | P0 | M | — | TODO |
-| [002](002-repair-brain-scoped-session-recovery.md) | Keep Brain retrieval authenticated after SurrealDB session loss | P0 | M | 001 | TODO |
-| [003](003-release-and-deploy-v0.2.0.md) | Release v0.2.0 and deploy every green main SHA | P0 | M | 001, 002 | TODO |
+| [001](001-negotiate-skill-server-capabilities.md) | Make the skill/server protocol skew-safe | P0 | M | — | DONE — released in v0.2.0 |
+| [002](002-repair-brain-scoped-session-recovery.md) | Keep Brain retrieval authenticated after SurrealDB session loss | P0 | M | 001 | DONE — released in v0.2.0 |
+| [003](003-release-and-deploy-v0.2.0.md) | Release v0.2.0 and deploy every green main SHA | P0 | M | 001, 002 | DONE — deployed from exact green SHA |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED`, or `REJECTED` with a
 short reason.
@@ -73,4 +73,3 @@ because production discovery is degraded and the old server lacks atomic
 - **Treat `/health` as the release gate**: rejected. The live incident proves
   HTTP liveness and root-pool health can remain green while real retrieval is
   broken.
-

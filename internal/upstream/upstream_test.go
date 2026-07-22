@@ -106,6 +106,32 @@ func TestBrainAdapterMatchesPinnedV081DocumentContract(t *testing.T) {
 	}
 }
 
+func TestBrainSearchClampsCandidateLimitToPinnedContract(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		if body["limit"] != float64(brainSearchMaxLimit) {
+			t.Errorf("limit = %#v, want %d", body["limit"], brainSearchMaxLimit)
+		}
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewBrain(server.URL, "brain-secret", server.Client())
+	if _, err := client.Search(t.Context(), "release evidence", 200, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDependencyErrorsClassifyRetrySafetyAndOmitProviderBodies(t *testing.T) {
 	t.Parallel()
 

@@ -9,7 +9,7 @@ compose="docker compose --project-name ${project} -f docker-compose.yml -f docke
 state_file=
 
 has_degraded_dependencies() {
-	printf '%s\n' "$1" | grep -Eq '"degraded_dependencies"[[:space:]]*:[[:space:]]*\[[[:space:]]*"'
+	printf '%s\n' "$1" | tr -d '\n' | grep -Eq '"degraded_dependencies"[[:space:]]*:[[:space:]]*\[[[:space:]]*"'
 }
 
 cleanup() {

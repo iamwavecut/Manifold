@@ -14,6 +14,8 @@ type Brain struct {
 	http httpClient
 }
 
+const brainSearchMaxLimit = 100
+
 func NewBrain(base, key string, client *http.Client) *Brain {
 	return &Brain{http: httpClient{
 		name: "brain", base: base, key: key, client: client,
@@ -62,7 +64,7 @@ func (b *Brain) IngestDocument(ctx context.Context, document GraphDocument) (Gra
 
 func (b *Brain) Search(ctx context.Context, query string, limit int, includeHistory bool) ([]model.SearchHit, error) {
 	body := map[string]any{
-		"query": query, "limit": limit, "searchMode": "hybrid",
+		"query": query, "limit": min(limit, brainSearchMaxLimit), "searchMode": "hybrid",
 		"requireProvenance": true, "includeContested": true,
 		"includeStale": includeHistory,
 	}

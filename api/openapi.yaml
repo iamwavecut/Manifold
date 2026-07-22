@@ -1918,7 +1918,7 @@ components:
 info:
   description: A self-hosted knowledge and memory layer for AI agents.
   title: Manifold API
-  version: 0.2.0
+  version: 0.2.1
 openapi: 3.1.0
 paths:
   /api/v1/api-keys:
