@@ -1,8 +1,8 @@
 diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
-index 95b36c6..6a70d5a 100644
+index f2741b9..ca4f3a9 100644
 --- a/src/documents/document-store.service.ts
 +++ b/src/documents/document-store.service.ts
-@@ -121,8 +121,11 @@ export class DocumentStoreService {
+@@ -151,8 +151,11 @@ export class DocumentStoreService {
      // this caller's memory under THAT row's scope). Same-user re-posts
      // still dedupe; two users asserting the same text stay independent
      // origins for corroboration (0050) — scope-local facts anyway.
@@ -16,7 +16,7 @@ index 95b36c6..6a70d5a 100644
      // G9 write-anomaly signal (one increment per document body stored).
      this.metrics?.countIngestWrite('document');
      const chunks = chunkDocument(text, {
-@@ -308,6 +311,35 @@ export function userScopedContentHash(userId: string, text: string): string {
+@@ -390,6 +393,35 @@ export function userScopedContentHash(userId: string, text: string): string {
    return sha256Hex(`\u0000user-scope\u0000${userId}\u0000${text}`);
  }
  

@@ -36,6 +36,7 @@ services:
       FACTS_API_ENABLED: "1"
       CHAT_ROUTE_NLI_ENABLED: "false"
       BRAIN_HEALTH_RESTART_FAILURES: 2
+      OPENAI_CHAT_EXTRA_BODY: '{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}'
     depends_on:
       provider:
         condition: service_healthy

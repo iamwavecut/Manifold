@@ -1,8 +1,8 @@
 diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
-index a894331..0f7832f 100644
+index 14c0070..708e7ab 100644
 --- a/src/ai/openai-client.ts
 +++ b/src/ai/openai-client.ts
-@@ -5,6 +5,7 @@ import OpenAI from 'openai';
+@@ -41,6 +41,7 @@ export function chatModel(config: ConfigService): string {
  function buildClient(config: ConfigService, apiKey: string): OpenAI {
    return new OpenAI({
      apiKey,
@@ -11,13 +11,13 @@ index a894331..0f7832f 100644
      maxRetries: parseInt(config.get<string>('OPENAI_MAX_RETRIES', '3'), 10),
    });
 diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
-index ac56488..ac8ee48 100644
+index f524c16..acf722c 100644
 --- a/src/common/env-validation.ts
 +++ b/src/common/env-validation.ts
-@@ -22,7 +22,7 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
-   required({ env, name: 'SURREALDB_URL', errors, pattern: /^(ws|wss|http|https):\/\// });
-   required({ env, name: 'SURREALDB_USERNAME', errors });
-   required({ env, name: 'SURREALDB_PASSWORD', errors });
+@@ -32,7 +32,7 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
+   // extractor, generator, verifier, deriver, chat router and multi-hop
+   // planner all build an OpenAI client eagerly in their constructors, so a
+   // key-less boot fails there instead of here.
 -  required({ env, name: 'OPENAI_API_KEY', errors, pattern: /^sk-/ });
 +  required({ env, name: 'OPENAI_API_KEY', errors });
  

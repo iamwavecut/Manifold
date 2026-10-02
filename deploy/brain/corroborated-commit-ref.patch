@@ -1,8 +1,8 @@
 diff --git a/src/documents/commit-writer.service.ts b/src/documents/commit-writer.service.ts
-index c3bb3ff..f4ecac2 100644
+index 194b947..16e0340 100644
 --- a/src/documents/commit-writer.service.ts
 +++ b/src/documents/commit-writer.service.ts
-@@ -138,7 +138,17 @@ export class CommitWriterService {
+@@ -165,7 +165,17 @@ export class CommitWriterService {
          );
          outcomes.push({
            fact: mf,
