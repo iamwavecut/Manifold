@@ -18,6 +18,15 @@ func (s *Store) CreateEntity(ctx context.Context, entity model.Entity) (model.En
 	entity.CreatedAt = parseTime(timestamp)
 	entity.UpdatedAt = entity.CreatedAt
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		var reserved int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS(SELECT 1 FROM rename_reservations WHERE resource_type = 'entity' AND slug = ?)`,
+			entity.ID).Scan(&reserved); err != nil {
+			return err
+		}
+		if reserved != 0 {
+			return ErrConflict
+		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO entities(id, name, kind, upstream_id, metadata_json, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -41,7 +50,7 @@ func (s *Store) GetEntity(ctx context.Context, id string) (model.Entity, error) 
 	var metadata, created, updated string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, name, kind, upstream_id, metadata_json, created_at, updated_at
-		FROM entities WHERE id = ?`, id).Scan(
+		FROM entities e WHERE e.id = ? AND (e.upstream_id = '' OR `+currentDerivedGraphClaim("e", "entity")+`)`, id).Scan(
 		&entity.ID, &entity.Name, &entity.Kind, &entity.UpstreamID, &metadata, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Entity{}, ErrNotFound
@@ -58,14 +67,14 @@ func (s *Store) GetEntity(ctx context.Context, id string) (model.Entity, error) 
 func (s *Store) ListEntities(ctx context.Context, query string, limit int) ([]model.Entity, error) {
 	sqlQuery := `
 		SELECT id, name, kind, upstream_id, metadata_json, created_at, updated_at
-		FROM entities`
+		FROM entities e WHERE (e.upstream_id = '' OR ` + currentDerivedGraphClaim("e", "entity") + `)`
 	args := []any{}
 	if query != "" {
-		sqlQuery += ` WHERE id LIKE ? OR name LIKE ?`
+		sqlQuery += ` AND (e.id LIKE ? OR e.name LIKE ?)`
 		value := "%" + query + "%"
 		args = append(args, value, value)
 	}
-	sqlQuery += ` ORDER BY updated_at DESC LIMIT ?`
+	sqlQuery += ` ORDER BY e.updated_at DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
@@ -131,15 +140,36 @@ func (s *Store) CreateFact(ctx context.Context, fact model.Fact) (model.Fact, er
 
 func (s *Store) ListFacts(ctx context.Context, entityID string, limit int) ([]model.Fact, error) {
 	query := `
-		SELECT id, entity_id, predicate, object, origin, status, confidence,
-			COALESCE(source_document_id, ''), source_revision, upstream_id, valid_from, valid_until, created_at
-		FROM facts`
+		SELECT f.id, COALESCE(snapshot.entity_id, f.entity_id),
+			CASE WHEN snapshot.object_id IS NULL THEN f.predicate ELSE snapshot.predicate END,
+			CASE WHEN snapshot.object_id IS NULL THEN f.object ELSE snapshot.object END,
+			f.origin,
+			CASE WHEN snapshot.object_id IS NULL THEN f.status ELSE snapshot.status END,
+			CASE WHEN snapshot.object_id IS NULL THEN f.confidence ELSE snapshot.confidence END,
+			COALESCE(current_claim.document_id, COALESCE(f.source_document_id, '')),
+			COALESCE(current_claim.revision, f.source_revision),
+			f.upstream_id,
+			CASE WHEN snapshot.object_id IS NULL THEN f.valid_from ELSE snapshot.valid_from END,
+			CASE WHEN snapshot.object_id IS NULL THEN f.valid_until ELSE snapshot.valid_until END,
+			f.created_at
+		FROM facts f
+		LEFT JOIN derived_graph_claims current_claim ON current_claim.rowid = (
+			SELECT c.rowid FROM derived_graph_claims c
+			JOIN documents source ON source.id = c.document_id
+			WHERE c.object_kind = 'fact' AND c.object_id = f.id AND c.active = 1
+				AND source.deleted = 0 AND source.revision = c.revision
+			ORDER BY c.document_id, c.revision, c.source_key, c.origin_key LIMIT 1
+		)
+		LEFT JOIN derived_graph_fact_snapshots snapshot ON snapshot.object_id = current_claim.object_id
+			AND snapshot.document_id = current_claim.document_id AND snapshot.revision = current_claim.revision
+			AND snapshot.source_key = current_claim.source_key AND snapshot.origin_key = current_claim.origin_key
+		WHERE (f.origin <> 'derived' OR ` + currentDerivedGraphClaim("f", "fact") + `)`
 	args := []any{}
 	if entityID != "" {
-		query += ` WHERE entity_id = ?`
+		query += ` AND COALESCE(snapshot.entity_id, f.entity_id) = ?`
 		args = append(args, entityID)
 	}
-	query += ` ORDER BY created_at DESC LIMIT ?`
+	query += ` ORDER BY f.created_at DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -166,15 +196,149 @@ func (s *Store) ListFacts(ctx context.Context, entityID string, limit int) ([]mo
 }
 
 func (s *Store) GetFactByUpstreamID(ctx context.Context, upstreamID string) (model.Fact, error) {
-	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM facts WHERE upstream_id = ? LIMIT 1`, upstreamID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return model.Fact{}, ErrNotFound
-	}
+	facts, err := s.ListFactsByUpstreamID(ctx, upstreamID, false)
 	if err != nil {
 		return model.Fact{}, err
 	}
-	return s.GetFact(ctx, id)
+	if len(facts) == 0 {
+		return model.Fact{}, ErrNotFound
+	}
+	return facts[0], nil
+}
+
+type DerivedFactSnapshot struct {
+	Fact       model.Fact
+	EntityName string
+}
+
+// ListDerivedFactSnapshotsByUpstreamID returns one exact local fact snapshot for each live source revision.
+// Historical claims are available only when includeHistory is true and their document is not deleted.
+func (s *Store) ListDerivedFactSnapshotsByUpstreamID(
+	ctx context.Context,
+	upstreamID string,
+	includeHistory bool,
+) ([]DerivedFactSnapshot, error) {
+	query := `
+		SELECT f.id, COALESCE(snapshot.entity_id, f.entity_id),
+			CASE WHEN snapshot.object_id IS NULL THEN f.predicate ELSE snapshot.predicate END,
+			CASE WHEN snapshot.object_id IS NULL THEN f.object ELSE snapshot.object END,
+			f.origin,
+			CASE WHEN snapshot.object_id IS NULL THEN f.status ELSE snapshot.status END,
+			CASE WHEN snapshot.object_id IS NULL THEN f.confidence ELSE snapshot.confidence END,
+			c.document_id, c.revision, f.upstream_id, COALESCE(snapshot.entity_name, entity.name),
+			CASE WHEN snapshot.object_id IS NULL THEN f.valid_from ELSE snapshot.valid_from END,
+			CASE WHEN snapshot.object_id IS NULL THEN f.valid_until ELSE snapshot.valid_until END,
+			f.created_at
+		FROM facts f
+		JOIN derived_graph_claims c ON c.object_kind = 'fact' AND c.object_id = f.id
+		JOIN documents source ON source.id = c.document_id AND source.deleted = 0
+		JOIN revisions rev ON rev.document_id = c.document_id AND rev.revision = c.revision
+		LEFT JOIN derived_graph_fact_snapshots snapshot ON snapshot.object_id = c.object_id
+			AND snapshot.document_id = c.document_id AND snapshot.revision = c.revision
+			AND snapshot.source_key = c.source_key AND snapshot.origin_key = c.origin_key
+		JOIN entities entity ON entity.id = COALESCE(snapshot.entity_id, f.entity_id)
+		WHERE f.origin = 'derived' AND f.upstream_id = ?`
+	if !includeHistory {
+		query += ` AND c.active = 1 AND source.revision = c.revision`
+	}
+	query += ` ORDER BY CASE WHEN c.active = 1 AND source.revision = c.revision THEN 0 ELSE 1 END,
+		c.document_id, c.revision, c.source_key, c.origin_key`
+	rows, err := s.db.QueryContext(ctx, query, upstreamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]DerivedFactSnapshot, 0)
+	seenSources := make(map[string]struct{})
+	for rows.Next() {
+		var fact model.Fact
+		var revision int
+		var entityName string
+		var validFrom, created string
+		var validUntil sql.NullString
+		if err := rows.Scan(&fact.ID, &fact.EntityID, &fact.Predicate, &fact.Object, &fact.Origin, &fact.Status,
+			&fact.Confidence, &fact.SourceDocumentID, &revision, &fact.UpstreamID, &entityName,
+			&validFrom, &validUntil, &created); err != nil {
+			return nil, err
+		}
+		sourceKey := fmt.Sprintf("%s@r%d", fact.SourceDocumentID, revision)
+		if _, exists := seenSources[sourceKey]; exists {
+			continue
+		}
+		seenSources[sourceKey] = struct{}{}
+		fact.SourceRevision = fmt.Sprintf("r%d", revision)
+		fact.ValidFrom = parseTime(validFrom)
+		fact.ValidUntil = parseOptionalTime(validUntil)
+		fact.CreatedAt = parseTime(created)
+		records = append(records, DerivedFactSnapshot{Fact: fact, EntityName: entityName})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(records) > 0 {
+		return records, nil
+	}
+	explicitFacts, err := s.listExplicitFactsByUpstreamID(ctx, upstreamID)
+	if err != nil {
+		return nil, err
+	}
+	for _, fact := range explicitFacts {
+		var entityName string
+		err := s.db.QueryRowContext(ctx, `SELECT name FROM entities WHERE id = ?`, fact.EntityID).Scan(&entityName)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		records = append(records, DerivedFactSnapshot{Fact: fact, EntityName: entityName})
+	}
+	return records, nil
+}
+
+// ListFactsByUpstreamID returns the local fact portion of each current or historical source snapshot.
+func (s *Store) ListFactsByUpstreamID(ctx context.Context, upstreamID string, includeHistory bool) ([]model.Fact, error) {
+	records, err := s.ListDerivedFactSnapshotsByUpstreamID(ctx, upstreamID, includeHistory)
+	if err != nil {
+		return nil, err
+	}
+	facts := make([]model.Fact, 0, len(records))
+	for _, record := range records {
+		facts = append(facts, record.Fact)
+	}
+	return facts, nil
+}
+
+func (s *Store) listExplicitFactsByUpstreamID(ctx context.Context, upstreamID string) ([]model.Fact, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT f.id, f.entity_id, f.predicate, f.object, f.origin, f.status, f.confidence,
+			COALESCE(f.source_document_id, ''), f.source_revision, f.upstream_id,
+			f.valid_from, f.valid_until, f.created_at
+		FROM facts f
+		LEFT JOIN documents source ON source.id = f.source_document_id AND source.deleted = 0
+		LEFT JOIN revisions rev ON rev.document_id = f.source_document_id AND rev.revision = f.source_revision
+		WHERE f.upstream_id = ? AND f.origin <> 'derived'
+			AND (f.source_document_id IS NULL OR (source.id IS NOT NULL AND (f.source_revision IS NULL OR rev.document_id IS NOT NULL)))
+		ORDER BY f.created_at DESC`, upstreamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var facts []model.Fact
+	for rows.Next() {
+		var fact model.Fact
+		var sourceRevision sql.NullInt64
+		var validFrom, created string
+		var validUntil sql.NullString
+		if err := rows.Scan(&fact.ID, &fact.EntityID, &fact.Predicate, &fact.Object, &fact.Origin, &fact.Status,
+			&fact.Confidence, &fact.SourceDocumentID, &sourceRevision, &fact.UpstreamID,
+			&validFrom, &validUntil, &created); err != nil {
+			return nil, err
+		}
+		fact.SourceRevision = optionalRevision(sourceRevision)
+		fact.ValidFrom = parseTime(validFrom)
+		fact.ValidUntil = parseOptionalTime(validUntil)
+		fact.CreatedAt = parseTime(created)
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
 }
 
 func (s *Store) CreateRelation(ctx context.Context, relation model.Relation) (model.Relation, error) {
@@ -198,14 +362,14 @@ func (s *Store) CreateRelation(ctx context.Context, relation model.Relation) (mo
 
 func (s *Store) ListRelations(ctx context.Context, entityID string, limit int) ([]model.Relation, error) {
 	query := `
-		SELECT id, from_entity_id, to_entity_id, predicate, origin, status, confidence, upstream_id, created_at
-		FROM relations`
+		SELECT r.id, r.from_entity_id, r.to_entity_id, r.predicate, r.origin, r.status, r.confidence, r.upstream_id, r.created_at
+		FROM relations r WHERE (r.origin <> 'derived' OR ` + currentDerivedGraphClaim("r", "relation") + `)`
 	args := []any{}
 	if entityID != "" {
-		query += ` WHERE from_entity_id = ? OR to_entity_id = ?`
+		query += ` AND (r.from_entity_id = ? OR r.to_entity_id = ?)`
 		args = append(args, entityID, entityID)
 	}
-	query += ` ORDER BY created_at DESC LIMIT ?`
+	query += ` ORDER BY r.created_at DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

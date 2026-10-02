@@ -1,0 +1,80 @@
+diff --git a/src/documents/commit-writer.service.ts b/src/documents/commit-writer.service.ts
+index c3bb3ff..f4ecac2 100644
+--- a/src/documents/commit-writer.service.ts
++++ b/src/documents/commit-writer.service.ts
+@@ -138,7 +138,17 @@ export class CommitWriterService {
+         );
+         outcomes.push({
+           fact: mf,
+-          factId: result?.factId ? String(result.factId) : null,
++          // Manifold projects serving identities. A corroborating audit row
++          // is deliberately absent from search; the resolver's incumbent
++          // links this document revision to the fact that reads return.
++          factId:
++            p.doc.vertical === 'manifold' && result?.outcome === 'CORROBORATED'
++              ? result.corroboratedFactId
++                ? String(result.corroboratedFactId)
++                : null
++              : result?.factId
++                ? String(result.factId)
++                : null,
+           outcome: result?.outcome ? String(result.outcome) : null,
+         });
+       } catch (err) {
+diff --git a/test/documents-pipeline.e2e-spec.ts b/test/documents-pipeline.e2e-spec.ts
+index 1a57cb9..47a8fa9 100644
+--- a/test/documents-pipeline.e2e-spec.ts
++++ b/test/documents-pipeline.e2e-spec.ts
+@@ -171,6 +171,52 @@ describe('documents pipeline (e2e)', () => {
+     expect(committed.statusReason).toBe('INSERTED');
+   });
+ 
++  it('Manifold identical revisions commit the searchable incumbent, retaining the audit row', async () => {
++    f.extractor.setScript({
++      entities: [{ name: 'Revision Proof Inc', type: 'customer' }],
++      facts: [{ entityIndex: 0, predicate: 'tier', object: 'gold', confidence: 0.9 }],
++      edges: [],
++    });
++    const body = {
++      text: 'Revision Proof Inc has gold tier.',
++      contextRef: { vertical: 'manifold' },
++      originUri: 'manifold://documents/revision-proof@r1',
++    };
++    const first = await postDocument(body);
++    const second = await postDocument({
++      ...body,
++      originUri: 'manifold://documents/revision-proof@r2',
++    });
++    expect(first.status).toBe(201);
++    expect(second.status).toBe(201);
++    expect(second.body.documentId).not.toBe(first.body.documentId);
++    const incumbent = first.body.committed.factIds[0] as string;
++    expect(second.body.committed.factIds).toEqual([incumbent]);
++    const cands = await f.http
++      .get(`/v1/documents/${encodeURIComponent(second.body.documentId)}/candidates`)
++      .set(auth());
++    expect(cands.body.candidates.find((c: { kind: string }) => c.kind === 'fact')).toMatchObject({
++      status: 'committed',
++      statusReason: 'CORROBORATED',
++      commitRef: incumbent,
++    });
++    const profile = await f.http
++      .get(`/v1/entities/${encodeURIComponent(first.body.committed.entityIds[0])}`)
++      .set(auth());
++    expect(profile.body.facts.some((fact: { factId: string }) => fact.factId === incumbent)).toBe(
++      true,
++    );
++    await f.app.get(SurrealService).withCompany(f.companyId, async (db) => {
++      const [rows] = await db.query<[Array<{ status: string; corroborates: unknown }>]>(
++        'SELECT status, corroborates FROM knowledge_fact WHERE source.documentId = $doc',
++        { doc: second.body.documentId },
++      );
++      expect(rows).toHaveLength(1);
++      expect(rows[0]?.status).toBe('corroborating');
++      expect(String(rows[0]?.corroborates)).toBe(incumbent);
++    });
++  });
++
+   it('storeContent:false keeps only the header — no chunks to read back', async () => {
+     f.extractor.setScript(TIER_GOLD);
+     const r = await postDocument({

@@ -1,0 +1,110 @@
+diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
+index 95b36c6..6a70d5a 100644
+--- a/src/documents/document-store.service.ts
++++ b/src/documents/document-store.service.ts
+@@ -121,8 +121,11 @@ export class DocumentStoreService {
+     // this caller's memory under THAT row's scope). Same-user re-posts
+     // still dedupe; two users asserting the same text stay independent
+     // origins for corroboration (0050) — scope-local facts anyway.
+-    const contentHash =
+-      dto.userId === undefined ? sha256Hex(text) : userScopedContentHash(dto.userId, text);
++    const contentHash = documentContentHash(text, {
++      vertical: dto.contextRef.vertical,
++      originUri: dto.originUri,
++      userId: dto.userId,
++    });
+     // G9 write-anomaly signal (one increment per document body stored).
+     this.metrics?.countIngestWrite('document');
+     const chunks = chunkDocument(text, {
+@@ -308,6 +311,35 @@ export function userScopedContentHash(userId: string, text: string): string {
+   return sha256Hex(`\u0000user-scope\u0000${userId}\u0000${text}`);
+ }
+ 
++/**
++ * Manifold owns stable document/revision identities, so identical text in
++ * distinct revisions must remain distinct Brain origins. Other verticals
++ * retain their existing content-only dedupe semantics.
++ */
++export function documentContentHash(
++  text: string,
++  identity: {
++    vertical: string;
++    originUri?: string | undefined;
++    userId?: string | undefined;
++  },
++): string {
++  const originUri = identity.originUri;
++  const canonicalManifoldOrigin =
++    identity.vertical === 'manifold' &&
++    originUri !== undefined &&
++    /^manifold:\/\/documents\/[a-z0-9]+(?:-[a-z0-9]+)*@r[1-9]\d*$/.test(originUri)
++      ? originUri
++      : undefined;
++  const preimage =
++    canonicalManifoldOrigin === undefined
++      ? text
++      : `\u0000manifold-origin\u0000${canonicalManifoldOrigin}\u0000${text}`;
++  return identity.userId === undefined
++    ? sha256Hex(preimage)
++    : userScopedContentHash(identity.userId, preimage);
++}
++
+ /** 'doc:' + contentHash — the origin identity migration 0050 keys on. */
+ export function originKeyOf(contentHash: string): string {
+   return `doc:${contentHash}`;
+diff --git a/test/document-origin-identity.unit-spec.ts b/test/document-origin-identity.unit-spec.ts
+new file mode 100644
+index 0000000..076aae4
+--- /dev/null
++++ b/test/document-origin-identity.unit-spec.ts
+@@ -0,0 +1,50 @@
++import {
++  documentContentHash,
++  sha256Hex,
++  userScopedContentHash,
++} from '../src/documents/document-store.service';
++
++describe('documentContentHash', () => {
++  const text = 'Mira Chen works at Meridian Labs.';
++
++  it('keeps retries on one canonical Manifold document revision idempotent', () => {
++    const identity = {
++      vertical: 'manifold',
++      originUri: 'manifold://documents/mira-notes@r1',
++    };
++
++    expect(documentContentHash(text, identity)).toBe(documentContentHash(text, identity));
++  });
++
++  it('separates identical text by Manifold document and revision identity', () => {
++    const first = { vertical: 'manifold', originUri: 'manifold://documents/first@r1' };
++    const anotherDocument = { vertical: 'manifold', originUri: 'manifold://documents/second@r1' };
++    const anotherRevision = { vertical: 'manifold', originUri: 'manifold://documents/first@r2' };
++
++    expect(documentContentHash(text, first)).not.toBe(documentContentHash(text, anotherDocument));
++    expect(documentContentHash(text, first)).not.toBe(documentContentHash(text, anotherRevision));
++  });
++
++  it('leaves non-Manifold and non-canonical origins byte-compatible', () => {
++    expect(documentContentHash(text, { vertical: 'meeting', originUri: 'meeting://doc/1' })).toBe(
++      sha256Hex(text),
++    );
++    expect(documentContentHash(text, { vertical: 'manifold', originUri: 'https://example.test/1' })).toBe(
++      sha256Hex(text),
++    );
++    expect(documentContentHash(text, { vertical: 'meeting', userId: 'user-1' })).toBe(
++      userScopedContentHash('user-1', text),
++    );
++  });
++
++  it('keeps user scope inside the Manifold origin salt', () => {
++    const identity = {
++      vertical: 'manifold',
++      originUri: 'manifold://documents/mira-notes@r1',
++    };
++
++    expect(documentContentHash(text, { ...identity, userId: 'user-1' })).not.toBe(
++      documentContentHash(text, { ...identity, userId: 'user-2' }),
++    );
++  });
++});

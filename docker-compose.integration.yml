@@ -31,6 +31,11 @@ services:
       OPENAI_API_KEY: deterministic-provider-key
       OPENAI_CHAT_MODEL: deterministic-chat
       OPENAI_EMBEDDING_MODEL: deterministic-embedding
+      DOCUMENT_INGEST_ENABLED: "1"
+      DOCUMENT_MULTI_INDEXER_ENABLED: "1"
+      FACTS_API_ENABLED: "1"
+      CHAT_ROUTE_NLI_ENABLED: "false"
+      BRAIN_HEALTH_RESTART_FAILURES: 2
     depends_on:
       provider:
         condition: service_healthy
@@ -38,3 +43,4 @@ services:
   manifold:
     environment:
       MANIFOLD_PUBLIC_URL: http://127.0.0.1:${MANIFOLD_PORT:-18080}
+      MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: 3m

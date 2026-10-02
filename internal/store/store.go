@@ -17,8 +17,10 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("resource not found")
-	ErrConflict = errors.New("resource conflict")
+	ErrNotFound                    = errors.New("resource not found")
+	ErrConflict                    = errors.New("resource conflict")
+	ErrDocumentSyncSuperseded      = errors.New("document sync job is superseded")
+	ErrDocumentSyncRevisionUnknown = errors.New("document sync job revision cannot be resolved")
 )
 
 type FolderPathConflictError struct {
@@ -187,6 +189,41 @@ CREATE TABLE IF NOT EXISTS relations (
 	upstream_id TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS derived_graph_claims (
+	object_kind TEXT NOT NULL CHECK (object_kind IN ('entity', 'fact', 'relation')),
+	object_id TEXT NOT NULL,
+	document_id TEXT NOT NULL REFERENCES documents(id) ON UPDATE CASCADE ON DELETE CASCADE,
+	revision INTEGER NOT NULL,
+	source_key TEXT NOT NULL DEFAULT '',
+	origin_key TEXT NOT NULL DEFAULT '',
+	active INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY(object_kind, object_id, document_id, revision, source_key, origin_key)
+);
+CREATE INDEX IF NOT EXISTS derived_graph_claims_document_idx
+	ON derived_graph_claims(document_id, revision, active, object_kind);
+CREATE INDEX IF NOT EXISTS derived_graph_claims_object_idx
+	ON derived_graph_claims(object_kind, object_id, active);
+
+CREATE TABLE IF NOT EXISTS derived_graph_fact_snapshots (
+	object_id TEXT NOT NULL,
+	document_id TEXT NOT NULL REFERENCES documents(id) ON UPDATE CASCADE ON DELETE CASCADE,
+	revision INTEGER NOT NULL,
+	source_key TEXT NOT NULL DEFAULT '',
+	origin_key TEXT NOT NULL DEFAULT '',
+	entity_id TEXT NOT NULL REFERENCES entities(id) ON UPDATE CASCADE ON DELETE CASCADE,
+	entity_name TEXT NOT NULL,
+	predicate TEXT NOT NULL,
+	object TEXT NOT NULL,
+	status TEXT NOT NULL,
+	confidence REAL NOT NULL,
+	valid_from TEXT NOT NULL,
+	valid_until TEXT,
+	PRIMARY KEY(object_id, document_id, revision, source_key, origin_key)
+);
+CREATE INDEX IF NOT EXISTS derived_graph_fact_snapshots_document_idx
+	ON derived_graph_fact_snapshots(document_id, revision, object_id);
 
 CREATE TABLE IF NOT EXISTS conflicts (
 	id TEXT PRIMARY KEY,

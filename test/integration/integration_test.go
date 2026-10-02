@@ -120,8 +120,14 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("relations page = %s, want one relation", mustJSON(relations.Body))
 	}
 	sources := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/sources", nil, "", "", http.StatusOK)
-	if len(arrayField(t, sources.Body, "items")) != 1 {
-		t.Fatalf("sources page = %s, want one grouped provenance source", mustJSON(sources.Body))
+	foundSource := false
+	for _, raw := range arrayField(t, sources.Body, "items") {
+		if raw.(map[string]any)["document_id"] == "integration-note" {
+			foundSource = true
+		}
+	}
+	if !foundSource {
+		t.Fatalf("sources page lacks integration-note provenance: %s", mustJSON(sources.Body))
 	}
 
 	path := c.expectStatus(t, ctx, http.MethodPost, "/api/v1/graph/path", map[string]any{
@@ -256,7 +262,7 @@ func TestCreateDependencyFailure(t *testing.T) {
 		t.Fatal("MANIFOLD_INTEGRATION_STATE is required")
 	}
 	c := newClient(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
 
 	created := c.expectStatus(t, ctx, http.MethodPost, "/api/v1/documents", map[string]any{

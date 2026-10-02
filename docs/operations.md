@@ -9,20 +9,29 @@ Persist all four named volumes:
 - `brain-cache`: Brain model/cache and baseline state.
 - `surrealdb-data`: graph data.
 
-The volumes form one logical backup set. Stop writers before a cold backup:
+The volumes form one logical backup set. Quiesce external writers and stop all
+four services before a cold backup; do not archive a running RocksDB database.
+These commands assume the default Compose project name `manifold`; verify the
+actual volume names with `docker volume ls` first.
 
 ```bash
-docker compose stop manifold brain openviking
-docker run --rm -v manifold_manifold-data:/source:ro -v "$PWD/backups":/backup alpine \
+install -d -m 700 backups
+docker compose stop manifold brain openviking surrealdb
+docker run --rm -v manifold_manifold-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
   tar -C /source -czf /backup/manifold-data.tgz .
-docker run --rm -v manifold_openviking-data:/source:ro -v "$PWD/backups":/backup alpine \
+docker run --rm -v manifold_openviking-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
   tar -C /source -czf /backup/openviking-data.tgz .
-docker run --rm -v manifold_surrealdb-data:/source:ro -v "$PWD/backups":/backup alpine \
+docker run --rm -v manifold_surrealdb-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
   tar -C /source -czf /backup/surrealdb-data.tgz .
+docker run --rm -v manifold_brain-cache:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
+  tar -C /source -czf /backup/brain-cache.tgz .
 docker compose start surrealdb openviking brain manifold
 ```
 
-Back up `brain-cache` when local downloaded models or baselines must be retained. Provider credentials and `.env` belong in a separate secret backup, never in the archives.
+Use a fresh backup directory for each migration and record hashes of the four
+archives with the source commit and image identities. Restrict backup access:
+they contain private documents and graph data. Provider credentials and `.env`
+belong in a separate secret backup, never in the archives.
 
 ## Restore
 
@@ -39,11 +48,37 @@ Do not restore only SQLite over newer OpenViking or Brain state. Public mappings
 Jobs in `indexing` or `extracting` are returned to `accepted` when Manifold restarts. Completed semantic errors persist in SQLite. After a dependency recovers:
 
 Ordinary dependency requests use `MANIFOLD_HTTP_TIMEOUT` (30 seconds by
-default). Synchronous Brain document extraction runs only in the durable worker
-and uses `MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes by default), because model
-providers can legitimately take longer than an interactive health or search
-request. Increase the ingest timeout when the configured provider has a higher
-document-processing latency; do not disable timeouts.
+default). OpenViking writes use `MANIFOLD_OPENVIKING_WRITE_TIMEOUT` (5 minutes)
+with `wait: true`; an HTTP 200 response is accepted only when semantic and
+vector indexing report completion or an intentional skip. OpenViking exposes
+no per-write operation ID, so a timed-out write is reconciled against its
+existing resource before retrying.
+
+Brain receives an asynchronous submission with a bounded request timeout
+`MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes). Its returned document ID is stored
+privately in the job before polling. `MANIFOLD_BRAIN_EXTRACTION_TIMEOUT`
+(30 minutes) bounds each polling attempt. Retry resumes the same operation
+after a timeout or restart. Increase these limits to match measured provider
+latency; do not disable deadlines. The skill's two-minute default wait is
+independent: use `remember --wait-timeout 20m` for longer jobs, or keep polling
+the existing job ID after a client wait timeout.
+
+Brain's provider request has its own deadline. Compose sets
+`BRAIN_OPENAI_TIMEOUT_MS=300000` and `BRAIN_OPENAI_MAX_RETRIES=1` (one SDK retry)
+so extraction can outlast the upstream default 30-second interactive deadline.
+The production provider exceeded that old deadline even for a 1,469-character
+document. These bounds remain inside the normal 30-minute Manifold extraction
+attempt; the durable job checkpoint survives a later retry. Brain validates
+`BRAIN_OPENAI_MAX_RETRIES` as a positive integer: zero prevents startup.
+The September 16 production deployment overrides the per-request timeout to
+900000 ms after repeated provider timeouts; see the deployment evidence below.
+
+Document extraction uses `BRAIN_EXTRACTOR_MAX_COMPLETION_TOKENS=16384`
+(valid range 1–65536). Incomplete model output fails the run; an empty graph
+is successful only after a valid completed extraction. Private Brain request
+buckets default to 600 requests per minute (`BRAIN_THROTTLE_LIMIT` and
+`BRAIN_THROTTLE_EXPENSIVE_LIMIT`) so per-candidate hydration fits the extraction
+deadline. Authentication, tenant checks, and endpoint-specific limits remain.
 
 ```bash
 curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
@@ -52,6 +87,99 @@ curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
 ```
 
 Retry only `failed` or `partially_ready` jobs. Other states return `invalid_state_transition`.
+
+`status.state` and `status.components` describe component probes. Inspect
+`status.pipeline` for current document states; historical failed job counts are
+not a current read outage. A failed pre-snapshot write marks the current
+document `failed`; a preserved canonical snapshot with incomplete extraction
+is `partially_ready`. Jobs for older revisions cannot mark a newer revision
+ready. Inspect the stored error and exact revision before selecting retries.
+
+Rename work also checkpoints each affected document revision. A retryable
+upstream failure preserves the applying plan, its slug reservations and saved
+Brain operations; retry the same job after recovery. Document/folder/entity
+creates and document updates/deletes are checked transactionally against those
+reservations. A terminal failure is compensated and rolled back; follow its
+remediation and create a fresh reviewed plan rather than assuming the old
+rolled-back plan can resume.
+
+Async Brain extraction retains normalized source chunks. Deleting a Manifold
+document withdraws it from current public retrieval but does not purge those
+private Brain chunks. Review the [retention boundary](brain-patch.md) before
+production migration; the service key is not granted administrator scope.
+
+## Brain liveness
+
+Compose reports an unhealthy container but never restarts it. Brain's
+healthcheck (`deploy/brain/healthcheck.sh`) therefore acts as a watchdog: once
+the current Brain process has answered `/health`, `BRAIN_HEALTH_RESTART_FAILURES`
+consecutive failures (default 20, five minutes at the 15-second interval) send
+it `SIGTERM`, and a further failure sends `SIGKILL`. `restart: unless-stopped`
+then replaces the container. Failures before the first successful probe are
+not counted, so a slow startup or migration is left to `compose up --wait`.
+Brain's `/health` stays successful while SurrealDB is unreachable, so the
+watchdog reacts to a wedged process rather than to a dependency outage. The
+log of the restarted container contains the watchdog line, and its restart
+count increases; investigate both instead of treating the restart as recovery.
+
+## Brain v2 / data version 2 migration
+
+This release moves Brain v0.8.1 to v2.2.0, SurrealDB v3.1.5 to v3.2.4 and
+OpenViking v0.4.10 to v0.4.20. Brain applies its versioned migrations on startup.
+The upgrade must not use a code-only downgrade after new services open the
+volumes. `DATA_VERSION=2` makes automatic deployment refuse the transition
+from older releases (which implicitly have data version 1) before checkout or
+runtime mutation. Deployments within the same data version retain the existing
+automatic rollback behavior.
+
+After the operator authorizes the production migration:
+
+1. Record the exact running commit, container image digests, Compose project
+   name, current document/revision counts and pending jobs. Build the reviewed
+   target images in a separate checkout and run the full deterministic suite.
+   Keep existing embedding provider, model and dimensions; changing embedding
+   spaces is a separate migration.
+2. Quiesce clients, stop all services, and create and verify the four-volume
+   cold backup above plus a protected configuration backup. Rehearse restoring
+   this backup into isolated volumes before opening production data with the
+   new dependencies. Do not print private payloads during validation.
+3. Advance the clean source checkout to the approved exact commit. Add the new
+   timeout values if defaults are unsuitable, preserve secrets, and validate
+   `docker compose --env-file .env config --quiet`. Start SurrealDB, then Brain
+   and OpenViking. Verify their migrations and readiness before starting
+   Manifold. Keep the old images and full backup until acceptance.
+4. Check public build identity, current canonical content and old revision
+   snapshots. Write a small approved synthetic document; wait for terminal
+   `ready`, verify extracted entity/fact/relation and canonical provenance in
+   graph search, update it and verify stale evidence disappears, then delete
+   it. Restart Manifold and verify completed data plus an interrupted job's
+   checkpoint recovery. Health alone does not meet acceptance.
+5. Recover current failed/partial jobs individually after reviewing their
+   stored errors. Existing `ready` documents are not silently re-extracted:
+   backfill them through reviewed same-content updates with current ETags and
+   fresh idempotency keys. Each update creates an auditable new revision and
+   fills the public graph. Check per-document completion and provider cost
+   before proceeding to the next batch.
+6. If acceptance fails after migration, stop every service and restore **all
+   four** backup volumes into clean replacement volumes, the matching protected
+   config and the recorded old code/images. Keep the failed migrated set for
+   investigation. Verify document/revision counts and representative retrieval
+   before reopening clients. Never start old Brain against migrated SurrealDB
+   data or restore only SQLite.
+
+Execute these production steps only with explicit deployment authorization.
+The September 16 authorized migration is recorded in
+[deployment verification](deployment-verification.md).
+
+## Local integration overrides
+
+`make integration` owns only the `manifold-integration` Compose project and
+removes that project's test volumes on exit. An optional
+`MANIFOLD_INTEGRATION_COMPOSE_OVERRIDE=/absolute/path/override.yml` appends a
+local Compose override. This supports explicit, non-overlapping test subnets
+when a host's automatic Docker address pool is invalid, without modifying the
+daemon or production Compose networks. Keep credentials and production volumes
+out of integration overrides.
 
 ## Release and production deployment
 

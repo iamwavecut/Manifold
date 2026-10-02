@@ -126,8 +126,13 @@ func (s *Store) RetractFact(ctx context.Context, id string) error {
 
 func (s *Store) ListConflicts(ctx context.Context, limit int) ([]model.Conflict, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, fact_a_id, fact_b_id, status, resolution, created_at, updated_at
-		FROM conflicts ORDER BY updated_at DESC LIMIT ?`, limit)
+		SELECT c.id, c.fact_a_id, c.fact_b_id, c.status, c.resolution, c.created_at, c.updated_at
+		FROM conflicts c
+		JOIN facts a ON a.id = c.fact_a_id
+		JOIN facts b ON b.id = c.fact_b_id
+		WHERE (a.origin <> 'derived' OR `+currentDerivedGraphClaim("a", "fact")+`)
+			AND (b.origin <> 'derived' OR `+currentDerivedGraphClaim("b", "fact")+`)
+		ORDER BY c.updated_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +183,24 @@ func (s *Store) ResolveConflict(ctx context.Context, id, resolution string) (mod
 
 func (s *Store) ListSources(ctx context.Context, limit int) ([]model.Source, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT f.source_document_id, f.source_revision, MAX(f.object), MAX(f.origin),
-			MAX(f.confidence), MAX(f.created_at)
-		FROM facts f WHERE f.source_document_id IS NOT NULL
-		GROUP BY f.source_document_id, f.source_revision
-		ORDER BY MAX(f.created_at) DESC LIMIT ?`, limit)
+		SELECT claims.document_id, claims.revision, MAX(claims.excerpt), MAX(claims.method),
+			MAX(claims.confidence), MAX(claims.created_at)
+		FROM (
+			SELECT f.source_document_id AS document_id, f.source_revision AS revision,
+				f.object AS excerpt, f.origin AS method, f.confidence, f.created_at
+			FROM facts f JOIN documents source ON source.id = f.source_document_id
+			WHERE f.origin <> 'derived' AND source.deleted = 0
+				AND (f.source_revision IS NULL OR f.source_revision = source.revision)
+			UNION ALL
+			SELECT c.document_id, c.revision, f.object, f.origin, f.confidence, f.created_at
+			FROM derived_graph_claims c
+			JOIN documents source ON source.id = c.document_id
+			JOIN facts f ON f.id = c.object_id
+			WHERE c.object_kind = 'fact' AND c.active = 1 AND source.deleted = 0
+				AND source.revision = c.revision
+		) claims
+		GROUP BY claims.document_id, claims.revision
+		ORDER BY MAX(claims.created_at) DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

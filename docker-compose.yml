@@ -17,7 +17,9 @@ services:
       MANIFOLD_LOG_LEVEL: ${MANIFOLD_LOG_LEVEL:-info}
       MANIFOLD_MAX_BODY_BYTES: ${MANIFOLD_MAX_BODY_BYTES:-5242880}
       MANIFOLD_HTTP_TIMEOUT: ${MANIFOLD_HTTP_TIMEOUT:-30s}
+      MANIFOLD_OPENVIKING_WRITE_TIMEOUT: ${MANIFOLD_OPENVIKING_WRITE_TIMEOUT:-5m}
       MANIFOLD_BRAIN_INGEST_TIMEOUT: ${MANIFOLD_BRAIN_INGEST_TIMEOUT:-2m}
+      MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: ${MANIFOLD_BRAIN_EXTRACTION_TIMEOUT:-30m}
       OPENVIKING_URL: http://openviking:1933
       OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
       BRAIN_URL: http://brain:3000
@@ -42,7 +44,7 @@ services:
       start_period: 5s
 
   openviking:
-    image: ghcr.io/volcengine/openviking:v0.4.10@sha256:0cf1c6fc75214a2b093b3a8e5df6c8dc2e6b1802c60dee25b5285ac28dbdc988
+    image: ghcr.io/volcengine/openviking:v0.4.20@sha256:b9827753d035f4157b5b318865907fd18f738924ad6398c86feb1182f209825b
     restart: unless-stopped
     init: true
     environment:
@@ -71,7 +73,7 @@ services:
       context: .
       dockerfile: deploy/brain/Dockerfile
       args:
-        BRAIN_REF: v0.8.1
+        BRAIN_REF: b19b209fec92069d91df22af61db18b0a810ce82
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -89,9 +91,17 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
+      OPENAI_TIMEOUT_MS: ${BRAIN_OPENAI_TIMEOUT_MS:-300000}
+      OPENAI_MAX_RETRIES: ${BRAIN_OPENAI_MAX_RETRIES:-1}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
+      EXTRACTOR_MAX_COMPLETION_TOKENS: ${BRAIN_EXTRACTOR_MAX_COMPLETION_TOKENS:-16384}
+      THROTTLE_LIMIT: ${BRAIN_THROTTLE_LIMIT:-600}
+      THROTTLE_EXPENSIVE_LIMIT: ${BRAIN_THROTTLE_EXPENSIVE_LIMIT:-600}
+      BRAIN_HEALTH_RESTART_FAILURES: ${BRAIN_HEALTH_RESTART_FAILURES:-20}
       DOCUMENT_INGEST_ENABLED: "1"
+      DOCUMENT_MULTI_INDEXER_ENABLED: "1"
+      FACTS_API_ENABLED: "1"
     volumes:
       - brain-cache:/app/.cache
     depends_on:
@@ -101,14 +111,16 @@ services:
       - private
       - provider
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      # Compose does not restart unhealthy containers. The probe terminates
+      # a Brain process that stops serving after it was healthy.
+      test: ["CMD", "brain-healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 8
       start_period: 45s
 
   surrealdb:
-    image: surrealdb/surrealdb:v3.1.5
+    image: surrealdb/surrealdb:v3.2.4@sha256:51baed8709f57f67dcf04b30e3177db846803fa9342dae2be58c6fa5f8d59843
     restart: unless-stopped
     user: root
     command:

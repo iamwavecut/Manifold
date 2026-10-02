@@ -1,6 +1,6 @@
 ---
 name: manifold
-description: Work with any network-reachable Manifold knowledge and memory service through its REST API. Use proactively before non-trivial work to retrieve prior decisions, procedures, incidents, and evidence; use after verified material work to preserve durable cross-agent knowledge, project knowledge, or task-scoped notes without duplicating canonical memory. Supports semantic discovery, context, canonical documents and history, nested folder browsing, durable writes, jobs, graph data, conflicts, and cascading renames. Does not use MCP.
+description: Use the bundled native CLI over HTTP REST to retrieve and preserve Manifold memory. Read this skill before checking availability; Manifold has no MCP tools or gRPC transport. Use before non-trivial work for prior decisions, procedures, incidents, and evidence, and after verified work for durable knowledge. Supports search, context, canonical documents, history, folders, jobs, graph data, conflicts, and reviewed renames.
 ---
 
 # Manifold
@@ -8,6 +8,38 @@ description: Work with any network-reachable Manifold knowledge and memory servi
 Run the bundled client as `sh scripts/manifold`. It selects a self-contained native binary; using the installed skill requires no Python, Go, Node.js, or other runtime.
 
 Read `MANIFOLD_URL` and `MANIFOLD_API_KEY` from the agent process environment. Treat the URL as operator-provided and remote: never assume localhost. Never print, log, pass as an argument, or store the API key.
+
+## Connect and check availability
+
+Manifold is an HTTP REST service, accessed through this skill's CLI. An empty
+MCP/tool search or an absent gRPC client says nothing about its availability.
+Do not search for a Manifold connector, start a local server, or declare an
+outage on that basis.
+
+Resolve `scripts/manifold` relative to this `SKILL.md`, not the task's working
+directory. The examples below assume the skill directory is the working
+directory; from another directory use the resolved absolute script path.
+
+Check configuration without displaying credentials, then make a real request:
+
+```bash
+test -n "${MANIFOLD_URL:-}" && test -n "${MANIFOLD_API_KEY:-}"
+sh scripts/manifold --json status
+sh scripts/manifold --json context --token-budget 1500 "relevant task context"
+```
+
+If either variable is missing, report missing client configuration, not a
+server outage. For an actual failure, report the failed operation, exit status,
+semantic `code` and `request_id` when available; distinguish local executable,
+network, authentication, retrieval, and indexing failures. Continue the main
+task from live evidence if retrieval is unavailable.
+
+`status.state=ready` describes component probes. Check
+`degraded_dependencies` on retrieval and the terminal job state on writes;
+neither a healthy probe nor an accepted job proves successful indexing.
+Historical failed jobs do not by themselves prove that current reads fail.
+Newer servers also expose `status.pipeline` for current document processing;
+inspect its state and counts separately from component health.
 
 ## Retrieve memory first
 
@@ -50,6 +82,11 @@ Folder slugs are globally unique in Manifold v1, even when nested. Use one share
 ## Remember verified knowledge
 
 Use `remember`, not raw REST mutations. The command performs another hybrid discovery pass as a safety gate, creates missing nested folders atomically, and waits until the indexing job reaches `ready`.
+
+For model-backed extraction, pass `--wait-timeout 20m` when a longer wait is
+appropriate. The CLI defaults to two minutes; exceeding that wait does not
+cancel the server job or mean that Manifold is unavailable. Inspect the
+returned job ID and continue polling it instead of creating the document again.
 
 For a new durable document:
 
@@ -113,7 +150,8 @@ Trust `code`, never classify by parsing `detail`. The client prints remediation 
 - `stale_rename_plan`: create and review a new preview.
 - `unrewritable_reference`: resolve every blocker manually.
 - `dependency_unavailable`: inspect `status` and obey `retry_after`.
-- `job_wait_timeout`: inspect the job; do not claim persistence until it is terminal.
+- `job_wait_timeout`: inspect the existing job and continue polling; do not
+  repeat the mutation or claim completed indexing before a terminal result.
 - `server_incompatible`: the remote server does not advertise behavior required
   by this command. Ask the operator to deploy a compatible Manifold release.
   For a read-only request only, an unscoped fallback is allowed when removing

@@ -4,13 +4,15 @@
 
 Manifold gives agents one REST API for canonical documents, immutable revisions, search context, structured facts and relations, provenance, conflicts, durable jobs, and explicit cascading renames. It ships as one Go binary with an embedded Mithril workbench and a self-contained agent skill.
 
-Manifold does **not** implement or publish MCP. Its public integration surface is HTTP plus an OpenAPI 3.1 contract.
+Manifold uses HTTP REST plus an OpenAPI 3.1 contract, accessed by agents through
+its bundled CLI skill. It does **not** implement MCP or gRPC. An empty connector
+search does not indicate a service outage.
 
 ## What it provides
 
 - Semantic ASCII slugs for human-facing resources; compact XIDs for event-like resources.
 - OpenViking-backed canonical folders, documents, content, and snapshots.
-- INITE Brain-backed entities, facts, relations, provenance, and conflict extraction.
+- INITE Brain extraction projected into public entities, facts, relations and provenance.
 - A SQLite control plane for public IDs, upstream mappings, jobs, revisions, idempotency, rename plans, API-key hashes, and UI sessions.
 - Hybrid retrieval with reciprocal-rank fusion and token-budgeted evidence packs.
 - Canonical search hits that expose public slugs, revisions, paths, and `manifold://` references instead of upstream IDs.
@@ -129,14 +131,22 @@ flowchart LR
     Agent["Agents / Manifold skill"] -->|"REST + OpenAPI"| API["Manifold Go binary"]
     Browser["Mithril workbench"] -->|"HttpOnly session + CSRF"| API
     API --> SQLite["SQLite control plane"]
-    API --> OV["OpenViking v0.4.10\ncanonical content + snapshots"]
-    API --> Brain["INITE Brain v0.8.1\nfacts + relations + provenance"]
-    Brain --> Surreal["SurrealDB v3.1.5"]
+    API --> OV["OpenViking v0.4.20\ncanonical content + snapshots"]
+    API -->|"submit + durable poll"| Brain["INITE Brain v2.2.0\nfacts + relations + provenance"]
+    Brain --> Surreal["SurrealDB v3.2.4"]
+    Brain -->|"committed graph + source revision"| SQLite
     OV --> Provider["OpenAI-compatible provider"]
     Brain --> Provider
 ```
 
 SQLite is authoritative for Manifold public identity and workflow state. OpenViking is authoritative for canonical content and snapshots. Brain is authoritative for derived graph knowledge. Upstream IDs remain private opaque mappings and never become Manifold IDs.
+
+Document jobs retain their exact source revision, OpenViking snapshot and Brain
+operation checkpoint. Completed extraction is projected into public entities,
+facts and relations; current retrieval excludes superseded or deleted source
+revisions. Component health and the current document pipeline are reported
+separately. See [the architecture review](docs/architecture-review.md) for the
+failure analysis and the scope of the Brain upgrade.
 
 One process serves the API and UI and runs the durable worker. Version 1 is intentionally single-tenant, single-replica, and self-hosted.
 
@@ -302,7 +312,8 @@ profiles.
 
 ## Development
 
-Go 1.26 and Node 26 are the supported local toolchains.
+Go 1.27 and Node 26 are the supported local toolchains. Exact dependency and
+container versions are recorded in [docs/dependencies.md](docs/dependencies.md).
 
 ```bash
 npm ci
@@ -332,13 +343,16 @@ Every successful `main` CI run is deployed to the configured GitHub
 metadata plus authenticated semantic retrieval, and rolls back the clean
 checkout if deep smoke fails. Tags publish multi-architecture GHCR images;
 production metadata is the source of truth for the running version and commit.
+Automatic deployment refuses changes across `DATA_VERSION` boundaries, where
+code-only rollback is unsafe. The Brain v2 upgrade requires the coordinated
+migration procedure in [docs/operations.md](docs/operations.md).
 
 ## Built on
 
 Manifold is an integration layer built on the original projects:
 
-- [OpenViking](https://github.com/volcengine/OpenViking) v0.4.10
-- [INITE Brain](https://github.com/inite-ai/inite-brain-service) v0.8.1
+- [OpenViking](https://github.com/volcengine/OpenViking) v0.4.20
+- [INITE Brain](https://github.com/inite-ai/inite-brain-service) v2.2.0
 - [SurrealDB](https://github.com/surrealdb/surrealdb)
 - [Huma](https://github.com/danielgtaylor/huma)
 - [Mithril.js](https://github.com/MithrilJS/mithril.js)

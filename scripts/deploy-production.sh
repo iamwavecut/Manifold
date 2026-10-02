@@ -90,6 +90,16 @@ if ! git merge-base --is-ancestor "$target_sha" origin/main; then
 	echo "target commit is not reachable from origin/main" >&2
 	exit 1
 fi
+
+# Code-only rollback cannot undo upstream database migrations. Releases before
+# DATA_VERSION used the original Brain/Surreal data layout (version 1).
+previous_data_version=$(git show "${previous_sha}:DATA_VERSION" 2>/dev/null || printf '1')
+target_data_version=$(git show "${target_sha}:DATA_VERSION" 2>/dev/null || printf '1')
+if [[ $previous_data_version != "$target_data_version" ]]; then
+	echo "deployment crosses a data compatibility boundary ($previous_data_version -> $target_data_version)" >&2
+	echo "follow docs/operations.md for a coordinated backup, migration, and data rollback; checkout and runtime are unchanged" >&2
+	exit 1
+fi
 git merge --ff-only "$target_sha"
 deployed=1
 

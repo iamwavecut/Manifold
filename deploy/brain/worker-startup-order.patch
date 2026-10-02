@@ -1,0 +1,105 @@
+diff --git a/src/jobs/worker-loop.service.ts b/src/jobs/worker-loop.service.ts
+index f4f9cca..de73792 100644
+--- a/src/jobs/worker-loop.service.ts
++++ b/src/jobs/worker-loop.service.ts
+@@ -2,7 +2,7 @@ import {
+   Injectable,
+   Logger,
+   Optional,
+-  OnModuleInit,
++  OnApplicationBootstrap,
+   BeforeApplicationShutdown,
+ } from '@nestjs/common';
+ import { LeaderLeaseService } from './leader-lease.service';
+@@ -27,7 +27,7 @@ export type { JobContext, JobHandler } from './worker-loop.types';
+  * up. Cadence/enabled flags read from the environment.
+  */
+ @Injectable()
+-export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdown {
++export class WorkerLoopService implements OnApplicationBootstrap, BeforeApplicationShutdown {
+   private readonly logger = new Logger(WorkerLoopService.name);
+   private readonly handlers = new Map<JobType, RegisteredHandler>();
+   private readonly enabled = envFlagNotDisabled(process.env.WORKER_LOOP_ENABLED);
+@@ -90,7 +90,7 @@ export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdow
+     return this.isLeader;
+   }
+ 
+-  async onModuleInit(): Promise<void> {
++  async onApplicationBootstrap(): Promise<void> {
+     if (!this.enabled) {
+       this.logger.log('Worker loop disabled (WORKER_LOOP_ENABLED=0)');
+       return;
+@@ -99,12 +99,11 @@ export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdow
+       this.logger.warn('JobClaimService not available — worker loop inert');
+       return;
+     }
+-    // Defer the first lease acquisition by one tick so module-owners get
+-    // a chance to register their handlers in their own onModuleInit
+-    // before we start polling for jobs we can't dispatch.
++    // Nest calls this after all providers' onModuleInit hooks, so the
++    // module-owned handlers are registered before the lease loop starts.
+     this.leaseTimer = setTimeout(
+       () => void this.tryBecomeLeader(),
+-      this.leaseRenewIntervalMs / 6, // 5s by default
++      this.leaseRenewIntervalMs / 6, // retain the 5s first-acquire delay
+     );
+     this.poller.startDecay();
+   }
+diff --git a/test/worker-loop.unit-spec.ts b/test/worker-loop.unit-spec.ts
+index 99e9b84..4cae46b 100644
+--- a/test/worker-loop.unit-spec.ts
++++ b/test/worker-loop.unit-spec.ts
+@@ -98,6 +98,53 @@ describe('WorkerLoopService.register', () => {
+   });
+ });
+ 
++describe('WorkerLoopService startup lifecycle', () => {
++  it('starts a handler registered by slow module initialization exactly once', async () => {
++    const priorEnabled = process.env.WORKER_LOOP_ENABLED;
++    const priorRenewInterval = process.env.WORKER_LOOP_LEASE_RENEW_MS;
++    process.env.WORKER_LOOP_ENABLED = '1';
++    process.env.WORKER_LOOP_LEASE_RENEW_MS = '30000';
++    jest.useFakeTimers();
++
++    const runLoop = jest.fn();
++    const poller = {
++      hasClaim: true,
++      startDecay: jest.fn(),
++      stopDecay: jest.fn(),
++      runLoop,
++    };
++    const lease = {
++      tryAcquire: jest.fn(async () => true),
++      release: jest.fn(async () => undefined),
++    };
++    const svc = new WorkerLoopService(poller as never, lease as never);
++    const lifecycle = svc as unknown as {
++      onModuleInit?: () => Promise<void>;
++      onApplicationBootstrap?: () => Promise<void>;
++    };
++
++    try {
++      await lifecycle.onModuleInit?.();
++      // Model another provider still initializing after WorkerLoop's hook.
++      await jest.advanceTimersByTimeAsync(5_000);
++      svc.register('index_document', async () => ({}));
++      await lifecycle.onApplicationBootstrap?.();
++      await jest.advanceTimersByTimeAsync(5_000);
++      await jest.advanceTimersByTimeAsync(30_000);
++
++      expect(runLoop).toHaveBeenCalledTimes(1);
++      expect(runLoop.mock.calls[0]?.[0].jobType).toBe('index_document');
++    } finally {
++      await svc.beforeApplicationShutdown();
++      jest.useRealTimers();
++      if (priorEnabled === undefined) delete process.env.WORKER_LOOP_ENABLED;
++      else process.env.WORKER_LOOP_ENABLED = priorEnabled;
++      if (priorRenewInterval === undefined) delete process.env.WORKER_LOOP_LEASE_RENEW_MS;
++      else process.env.WORKER_LOOP_LEASE_RENEW_MS = priorRenewInterval;
++    }
++  });
++});
++
+ describe('WorkerLoopService shutdown ordering', () => {
+   // The lease release is a DB write; SurrealService closes the pool in
+   // onApplicationShutdown (phase 3). The worker MUST release in
