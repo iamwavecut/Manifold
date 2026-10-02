@@ -194,7 +194,7 @@ MANIFOLD_URL=$url \
 	MANIFOLD_INTEGRATION_STATE=$state_file \
 	go test -tags=integration -count=1 -v ./test/integration
 
-compose start --wait --wait-timeout 120 brain
+compose up --detach --no-deps --wait --wait-timeout 120 brain
 MANIFOLD_URL=$url \
 	MANIFOLD_API_KEY=$api_key \
 	MANIFOLD_INTEGRATION_PHASE=recover_failure \
