@@ -131,9 +131,9 @@ flowchart LR
     Agent["Agents / Manifold skill"] -->|"REST + OpenAPI"| API["Manifold Go binary"]
     Browser["Mithril workbench"] -->|"HttpOnly session + CSRF"| API
     API --> SQLite["SQLite control plane"]
-    API --> OV["OpenViking v0.4.20\ncanonical content + snapshots"]
-    API -->|"submit + durable poll"| Brain["INITE Brain v2.2.0\nfacts + relations + provenance"]
-    Brain --> Surreal["SurrealDB v3.2.4"]
+    API --> OV["OpenViking v0.4.22\ncanonical content + snapshots"]
+    API -->|"submit + durable poll"| Brain["INITE Brain v2.3.0\nfacts + relations + provenance"]
+    Brain --> Surreal["SurrealDB v3.3.0"]
     Brain -->|"committed graph + source revision"| SQLite
     OV --> Provider["OpenAI-compatible provider"]
     Brain --> Provider
@@ -351,8 +351,8 @@ migration procedure in [docs/operations.md](docs/operations.md).
 
 Manifold is an integration layer built on the original projects:
 
-- [OpenViking](https://github.com/volcengine/OpenViking) v0.4.20
-- [INITE Brain](https://github.com/inite-ai/inite-brain-service) v2.2.0
+- [OpenViking](https://github.com/volcengine/OpenViking) v0.4.22
+- [INITE Brain](https://github.com/inite-ai/inite-brain-service) v2.3.0
 - [SurrealDB](https://github.com/surrealdb/surrealdb)
 - [Huma](https://github.com/danielgtaylor/huma)
 - [Mithril.js](https://github.com/MithrilJS/mithril.js)
