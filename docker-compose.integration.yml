@@ -21,6 +21,7 @@ services:
       OPENAI_API_KEY: deterministic-provider-key
       OPENAI_CHAT_MODEL: deterministic-chat
       OPENAI_EMBEDDING_MODEL: deterministic-embedding
+      OPENVIKING_VLM_EXTRA_BODY: '{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}'
     depends_on:
       provider:
         condition: service_healthy
