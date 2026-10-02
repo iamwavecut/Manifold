@@ -59,6 +59,16 @@ in [CI](../.github/workflows/ci.yml):
   empty graph. Valid explicit empty results remain valid. Errors contain no
   model output. Reprocess earlier false-success runs through new revisions.
 
+- [`fatal-signal-default.patch`](../deploy/brain/fatal-signal-default.patch)
+  removes Nest's all-signal shutdown hooks. Upstream registers them for
+  `SIGSEGV`, `SIGBUS`, `SIGILL`, and `SIGFPE` as well; on September 30 a real
+  segmentation fault after an onnxruntime worker crash then re-faulted about
+  3,000 times per second while Nest closed the HTTP listener, leaving Brain
+  without a port and unhealthy for two days. Fatal signals now keep their
+  default action so the container exits and restarts. `SIGTERM` and `SIGINT`
+  keep the existing bounded graceful shutdown, which closes the application
+  once.
+
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
 `originUri` of `manifold://documents/<slug>@rN`. Brain returns its durable
@@ -118,5 +128,7 @@ git -C "$brain_src" apply --check "$PWD/deploy/brain/corroborated-commit-ref.pat
 git -C "$brain_src" apply "$PWD/deploy/brain/corroborated-commit-ref.patch"
 git -C "$brain_src" apply --check "$PWD/deploy/brain/extraction-completion.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/extraction-completion.patch"
+git -C "$brain_src" apply --check "$PWD/deploy/brain/fatal-signal-default.patch"
+git -C "$brain_src" apply "$PWD/deploy/brain/fatal-signal-default.patch"
 git -C "$brain_src" diff --check
 ```

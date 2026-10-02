@@ -1,0 +1,19 @@
+diff --git a/src/main.ts b/src/main.ts
+index e1a4df1..e8e2efd 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -53,7 +53,13 @@ async function bootstrap() {
+   });
+ 
+   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+-  app.enableShutdownHooks();
++  // No app.enableShutdownHooks(): without an explicit list Nest also listens
++  // for SIGSEGV, SIGBUS, SIGILL and SIGFPE. A real fault in a native addon
++  // (onnxruntime) then returns from libuv's handler and re-faults forever
++  // while Nest closes the HTTP server, leaving a CPU-bound process with no
++  // listener. Fatal signals must keep their default action so the container
++  // exits and restarts; SIGTERM/SIGINT go through onTerm below, whose
++  // app.close() runs every shutdown hook exactly once.
+   const configService = app.get(ConfigService);
+   const logger = new Logger('Bootstrap');
+ 

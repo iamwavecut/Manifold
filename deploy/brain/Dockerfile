@@ -12,6 +12,7 @@ COPY deploy/brain/failed-run-retry.patch /tmp/failed-run-retry.patch
 COPY deploy/brain/worker-startup-order.patch /tmp/worker-startup-order.patch
 COPY deploy/brain/corroborated-commit-ref.patch /tmp/corroborated-commit-ref.patch
 COPY deploy/brain/extraction-completion.patch /tmp/extraction-completion.patch
+COPY deploy/brain/fatal-signal-default.patch /tmp/fatal-signal-default.patch
 RUN cd /source \
     && git apply --check /tmp/openai-base-url.patch \
     && git apply /tmp/openai-base-url.patch \
@@ -26,7 +27,9 @@ RUN cd /source \
     && git apply --check /tmp/corroborated-commit-ref.patch \
     && git apply /tmp/corroborated-commit-ref.patch \
     && git apply --check /tmp/extraction-completion.patch \
-    && git apply /tmp/extraction-completion.patch
+    && git apply /tmp/extraction-completion.patch \
+    && git apply --check /tmp/fatal-signal-default.patch \
+    && git apply /tmp/fatal-signal-default.patch
 
 # These Node 22 digest pins match the v2.2.0 upstream Dockerfile's tested runtime.
 FROM node:22-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS builder

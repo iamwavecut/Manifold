@@ -78,6 +78,8 @@ jobs:
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/fatal-signal-default.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/fatal-signal-default.patch"
       - run: git -C /tmp/brain diff --check
 
   integration:
