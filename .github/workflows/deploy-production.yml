@@ -42,12 +42,15 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.MANIFOLD_DEPLOY_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.MANIFOLD_DEPLOY_KNOWN_HOSTS }}
+          GETA_SSH_PORT: ${{ vars.MANIFOLD_DEPLOY_PORT || '22022' }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/manifold_deploy
           chmod 600 ~/.ssh/manifold_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          printf 'Host geta.moe 207.244.239.212 2605:a140:2260:6080::1\n  Port %s\n' "$GETA_SSH_PORT" > ~/.ssh/config
+          chmod 600 ~/.ssh/config
       - name: Deploy exact green SHA
         run: |
           test -n "$DEPLOY_HOST"
