@@ -150,6 +150,14 @@ differences:
   output budgets of rerank and classification calls on hidden reasoning and
   return no JSON, and OpenViking's semantic summaries run long enough for
   waited writes to hit their 300-second timeout.
+- Provider choice matters as much. On 2026-10-02 OpenRouter routed
+  `deepseek/deepseek-v4.1-flash` summaries to `open-inference/fp4`, which
+  produced about 1,600 tokens at roughly 8 tokens/s (~180 s per summary) and
+  ignored length instructions, even with `sort: "throughput"`. The same
+  request on Together or DeepInfra took 0.7–1.5 s and about 80 tokens. The
+  production value therefore adds `"ignore":["open-inference"]` and
+  `"sort":"throughput"`. Re-measure when changing the model: provider slugs
+  come from `https://openrouter.ai/api/v1/models/<model>/endpoints`.
 - After acceptance, recover documents that are `partially_ready` from the
   September 30 Brain outage through their jobs' retry action, one at a time.
 
