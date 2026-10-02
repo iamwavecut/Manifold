@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +23,19 @@ import (
 )
 
 type Service struct {
-	store      *store.Store
-	documents  upstream.DocumentStore
-	graph      upstream.GraphStore
-	publicURL  string
-	logger     *slog.Logger
-	workerTick time.Duration
-	build      buildinfo.Info
+	store                  *store.Store
+	documents              upstream.DocumentStore
+	graph                  upstream.GraphStore
+	publicURL              string
+	logger                 *slog.Logger
+	workerTick             time.Duration
+	brainExtractionTimeout time.Duration
+	brainPollInterval      time.Duration
+	build                  buildinfo.Info
 }
+
+const defaultBrainExtractionTimeout = 15 * time.Minute
+const defaultBrainPollInterval = 10 * time.Second
 
 type Status struct {
 	Service          string            `json:"service"`
@@ -41,6 +47,17 @@ type Status struct {
 	State            string            `json:"state"`
 	Components       map[string]string `json:"components"`
 	Counts           map[string]int    `json:"counts"`
+	Pipeline         PipelineStatus    `json:"pipeline"`
+}
+
+type PipelineStatus struct {
+	State                   string `json:"state"`
+	CurrentDocuments        int    `json:"current_documents"`
+	IncompleteDocuments     int    `json:"incomplete_documents"`
+	PartiallyReadyDocuments int    `json:"partially_ready_documents"`
+	FailedDocuments         int    `json:"failed_documents"`
+	PendingJobs             int    `json:"pending_jobs"`
+	FailedJobs              int    `json:"failed_jobs"`
 }
 
 type SearchRequest struct {
@@ -81,7 +98,16 @@ func New(s *store.Store, documents upstream.DocumentStore, graph upstream.GraphS
 	}
 	return &Service{
 		store: s, documents: documents, graph: graph, publicURL: publicURL,
-		logger: logger, workerTick: workerTick, build: build,
+		logger: logger, workerTick: workerTick,
+		brainExtractionTimeout: defaultBrainExtractionTimeout,
+		brainPollInterval:      defaultBrainPollInterval,
+		build:                  build,
+	}
+}
+
+func (s *Service) SetBrainExtractionTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		s.brainExtractionTimeout = timeout
 	}
 }
 
@@ -123,7 +149,27 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		return Status{}, err
 	}
 	status.Counts = counts
+	status.Pipeline = pipelineStatus(counts)
 	return status, nil
+}
+
+func pipelineStatus(counts map[string]int) PipelineStatus {
+	pipeline := PipelineStatus{
+		State:                   "ready",
+		CurrentDocuments:        counts["documents"],
+		IncompleteDocuments:     counts["documents_incomplete"],
+		PartiallyReadyDocuments: counts["documents_partially_ready"],
+		FailedDocuments:         counts["documents_failed"],
+		PendingJobs:             counts["pending_jobs"],
+		FailedJobs:              counts["failed_jobs"],
+	}
+	if pipeline.IncompleteDocuments > 0 || pipeline.PendingJobs > 0 {
+		pipeline.State = "processing"
+	}
+	if pipeline.PartiallyReadyDocuments > 0 || pipeline.FailedDocuments > 0 {
+		pipeline.State = "degraded"
+	}
+	return pipeline
 }
 
 func (s *Service) CreateFolder(ctx context.Context, folder model.Folder) (model.Folder, error) {
@@ -389,7 +435,7 @@ func (s *Service) canonicalizeSearchHits(
 		case "document":
 			mapped, ok, err = s.canonicalizeDocumentHit(ctx, hit)
 		case "fact":
-			mapped, ok, err = s.canonicalizeFactHit(ctx, hit)
+			mapped, ok, err = s.canonicalizeFactHit(ctx, hit, request.IncludeHistory, request.ScopeGlob)
 		}
 		if err != nil {
 			return nil, err
@@ -433,45 +479,13 @@ func (s *Service) canonicalizeDocumentHit(ctx context.Context, hit model.SearchH
 	return hit, true, nil
 }
 
-func (s *Service) canonicalizeFactHit(ctx context.Context, hit model.SearchHit) (model.SearchHit, bool, error) {
-	fact, err := s.store.GetFactByUpstreamID(ctx, hit.ID)
-	if err == nil {
-		hit.ID = fact.ID
-		hit.CanonicalRef = "manifold://facts/" + fact.ID
-		hit.UpstreamSourceRef = ""
-		if fact.SourceDocumentID != "" {
-			hit.Path, err = s.store.DocumentPath(ctx, fact.SourceDocumentID)
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return model.SearchHit{}, false, err
-			}
-		}
-		return hit, true, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return model.SearchHit{}, false, err
-	}
-	if hit.UpstreamSourceRef == "" {
-		return model.SearchHit{}, false, nil
-	}
-	doc, err := s.store.GetDocumentByUpstreamRef(ctx, hit.UpstreamSourceRef)
-	if errors.Is(err, store.ErrNotFound) {
-		return model.SearchHit{}, false, nil
-	}
-	if err != nil {
-		return model.SearchHit{}, false, err
-	}
-	path, err := s.store.DocumentPath(ctx, doc.ID)
-	if err != nil {
-		return model.SearchHit{}, false, err
-	}
-	hit.Kind = "document"
-	hit.ID = doc.ID
-	hit.Title = doc.Title
-	hit.Revision = doc.Revision
-	hit.Path = path
-	hit.CanonicalRef = "manifold://documents/" + doc.ID + "@" + doc.Revision
-	hit.UpstreamSourceRef = ""
-	return hit, true, nil
+func (s *Service) canonicalizeFactHit(
+	ctx context.Context,
+	hit model.SearchHit,
+	includeHistory bool,
+	scopeGlob string,
+) (model.SearchHit, bool, error) {
+	return s.canonicalizeProjectedFactHitWithOptions(ctx, hit, includeHistory, scopeGlob)
 }
 
 func (s *Service) Context(ctx context.Context, request SearchRequest, budget int) (model.ContextPack, []string, error) {
@@ -501,125 +515,6 @@ func (s *Service) Context(ctx context.Context, request SearchRequest, budget int
 		Query: request.Query, Items: items, Text: text.String(),
 		EstimatedTokens: used, TokenBudget: budget, Truncated: truncated,
 	}, search.DegradedDependencies, nil
-}
-
-func (s *Service) RunWorker(ctx context.Context) {
-	ticker := time.NewTicker(s.workerTick)
-	defer ticker.Stop()
-	for {
-		if err := s.processOne(ctx); err != nil && !errors.Is(err, store.ErrNotFound) && !errors.Is(err, context.Canceled) {
-			s.logger.Error("job processing failed", "error", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-func (s *Service) processOne(ctx context.Context) error {
-	job, err := s.store.NextJob(ctx)
-	if err != nil {
-		return err
-	}
-	s.logger.Info("job started", "job_id", job.ID, "kind", job.Kind, "resource", job.ResourceID)
-	switch job.Kind {
-	case "document.sync":
-		err = s.syncDocument(ctx, job)
-	case "document.delete":
-		err = s.deleteDocument(ctx, job)
-	case "rename.apply":
-		err = s.applyRename(ctx, job)
-	default:
-		err = fmt.Errorf("unknown job kind %q", job.Kind)
-	}
-	if err == nil {
-		_ = s.store.SetJobStatus(ctx, job.ID, model.JobReady, nil)
-		s.logger.Info("job completed", "job_id", job.ID, "kind", job.Kind)
-		return nil
-	}
-	errorContext := problem.WithRequestID(ctx, identity.NewXID())
-	semantic := s.dependencyProblem(errorContext, job, err)
-	if job.Kind == "rename.apply" {
-		if plan, getErr := s.store.GetRenamePlan(ctx, job.ResourceID); getErr == nil && plan.Error != nil {
-			semantic = plan.Error
-		}
-	}
-	status := model.JobFailed
-	if job.Kind == "document.sync" {
-		doc, getErr := s.store.GetDocument(ctx, job.ResourceID, false)
-		if getErr == nil && doc.Status == model.JobExtracting {
-			status = model.JobPartiallyReady
-			_ = s.store.SetDocumentSync(ctx, doc.ID, string(model.JobPartiallyReady), "", "")
-		}
-	}
-	_ = s.store.SetJobStatus(ctx, job.ID, status, semantic)
-	s.logger.Error("job failed", "job_id", job.ID, "kind", job.Kind, "code", semantic.Code)
-	return err
-}
-
-func (s *Service) syncDocument(ctx context.Context, job model.Job) error {
-	doc, err := s.store.GetDocument(ctx, job.ResourceID, true)
-	if err != nil {
-		return err
-	}
-	var payload struct {
-		Create      bool     `json:"create"`
-		FolderPaths []string `json:"folder_paths"`
-	}
-	_ = json.Unmarshal(job.Payload, &payload)
-	for _, path := range payload.FolderPaths {
-		uri := "viking://resources/manifold/" + strings.Trim(path, "/") + "/"
-		if err := s.ensureFolder(ctx, uri, "Manifold folder "+path); err != nil {
-			return err
-		}
-	}
-
-	var snapshot string
-	if doc.Status == model.JobExtracting || doc.Status == model.JobPartiallyReady {
-		var revisionNumber int
-		if _, err := fmt.Sscanf(doc.Revision, "r%d", &revisionNumber); err != nil {
-			return fmt.Errorf("parse document revision %q: %w", doc.Revision, err)
-		}
-		revision, err := s.store.GetRevision(ctx, doc.ID, revisionNumber)
-		if err != nil {
-			return err
-		}
-		if revision.SnapshotOID == "" {
-			return fmt.Errorf("document %s has no OpenViking checkpoint for %s", doc.ID, doc.Revision)
-		}
-		snapshot = revision.SnapshotOID
-	} else {
-		if err := s.documents.Write(ctx, doc.OVURI, doc.Content, payload.Create); err != nil {
-			if !payload.Create {
-				return err
-			}
-			exists, existsErr := s.documents.Exists(ctx, doc.OVURI)
-			if existsErr != nil || !exists {
-				return err
-			}
-			if replaceErr := s.documents.Write(ctx, doc.OVURI, doc.Content, false); replaceErr != nil {
-				return replaceErr
-			}
-		}
-		snapshot, err = s.documents.Snapshot(ctx,
-			fmt.Sprintf("%s %s %s", job.Kind, doc.ID, doc.Revision), []string{doc.OVURI})
-		if err != nil {
-			return err
-		}
-		if err := s.store.SetDocumentSync(ctx, doc.ID, string(model.JobExtracting), "", snapshot); err != nil {
-			return err
-		}
-	}
-	ingest, err := s.graph.IngestDocument(ctx, upstream.GraphDocument{
-		ID: doc.ID, Title: doc.Title, Format: doc.Format, Content: doc.Content,
-		OriginURI: doc.OVURI, Revision: doc.Revision, OccurredAt: doc.UpdatedAt.Format(time.RFC3339),
-	})
-	if err != nil {
-		return err
-	}
-	return s.store.SetDocumentSync(ctx, doc.ID, string(model.JobReady), ingest.DocumentID, snapshot)
 }
 
 func (s *Service) deleteDocument(ctx context.Context, job model.Job) error {
@@ -719,6 +614,12 @@ func (s *Service) applyRename(ctx context.Context, job model.Job) error {
 		syncErr = s.syncRenamedDocuments(ctx, job, after)
 	}
 	if syncErr != nil {
+		if ctx.Err() != nil {
+			return errors.Join(syncErr, ctx.Err())
+		}
+		if retryableUpstreamError(syncErr) {
+			return syncErr
+		}
 		errorContext := problem.WithRequestID(ctx, identity.NewXID())
 		semantic := s.dependencyProblem(errorContext, job, syncErr)
 		if rollbackErr := s.store.RollbackRename(ctx, job.ResourceID, semantic); rollbackErr != nil {
@@ -738,7 +639,22 @@ func (s *Service) syncRenamedDocuments(
 	job model.Job,
 	after []model.Document,
 ) error {
+	checkpoints, err := decodeRenameDocumentCheckpoints(job.Payload)
+	if err != nil {
+		return err
+	}
 	for _, doc := range after {
+		current, err := s.store.GetDocument(ctx, doc.ID, true)
+		if errors.Is(err, store.ErrNotFound) {
+			return store.ErrDocumentSyncSuperseded
+		}
+		if err != nil {
+			return err
+		}
+		if current.Revision != doc.Revision {
+			return store.ErrDocumentSyncSuperseded
+		}
+		doc = current
 		expected, err := s.documentURI(ctx, doc.FolderID, doc.ID, doc.Format)
 		if err != nil {
 			return err
@@ -747,21 +663,117 @@ func (s *Service) syncRenamedDocuments(
 			return err
 		}
 		doc.OVURI = expected
-		if err := s.documents.Write(ctx, expected, doc.Content, false); err != nil {
-			return err
+		revisionNumber, err := strconv.Atoi(strings.TrimPrefix(doc.Revision, "r"))
+		if err != nil {
+			return fmt.Errorf("parse document revision %q: %w", doc.Revision, err)
 		}
-		snapshot, err := s.documents.Snapshot(ctx, "rename plan "+job.ResourceID, []string{expected})
+		if revisionNumber < 1 {
+			return fmt.Errorf("invalid document revision %q", doc.Revision)
+		}
+		revision, err := s.store.GetRevision(ctx, doc.ID, revisionNumber)
 		if err != nil {
 			return err
 		}
-		ingest, graphErr := s.graph.IngestDocument(ctx, upstream.GraphDocument{
-			ID: doc.ID, Title: doc.Title, Format: doc.Format, Content: doc.Content,
-			OriginURI: expected, Revision: doc.Revision, OccurredAt: doc.UpdatedAt.Format(time.RFC3339),
-		})
+		snapshot := revision.SnapshotOID
+		if snapshot == "" {
+			if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobIndexing, "", ""); err != nil {
+				return err
+			}
+			if err := s.documents.Write(ctx, expected, revision.Content, false); err != nil {
+				return err
+			}
+			snapshot, err = s.documents.Snapshot(ctx, "rename plan "+job.ResourceID, []string{expected})
+			if err != nil {
+				return err
+			}
+		}
+		if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobExtracting, "", snapshot); err != nil {
+			return err
+		}
+		graphDocument := upstream.GraphDocument{
+			ID: doc.ID, Title: doc.Title, Format: doc.Format, Content: revision.Content,
+			OriginURI: "manifold://documents/" + doc.ID + "@" + doc.Revision,
+			Revision:  doc.Revision, OccurredAt: revision.CreatedAt.Format(time.RFC3339),
+		}
+		graphCtx, cancel := context.WithTimeout(ctx, s.brainExtractionTimeout)
+		if async, ok := s.graph.(upstream.AsyncGraphStore); ok {
+			key := renameDocumentCheckpointKey(doc.ID, doc.Revision)
+			brainDocumentID := checkpoints.BrainDocumentIDs[key]
+			if brainDocumentID == "" {
+				brainDocumentID, err = s.submitBrainDocument(graphCtx, async, graphDocument)
+				if err == nil && brainDocumentID == "" {
+					err = errors.New("Brain accepted renamed document without returning a document ID")
+				}
+				if err == nil {
+					err = s.persistRenameBrainDocumentID(ctx, job.ID, &checkpoints, doc.ID, doc.Revision, brainDocumentID)
+				}
+				if err != nil {
+					cancel()
+					return err
+				}
+			}
+			state, stateErr := s.fetchBrainDocumentState(graphCtx, async, brainDocumentID, doc.ID, doc.Revision)
+			if stateErr == nil {
+				state, stateErr = s.waitForBrainDocument(graphCtx, async, brainDocumentID, doc.ID, doc.Revision, state)
+			}
+			if stateErr != nil {
+				cancel()
+				return stateErr
+			}
+			ingest := state.Result
+			if ingest.DocumentID == "" {
+				ingest.DocumentID = brainDocumentID
+			}
+			if ingest.OriginURI == "" {
+				ingest.OriginURI = graphDocument.OriginURI
+			}
+			if ingest.Revision == "" {
+				ingest.Revision = graphDocument.Revision
+			}
+			switch state.Status {
+			case upstream.GraphDocumentReady:
+				if err := s.materializeGraphDocument(graphCtx, doc, ingest); err != nil {
+					cancel()
+					return err
+				}
+				if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobReady, ingest.DocumentID, snapshot); err != nil {
+					cancel()
+					return err
+				}
+			case upstream.GraphDocumentPartial:
+				if err := s.materializeGraphDocument(graphCtx, doc, ingest); err != nil {
+					cancel()
+					return err
+				}
+				if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobPartiallyReady, ingest.DocumentID, snapshot); err != nil {
+					cancel()
+					return err
+				}
+				cancel()
+				return terminalBrainDocumentError(state)
+			case upstream.GraphDocumentFailed:
+				if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobExtracting, ingest.DocumentID, snapshot); err != nil {
+					cancel()
+					return err
+				}
+				cancel()
+				return terminalBrainDocumentError(state)
+			default:
+				cancel()
+				return fmt.Errorf("Brain returned unsupported document state %q", state.Status)
+			}
+			cancel()
+			continue
+		}
+		ingest, graphErr := s.graph.IngestDocument(graphCtx, graphDocument)
+		cancel()
 		if graphErr != nil {
 			return graphErr
 		}
-		if err := s.store.SetDocumentSync(ctx, doc.ID, string(model.JobReady), ingest.DocumentID, snapshot); err != nil {
+		if err := s.materializeGraphDocument(ctx, doc, ingest); err != nil {
+			return err
+		}
+		if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobReady, ingest.DocumentID, snapshot); err != nil {
 			return err
 		}
 	}
@@ -901,11 +913,17 @@ func (s *Service) compensateRenameUpstreams(
 			continue
 		}
 		_, _ = s.documents.Snapshot(ctx, "compensate rename plan "+planID, []string{original.OVURI})
-		if _, err := s.graph.IngestDocument(ctx, upstream.GraphDocument{
+		ingest, err := s.graph.IngestDocument(ctx, upstream.GraphDocument{
 			ID: original.ID, Title: original.Title, Format: original.Format, Content: original.Content,
-			OriginURI: original.OVURI, Revision: original.Revision, OccurredAt: original.UpdatedAt.Format(time.RFC3339),
-		}); err != nil {
+			OriginURI: "manifold://documents/" + original.ID + "@" + original.Revision,
+			Revision:  original.Revision, OccurredAt: original.UpdatedAt.Format(time.RFC3339),
+		})
+		if err != nil {
 			s.logger.Error("rename graph compensation failed", "plan_id", planID, "document_id", original.ID)
+			continue
+		}
+		if err := s.materializeGraphDocument(ctx, original, ingest); err != nil {
+			s.logger.Error("rename graph projection compensation failed", "plan_id", planID, "document_id", original.ID)
 		}
 	}
 }
@@ -1190,6 +1208,21 @@ func estimateTokens(text string) int {
 func (s *Service) dependencyProblem(ctx context.Context, job model.Job, err error) *problem.Error {
 	var dependency *upstream.DependencyError
 	if errors.As(err, &dependency) {
+		if job.Kind == "rename.apply" && !retryableUpstreamError(err) {
+			p := problem.New(ctx, s.publicURL, 503, "dependency_unavailable", "Dependency unavailable",
+				fmt.Sprintf("%s could not complete %s, so the rename was rolled back.", dependency.Dependency, dependency.Operation),
+				problem.Remediation{
+					Summary: "Correct the failure, then create and review a fresh rename plan.",
+					Steps: []string{
+						"GET /api/v1/rename-plans/" + job.ResourceID + " to inspect the rollback result.",
+						"Correct the dependency or input issue that caused the terminal failure.",
+						"Create a fresh rename preview and review every change.",
+						"Apply the new reviewed plan.",
+					},
+				})
+			p.Job = "/api/v1/jobs/" + job.ID
+			return p
+		}
 		p := problem.New(ctx, s.publicURL, 503, "dependency_unavailable", "Dependency unavailable",
 			fmt.Sprintf("%s could not complete %s.", dependency.Dependency, dependency.Operation),
 			problem.Remediation{
@@ -1200,8 +1233,23 @@ func (s *Service) dependencyProblem(ctx context.Context, job model.Job, err erro
 					fmt.Sprintf("POST /api/v1/jobs/%s/retry after recovery.", job.ID),
 				},
 			})
-		p.Retryable = dependency.Retryable
+		p.Retryable = retryableUpstreamError(err)
 		p.RetryAfter = "30s"
+		p.Job = "/api/v1/jobs/" + job.ID
+		return p
+	}
+	if job.Kind == "rename.apply" {
+		p := problem.New(ctx, s.publicURL, 500, "rename_failed", "Rename failed",
+			"The rename was rolled back because the requested changes could not be completed.",
+			problem.Remediation{
+				Summary: "Correct the failure, then create and review a fresh rename plan.",
+				Steps: []string{
+					"GET /api/v1/rename-plans/" + job.ResourceID + " to inspect the rollback result.",
+					"Correct the issue that caused the terminal failure.",
+					"Create a fresh rename preview and review every change.",
+					"Apply the new reviewed plan.",
+				},
+			})
 		p.Job = "/api/v1/jobs/" + job.ID
 		return p
 	}

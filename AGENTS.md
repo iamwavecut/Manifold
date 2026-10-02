@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-- Manifold is a self-hosted REST and OpenAPI service. Do not add, expose, document, or advertise MCP.
+- Manifold is a self-hosted REST and OpenAPI service. Agents connect through the bundled Manifold CLI and HTTP API, not gRPC or MCP. An absent MCP tool is not evidence of an unavailable service. Do not add, expose, document, or advertise MCP.
 - `internal/store` owns public IDs, workflow state, jobs, revisions, idempotency, and upstream mappings.
 - OpenViking owns canonical folder/document content and snapshot objects.
 - INITE Brain owns derived entities, facts, relations, provenance, and conflicts.
@@ -77,9 +77,12 @@ Run `make integration` for changes that cross the API, durable worker, OpenVikin
 For changes to the pinned Brain integration, also verify:
 
 ```bash
-git -C /path/to/inite-brain-service-v0.8.1 apply --check deploy/brain/openai-base-url.patch
-git -C /path/to/inite-brain-service-v0.8.1 apply deploy/brain/openai-base-url.patch
-git -C /path/to/inite-brain-service-v0.8.1 apply --check deploy/brain/scoped-session-recovery.patch
+git clone --branch v2.2.0 --depth 1 https://github.com/inite-ai/inite-brain-service.git /tmp/brain
+test "$(git -C /tmp/brain rev-parse HEAD)" = b19b209fec92069d91df22af61db18b0a810ce82
+for patch in openai-base-url scoped-session-recovery document-origin-identity failed-run-retry worker-startup-order corroborated-commit-ref extraction-completion; do
+    git -C /tmp/brain apply --check "$PWD/deploy/brain/$patch.patch"
+    git -C /tmp/brain apply "$PWD/deploy/brain/$patch.patch"
+done
 ```
 
 Report skipped checks explicitly. Never claim a real-provider integration passed when only deterministic fakes ran.

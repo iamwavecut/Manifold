@@ -2,7 +2,8 @@
 
 Manifold publishes one external skill from `skills/manifold`. The skill is a
 REST client for any network-reachable Manifold instance. It does not install a
-server and does not use MCP.
+server and does not use MCP or gRPC. Agents must load the skill and execute its
+bundled CLI before reporting availability; an absent connector is not an outage.
 
 ## Install
 
@@ -122,7 +123,19 @@ the durable job reaches `ready`. It returns nonzero for `partially_ready`,
 merge, and issue a new update instead. It also refuses every mutation with
 `discovery_degraded` when OpenViking or Brain search is incomplete.
 
+The CLI's default two-minute wait is independent of server processing limits.
+Use `remember --wait-timeout 20m ...` for longer extraction. On
+`job_wait_timeout`, poll the returned job ID; the timeout does not cancel the
+job or authorize repeating the mutation.
+
 ## Verify
+
+Resolve the script relative to the installed `SKILL.md`, not the current
+project directory. Check only whether both environment variables are set;
+never print their values. A missing variable is a client configuration issue.
+For a failed request, retain the operation, exit status, semantic error code,
+and request ID. Check `degraded_dependencies` alongside `context`, and wait for a terminal write
+job. A healthy `status` probe does not prove successful indexing.
 
 Start a new agent session after installation, then ask it to use `$manifold`
 for a status check and a scoped memory search. From a shell, the bundled client can be verified without

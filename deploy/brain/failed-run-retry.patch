@@ -1,0 +1,1483 @@
+diff --git a/brain-landing/public/openapi.json b/brain-landing/public/openapi.json
+index e314286..2ffc452 100644
+--- a/brain-landing/public/openapi.json
++++ b/brain-landing/public/openapi.json
+@@ -2922,6 +2922,63 @@
+         ],
+         "type": "object"
+       },
++      "RetryDocumentRequest": {
++        "additionalProperties": false,
++        "properties": {
++          "retryKey": {
++            "description": "Stable caller-generated key for one retry attempt.",
++            "maxLength": 128,
++            "minLength": 1,
++            "pattern": "^[A-Za-z0-9._:-]+$",
++            "type": "string"
++          }
++        },
++        "required": [
++          "retryKey"
++        ],
++        "type": "object"
++      },
++      "RetryDocumentResponse": {
++        "additionalProperties": false,
++        "properties": {
++          "documentId": {
++            "type": "string"
++          },
++          "runs": {
++            "items": {
++              "additionalProperties": false,
++              "properties": {
++                "packId": {
++                  "type": "string"
++                },
++                "packVersion": {
++                  "type": "string"
++                },
++                "status": {
++                  "enum": [
++                    "enqueued",
++                    "already_queued",
++                    "skipped_version_mismatch"
++                  ],
++                  "type": "string"
++                }
++              },
++              "required": [
++                "packId",
++                "packVersion",
++                "status"
++              ],
++              "type": "object"
++            },
++            "type": "array"
++          }
++        },
++        "required": [
++          "documentId",
++          "runs"
++        ],
++        "type": "object"
++      },
+       "SetPricingRequest": {
+         "additionalProperties": false,
+         "properties": {
+@@ -4461,6 +4518,70 @@
+         ]
+       }
+     },
++    "/v1/documents/{id}/retry": {
++      "post": {
++        "description": "Queues only currently failed in-process runs for this document. Pending, running, succeeded and external runs are ignored; runs whose failed pack version is no longer installed are skipped. A document with purged or unavailable stored content returns 409. Replaying the same retryKey is idempotent; callers use a new key for a later attempt. Throttled to 10 requests/min per credential. Source: src/documents/documents-ingest.controller.ts.\n\nRequired scope: `brain:write`.",
++        "operationId": "retryFailedDocument",
++        "parameters": [
++          {
++            "description": "The document id.",
++            "in": "path",
++            "name": "id",
++            "required": true,
++            "schema": {
++              "type": "string"
++            }
++          }
++        ],
++        "requestBody": {
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/RetryDocumentRequest"
++              }
++            }
++          },
++          "required": true
++        },
++        "responses": {
++          "202": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/RetryDocumentResponse"
++                }
++              }
++            },
++            "description": "Queued runs; an empty list means there was no failed in-process run."
++          },
++          "400": {
++            "$ref": "#/components/responses/BadRequest"
++          },
++          "401": {
++            "$ref": "#/components/responses/Unauthorized"
++          },
++          "403": {
++            "$ref": "#/components/responses/Forbidden"
++          },
++          "404": {
++            "$ref": "#/components/responses/NotFound"
++          },
++          "409": {
++            "$ref": "#/components/responses/Conflict"
++          },
++          "429": {
++            "$ref": "#/components/responses/TooManyRequests"
++          },
++          "503": {
++            "$ref": "#/components/responses/FeatureDisabled"
++          }
++        },
++        "summary": "Retry failed document indexing runs",
++        "tags": [
++          "Documents"
++        ]
++      }
++    },
+     "/v1/episodes": {
+       "get": {
+         "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
+diff --git a/docs/openapi.json b/docs/openapi.json
+index e314286..2ffc452 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -2922,6 +2922,63 @@
+         ],
+         "type": "object"
+       },
++      "RetryDocumentRequest": {
++        "additionalProperties": false,
++        "properties": {
++          "retryKey": {
++            "description": "Stable caller-generated key for one retry attempt.",
++            "maxLength": 128,
++            "minLength": 1,
++            "pattern": "^[A-Za-z0-9._:-]+$",
++            "type": "string"
++          }
++        },
++        "required": [
++          "retryKey"
++        ],
++        "type": "object"
++      },
++      "RetryDocumentResponse": {
++        "additionalProperties": false,
++        "properties": {
++          "documentId": {
++            "type": "string"
++          },
++          "runs": {
++            "items": {
++              "additionalProperties": false,
++              "properties": {
++                "packId": {
++                  "type": "string"
++                },
++                "packVersion": {
++                  "type": "string"
++                },
++                "status": {
++                  "enum": [
++                    "enqueued",
++                    "already_queued",
++                    "skipped_version_mismatch"
++                  ],
++                  "type": "string"
++                }
++              },
++              "required": [
++                "packId",
++                "packVersion",
++                "status"
++              ],
++              "type": "object"
++            },
++            "type": "array"
++          }
++        },
++        "required": [
++          "documentId",
++          "runs"
++        ],
++        "type": "object"
++      },
+       "SetPricingRequest": {
+         "additionalProperties": false,
+         "properties": {
+@@ -4461,6 +4518,70 @@
+         ]
+       }
+     },
++    "/v1/documents/{id}/retry": {
++      "post": {
++        "description": "Queues only currently failed in-process runs for this document. Pending, running, succeeded and external runs are ignored; runs whose failed pack version is no longer installed are skipped. A document with purged or unavailable stored content returns 409. Replaying the same retryKey is idempotent; callers use a new key for a later attempt. Throttled to 10 requests/min per credential. Source: src/documents/documents-ingest.controller.ts.\n\nRequired scope: `brain:write`.",
++        "operationId": "retryFailedDocument",
++        "parameters": [
++          {
++            "description": "The document id.",
++            "in": "path",
++            "name": "id",
++            "required": true,
++            "schema": {
++              "type": "string"
++            }
++          }
++        ],
++        "requestBody": {
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/RetryDocumentRequest"
++              }
++            }
++          },
++          "required": true
++        },
++        "responses": {
++          "202": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/RetryDocumentResponse"
++                }
++              }
++            },
++            "description": "Queued runs; an empty list means there was no failed in-process run."
++          },
++          "400": {
++            "$ref": "#/components/responses/BadRequest"
++          },
++          "401": {
++            "$ref": "#/components/responses/Unauthorized"
++          },
++          "403": {
++            "$ref": "#/components/responses/Forbidden"
++          },
++          "404": {
++            "$ref": "#/components/responses/NotFound"
++          },
++          "409": {
++            "$ref": "#/components/responses/Conflict"
++          },
++          "429": {
++            "$ref": "#/components/responses/TooManyRequests"
++          },
++          "503": {
++            "$ref": "#/components/responses/FeatureDisabled"
++          }
++        },
++        "summary": "Retry failed document indexing runs",
++        "tags": [
++          "Documents"
++        ]
++      }
++    },
+     "/v1/episodes": {
+       "get": {
+         "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
+diff --git a/scripts/build-openapi.ts b/scripts/build-openapi.ts
+index 6cf2f69..a4b0ccd 100644
+--- a/scripts/build-openapi.ts
++++ b/scripts/build-openapi.ts
+@@ -90,6 +90,8 @@ import {
+   IngestDocumentAsyncResponseSchema,
+   IngestDocumentRequestSchema,
+   IngestDocumentSyncResponseSchema,
++  RetryDocumentRequestSchema,
++  RetryDocumentResponseSchema,
+   SubmitCandidatesRequestSchema,
+   SubmitCandidatesResponseSchema,
+   SubmittedEntitySchema,
+@@ -185,6 +187,8 @@ const ZOD_COMPONENTS: Record<string, z.ZodType> = {
+   IngestDocumentAsyncResponse: IngestDocumentAsyncResponseSchema,
+   IngestDocumentRequest: IngestDocumentRequestSchema,
+   IngestDocumentSyncResponse: IngestDocumentSyncResponseSchema,
++  RetryDocumentRequest: RetryDocumentRequestSchema,
++  RetryDocumentResponse: RetryDocumentResponseSchema,
+   SubmitCandidatesRequest: SubmitCandidatesRequestSchema,
+   SubmitCandidatesResponse: SubmitCandidatesResponseSchema,
+   SubmittedEntity: SubmittedEntitySchema,
+@@ -797,6 +801,36 @@ function documentsPaths(): Json {
+         },
+       }),
+     },
++    '/v1/documents/{id}/retry': {
++      post: operation({
++        operationId: 'retryFailedDocument',
++        tag: 'Documents',
++        summary: 'Retry failed document indexing runs',
++        description:
++          'Queues only currently failed in-process runs for this document. ' +
++          'Pending, running, succeeded and external runs are ignored; runs ' +
++          'whose failed pack version is no longer installed are skipped. ' +
++          'A document with purged or unavailable stored content returns 409. ' +
++          'Replaying the same retryKey is idempotent; callers use a new key ' +
++          'for a later attempt. Throttled to 10 requests/min per credential. ' +
++          'Source: src/documents/documents-ingest.controller.ts.',
++        scope: 'brain:write',
++        parameters: [pathParam('id', 'The document id.')],
++        requestBody: jsonBody(ref('RetryDocumentRequest')),
++        responses: {
++          '202': jsonResponse(
++            'Queued runs; an empty list means there was no failed in-process run.',
++            ref('RetryDocumentResponse'),
++          ),
++          '400': errorRef('BadRequest'),
++          '403': errorRef('Forbidden'),
++          ...FLAG_GATED,
++          '404': errorRef('NotFound'),
++          '409': errorRef('Conflict'),
++          '429': errorRef('TooManyRequests'),
++        },
++      }),
++    },
+     '/v1/documents/{id}/candidates': {
+       get: operation({
+         operationId: 'listDocumentCandidates',
+diff --git a/src/contracts/documents/documents.schema.ts b/src/contracts/documents/documents.schema.ts
+index b39cd7c..468ecea 100644
+--- a/src/contracts/documents/documents.schema.ts
++++ b/src/contracts/documents/documents.schema.ts
+@@ -86,6 +86,27 @@ export const IngestDocumentRequestSchema = z.object({
+     ),
+ });
+ 
++/** Request and response mirrors for POST /v1/documents/:id/retry. */
++export const RetryDocumentRequestSchema = z.object({
++  retryKey: z
++    .string()
++    .min(1)
++    .max(128)
++    .regex(/^[A-Za-z0-9._:-]+$/)
++    .describe('Stable caller-generated key for one retry attempt.'),
++});
++
++export const RetryDocumentResponseSchema = z.object({
++  documentId: z.string(),
++  runs: z.array(
++    z.object({
++      packId: z.string(),
++      packVersion: z.string(),
++      status: z.enum(['enqueued', 'already_queued', 'skipped_version_mismatch']),
++    }),
++  ),
++});
++
+ /** Shared commit tally (CommitResult['counts']). */
+ export const CommitCountsSchema = z.object({
+   pending: z.number().int().nonnegative(),
+diff --git a/src/documents/candidate-store.service.ts b/src/documents/candidate-store.service.ts
+index 0cf6f61..91a070a 100644
+--- a/src/documents/candidate-store.service.ts
++++ b/src/documents/candidate-store.service.ts
+@@ -65,6 +65,12 @@ interface RunLedgerRow {
+   createdAt?: unknown;
+ }
+ 
++interface FailedInternalRunRow {
++  packId?: unknown;
++  packVersion?: unknown;
++  createdAt?: unknown;
++}
++
+ /** candidate → parent-document status probe (findDocsNeedingCommit). */
+ interface DocCommitRow {
+   docId?: unknown;
+@@ -242,6 +248,28 @@ export class CandidateStoreService {
+     });
+   }
+ 
++  /** Failed in-process runs eligible for a document-scoped retry. */
++  async listFailedInternalRuns(
++    companyId: string,
++    docId: string,
++  ): Promise<Array<{ packId: string; packVersion: string }>> {
++    return this.surreal.withCompany(companyId, async (db) => {
++      const rows = await queryRows<FailedInternalRunRow>(
++        db,
++        `SELECT packId, packVersion, createdAt FROM indexer_run
++         WHERE docId = type::record('source_document', $doc)
++           AND status = 'failed'
++           AND external != true
++         ORDER BY createdAt ASC`,
++        { doc: idTailOf(docId) },
++      );
++      return rows.map((row) => ({
++        packId: String(row.packId),
++        packVersion: String(row.packVersion),
++      }));
++    });
++  }
++
+   /**
+    * Reap non-terminal indexer_run rows past the stale window:
+    *   - 'running' — a worker that crashed between createRun and finalizeRun
+diff --git a/src/documents/document-async.service.ts b/src/documents/document-async.service.ts
+index f8b9174..5dd3d0e 100644
+--- a/src/documents/document-async.service.ts
++++ b/src/documents/document-async.service.ts
+@@ -1,4 +1,4 @@
+-import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
++import { ConflictException, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+ import { JobClaimService } from '../jobs/job-claim.service';
+ import { WorkerLoopService, JobContext } from '../jobs/worker-loop.service';
+ import { GENERAL_INDEXER_ID } from '../indexers/candidate.types';
+@@ -21,6 +21,15 @@ export interface DocumentAsyncResponse {
+   }>;
+ }
+ 
++export interface DocumentRetryResponse {
++  documentId: string;
++  runs: Array<{
++    packId: string;
++    packVersion: string;
++    status: 'enqueued' | 'already_queued' | 'skipped_version_mismatch';
++  }>;
++}
++
+ /**
+  * Queue-driven document ingest: one `index_document` job per selected
+  * indexer, each finishing job enqueues a `commit_document` that DEFERS
+@@ -88,7 +97,7 @@ export class DocumentAsyncService implements OnModuleInit {
+       ...dedicated.map((b) => ({ packId: b.indexerId, packVersion: b.packVersion })),
+     ];
+ 
+-    await this.store.setStatus({ companyId, docId: doc.id, status: 'indexing' });
++    await this.store.setStatusIfContentAvailable({ companyId, docId: doc.id, status: 'indexing' });
+     const runs: DocumentAsyncResponse['runs'] = [];
+     for (const spec of specs) {
+       // Pre-create the run ledger row as 'pending' BEFORE enqueuing, so
+@@ -136,11 +145,88 @@ export class DocumentAsyncService implements OnModuleInit {
+     };
+   }
+ 
++  /** Requeue only terminal failed internal runs; the worker reopens each under the run-ledger CAS. */
++  async retryFailed(
++    companyId: string,
++    doc: StoredDocument,
++    retryKey: string,
++  ): Promise<DocumentRetryResponse> {
++    if (!this.claim) {
++      throw new Error('async ingest unavailable: job queue not wired');
++    }
++    const failed = await this.candidates.listFailedInternalRuns(companyId, doc.id);
++    const runs: DocumentRetryResponse['runs'] = [];
++    const versionMatches: boolean[] = [];
++    for (const run of failed) {
++      versionMatches.push(await this.retryVersionIsCurrent(companyId, run));
++    }
++    if (
++      failed.length > 0 &&
++      (!doc.hasContent || (await this.store.getChunks(companyId, doc.id)).length === 0)
++    ) {
++      throw new ConflictException('document content is unavailable for retry');
++    }
++    let statusUpdated = false;
++    for (let i = 0; i < failed.length; i += 1) {
++      const run = failed[i]!;
++      if (!versionMatches[i]) {
++        runs.push({
++          packId: run.packId,
++          packVersion: run.packVersion,
++          status: 'skipped_version_mismatch',
++        });
++        continue;
++      }
++      const dedupKey =
++        'idx_' +
++        doc.contentHash.slice(0, 24) +
++        '_' +
++        run.packId +
++        '_' +
++        run.packVersion +
++        '_retry_' +
++        retryKey;
++      const { created } = await this.claim.enqueue({
++        jobType: 'index_document',
++        companyId,
++        triggeredBy: 'manual',
++        dedupKey,
++        payload: { docId: doc.id, packId: run.packId, packVersion: run.packVersion, retryKey },
++      });
++      runs.push({
++        packId: run.packId,
++        packVersion: run.packVersion,
++        status: created ? 'enqueued' : 'already_queued',
++      });
++      if (created && !statusUpdated) {
++        statusUpdated = true;
++        const marked = await this.store
++          .setStatusIfContentAvailable({ companyId, docId: doc.id, status: 'indexing' })
++          .catch(() => false);
++        if (!marked) break;
++      }
++    }
++    return { documentId: doc.id, runs };
++  }
++
++  private async retryVersionIsCurrent(
++    companyId: string,
++    run: { packId: string; packVersion: string },
++  ): Promise<boolean> {
++    if (run.packId === GENERAL_INDEXER_ID) return run.packVersion === '0';
++    const binding = await this.dispatch.bindingFor(companyId, run.packId);
++    return !!binding && binding.mode !== 'external' && binding.packVersion === run.packVersion;
++  }
++
+   private async handleIndexJob(ctx: JobContext): Promise<Record<string, unknown>> {
+     const docId = String(ctx.payload?.docId ?? '');
+     const packId = String(ctx.payload?.packId ?? '');
++    const expectedPackVersion =
++      typeof ctx.payload?.packVersion === 'string' ? ctx.payload.packVersion : undefined;
++    const retryKey = typeof ctx.payload?.retryKey === 'string' ? ctx.payload.retryKey : undefined;
+     const doc = await this.store.getById(ctx.companyId, docId);
+     if (!doc) return { skipped: 'missing_document' };
++    if (!doc.hasContent) return { skipped: 'no_stored_content' };
+     const chunks = await this.store.getChunks(ctx.companyId, docId);
+     if (chunks.length === 0) return { skipped: 'no_stored_content' };
+ 
+@@ -151,15 +237,18 @@ export class DocumentAsyncService implements OnModuleInit {
+         doc,
+         chunks,
+         packId,
++        expectedPackVersion,
+         abortSignal: ctx.abortSignal,
+       });
+       status = run.status;
+     } finally {
+       // Win or lose, this run is now terminal (failed runs finalize inside
+       // runIndexer; a thrown error here after maxAttempts is also terminal)
+-      // — give commit its chance. The commit job defers while other runs
+-      // are still open.
+-      await this.enqueueCommit(ctx.companyId, { docId, packId });
++      // — give commit its chance only while the source is still available.
++      // Purge can win while extraction is running after the worker read chunks.
++      if (await this.hasStoredContent(ctx.companyId, docId)) {
++        await this.enqueueCommit(ctx.companyId, { docId, packId, retryKey });
++      }
+     }
+     return { packId, status };
+   }
+@@ -168,6 +257,7 @@ export class DocumentAsyncService implements OnModuleInit {
+     const docId = String(ctx.payload?.docId ?? '');
+     const doc = await this.store.getById(ctx.companyId, docId);
+     if (!doc) return { skipped: 'missing_document' };
++    if (!doc.hasContent || doc.status === 'purged') return { skipped: 'no_stored_content' };
+     const result = await this.commit.commitIfRunsSettled(ctx.companyId, doc);
+     if (result.deferred) return { deferred: true };
+     if (result.committed) {
+@@ -182,7 +272,7 @@ export class DocumentAsyncService implements OnModuleInit {
+ 
+   private async enqueueCommit(
+     companyId: string,
+-    p: { docId: string; packId: string },
++    p: { docId: string; packId: string; retryKey?: string | undefined },
+   ): Promise<void> {
+     if (!this.claim) return;
+     try {
+@@ -192,7 +282,7 @@ export class DocumentAsyncService implements OnModuleInit {
+         jobType: 'commit_document',
+         companyId,
+         triggeredBy: 'manual',
+-        dedupKey: `commit_${p.docId}_${p.packId}`,
++        dedupKey: 'commit_' + p.docId + '_' + p.packId + (p.retryKey ? '_retry_' + p.retryKey : ''),
+         payload: { docId: p.docId },
+       });
+     } catch (e) {
+@@ -205,6 +295,13 @@ export class DocumentAsyncService implements OnModuleInit {
+     doc: StoredDocument,
+     status: string,
+   ): Promise<void> {
+-    await this.store.setStatus({ companyId, docId: doc.id, status }).catch(() => undefined);
++    await this.store
++      .setStatusIfContentAvailable({ companyId, docId: doc.id, status })
++      .catch(() => undefined);
++  }
++
++  private async hasStoredContent(companyId: string, docId: string): Promise<boolean> {
++    const doc = await this.store.getById(companyId, docId);
++    return !!doc?.hasContent && doc.status !== 'purged';
+   }
+ }
+diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
+index 6a70d5a..0eafd50 100644
+--- a/src/documents/document-store.service.ts
++++ b/src/documents/document-store.service.ts
+@@ -255,6 +255,23 @@ export class DocumentStoreService {
+     });
+   }
+ 
++  /** Change async pipeline status only while stored content remains available. */
++  async setStatusIfContentAvailable(p: {
++    companyId: string;
++    docId: string;
++    status: string;
++  }): Promise<boolean> {
++    return this.surreal.withCompany(p.companyId, async (db) => {
++      const rows = await queryRows<Record<string, unknown>>(
++        db,
++        `UPDATE type::record('source_document', $id) SET status = $status
++         WHERE hasContent = true AND status != 'purged' RETURN AFTER`,
++        { id: idTailOf(p.docId), status: p.status },
++      );
++      return rows.length > 0;
++    });
++  }
++
+   /**
+    * Explicit erasure: delete the chunk rows, keep the header + contentHash
+    * (re-ingest of the same text still dedupes; committed facts keep a
+diff --git a/src/documents/documents-ingest.controller.ts b/src/documents/documents-ingest.controller.ts
+index cacc738..6edca55 100644
+--- a/src/documents/documents-ingest.controller.ts
++++ b/src/documents/documents-ingest.controller.ts
+@@ -2,6 +2,8 @@ import {
+   BadRequestException,
+   Body,
+   Controller,
++  HttpCode,
++  HttpStatus,
+   NotFoundException,
+   Param,
+   Post,
+@@ -13,10 +15,13 @@ import { ApiKeyGuard, RequireScopes } from '../auth/api-key.guard';
+ import { PolicyAction } from '../policy/action-registry';
+ import type { AuthenticatedRequest } from '../auth/api-key.types';
+ import { envFlagEnabled } from '../common/env-validation';
++import { assertDocVisibleToCaller } from './documents.controller';
+ import { DocumentIngestService } from './document-ingest.service';
+ import { DocumentAsyncService } from './document-async.service';
+ import { DocumentReindexService } from './document-reindex.service';
++import { DocumentStoreService } from './document-store.service';
+ import { IngestDocumentDto } from './dto/ingest-document.dto';
++import { RetryDocumentDto } from './dto/retry-document.dto';
+ import { assertDocumentIngestEnabled, docMaxChars } from './documents-gate';
+ 
+ /**
+@@ -27,10 +32,12 @@ import { assertDocumentIngestEnabled, docMaxChars } from './documents-gate';
+ @Controller('v1')
+ @UseGuards(ApiKeyGuard)
+ export class DocumentsIngestController {
++  // eslint-disable-next-line max-params
+   constructor(
+     private readonly ingest: DocumentIngestService,
+     private readonly async: DocumentAsyncService,
+     private readonly reindex: DocumentReindexService,
++    private readonly documents: DocumentStoreService,
+   ) {}
+ 
+   @Post('ingest/document')
+@@ -57,6 +64,23 @@ export class DocumentsIngestController {
+     return result;
+   }
+ 
++  @Post('documents/:id/retry')
++  @HttpCode(HttpStatus.ACCEPTED)
++  @RequireScopes('brain:write')
++  @PolicyAction('rest.documents.retry')
++  @Throttle({ expensive: { limit: 10, ttl: 60_000 } })
++  async retryFailedDocument(
++    @Req() req: AuthenticatedRequest,
++    @Param('id') id: string,
++    @Body() body: RetryDocumentDto,
++  ) {
++    assertDocumentIngestEnabled();
++    const doc = await this.documents.getById(req.brainAuth.companyId, id);
++    if (!doc) throw new NotFoundException('document not found');
++    assertDocVisibleToCaller(doc);
++    return this.async.retryFailed(req.brainAuth.companyId, doc, body.retryKey);
++  }
++
+   /** Backfill: run one pack's extraction over the tenant's stored docs. */
+   @Post('admin/documents/reindex')
+   @RequireScopes('brain:admin')
+diff --git a/src/documents/dto/retry-document.dto.ts b/src/documents/dto/retry-document.dto.ts
+new file mode 100644
+index 0000000..db24bd6
+--- /dev/null
++++ b/src/documents/dto/retry-document.dto.ts
+@@ -0,0 +1,8 @@
++import { IsString, Matches } from 'class-validator';
++
++/** Stable request id for one caller retry attempt; bounded for job-key use. */
++export class RetryDocumentDto {
++  @IsString()
++  @Matches(/^[A-Za-z0-9._:-]{1,128}$/)
++  retryKey!: string;
++}
+diff --git a/src/documents/indexer-dispatch.service.ts b/src/documents/indexer-dispatch.service.ts
+index ed0ed01..81373e3 100644
+--- a/src/documents/indexer-dispatch.service.ts
++++ b/src/documents/indexer-dispatch.service.ts
+@@ -82,15 +82,28 @@ export class IndexerDispatchService {
+     doc: StoredDocument;
+     chunks: DocumentChunk[];
+     packId: string;
++    expectedPackVersion?: string | undefined;
+     abortSignal?: AbortSignal;
+   }): Promise<IndexerRunResult> {
+     if (p.packId === GENERAL_INDEXER_ID) {
++      if (p.expectedPackVersion !== undefined && p.expectedPackVersion !== '0') {
++        return { runId: '', packId: p.packId, status: 'skipped' };
++      }
+       return this.runs.runGeneral(p);
+     }
+     const binding = await this.bindingFor(p.companyId, p.packId);
+     if (!binding) {
++      if (p.expectedPackVersion !== undefined) {
++        return { runId: '', packId: p.packId, status: 'skipped' };
++      }
+       throw new Error(`unknown indexer pack "${p.packId}"`);
+     }
++    if (
++      p.expectedPackVersion !== undefined &&
++      (binding.mode === 'external' || binding.packVersion !== p.expectedPackVersion)
++    ) {
++      return { runId: '', packId: p.packId, status: 'skipped' };
++    }
+     if (binding.mode === 'external') {
+       // Backfill for an external pack: don't burn LLM calls extracting
+       // with its vocabulary in-process — register the work item and let
+diff --git a/src/policy/action-registry.ts b/src/policy/action-registry.ts
+index 27acc3d..77c63e6 100644
+--- a/src/policy/action-registry.ts
++++ b/src/policy/action-registry.ts
+@@ -91,6 +91,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
+   'rest.documents.get': { kind: 'read', family: 'rest', title: 'Get document' },
+   'rest.documents.candidates': { kind: 'read', family: 'rest', title: 'List candidates' },
+   'rest.documents.commit': { kind: 'write', family: 'rest', title: 'Commit candidates' },
++  'rest.documents.retry': { kind: 'write', family: 'rest', title: 'Retry document indexing' },
+   'rest.documents.stage_candidates': {
+     kind: 'write',
+     family: 'rest',
+diff --git a/test/document-async-retry.unit-spec.ts b/test/document-async-retry.unit-spec.ts
+new file mode 100644
+index 0000000..571fd36
+--- /dev/null
++++ b/test/document-async-retry.unit-spec.ts
+@@ -0,0 +1,136 @@
++import { DocumentAsyncService } from '../src/documents/document-async.service';
++import type { DocumentStoreService, StoredDocument } from '../src/documents/document-store.service';
++import type { IndexerDispatchService } from '../src/documents/indexer-dispatch.service';
++import type { CandidateCommitService } from '../src/documents/candidate-commit.service';
++import type { CandidateStoreService } from '../src/documents/candidate-store.service';
++import type { JobClaimService } from '../src/jobs/job-claim.service';
++import type { JobContext } from '../src/jobs/worker-loop.service';
++import type { WorkerLoopService } from '../src/jobs/worker-loop.service';
++
++type Handler = (ctx: JobContext) => Promise<Record<string, unknown> | void>;
++
++describe('DocumentAsyncService retry jobs', () => {
++  it('carries retryKey into the follow-on commit dedup key', async () => {
++    const doc: StoredDocument = {
++      id: 'source_document:retry-unit',
++      kind: 'markdown',
++      contentHash: 'hash',
++      charLen: 3,
++      chunkCount: 1,
++      hasContent: true,
++      vertical: 'retry_unit',
++      occurredAt: new Date('2026-09-16T12:00:00.000Z'),
++      status: 'failed',
++    };
++    const store = {
++      getById: jest.fn().mockResolvedValue(doc),
++      getChunks: jest.fn().mockResolvedValue([{ seq: 0, text: 'one', charStart: 0, charEnd: 3 }]),
++    } as unknown as DocumentStoreService;
++    const dispatch = {
++      runOne: jest.fn().mockResolvedValue({
++        runId: 'indexer_run:retry-unit',
++        packId: 'pack_retry_unit',
++        status: 'failed',
++      }),
++    } as unknown as IndexerDispatchService;
++    const enqueue = jest.fn().mockResolvedValue({ runId: 'job_run:commit-unit', created: true });
++    const claim = { enqueue } as unknown as JobClaimService;
++    let indexHandler: Handler | undefined;
++    const workerLoop = {
++      register: (jobType: string, handler: Handler) => {
++        if (jobType === 'index_document') indexHandler = handler;
++      },
++    } as unknown as WorkerLoopService;
++    const service = new DocumentAsyncService(
++      store,
++      dispatch,
++      {} as CandidateCommitService,
++      {} as CandidateStoreService,
++      workerLoop,
++      claim,
++    );
++    service.onModuleInit();
++    expect(indexHandler).toBeDefined();
++
++    const retryKey = 'job-01ab2cd3efgh-attempt-1';
++    await indexHandler!({
++      runId: 'job_run:index-unit',
++      jobType: 'index_document',
++      companyId: 'co_retry_unit',
++      payload: { docId: doc.id, packId: 'pack_retry_unit', packVersion: 'v1', retryKey },
++      attempts: 1,
++      abortSignal: new AbortController().signal,
++      workerId: 'test-worker',
++    });
++
++    expect(enqueue).toHaveBeenCalledWith({
++      jobType: 'commit_document',
++      companyId: 'co_retry_unit',
++      triggeredBy: 'manual',
++      dedupKey: 'commit_' + doc.id + '_pack_retry_unit_retry_' + retryKey,
++      payload: { docId: doc.id },
++    });
++    expect(dispatch.runOne).toHaveBeenCalledWith(
++      expect.objectContaining({ packId: 'pack_retry_unit', expectedPackVersion: 'v1' }),
++    );
++  });
++
++  it('leaves the existing commit dedup key unchanged for normal jobs', async () => {
++    const doc: StoredDocument = {
++      id: 'source_document:normal-unit',
++      kind: 'markdown',
++      contentHash: 'hash',
++      charLen: 3,
++      chunkCount: 1,
++      hasContent: true,
++      vertical: 'retry_unit',
++      occurredAt: new Date('2026-09-16T12:00:00.000Z'),
++      status: 'indexing',
++    };
++    const store = {
++      getById: jest.fn().mockResolvedValue(doc),
++      getChunks: jest.fn().mockResolvedValue([{ seq: 0, text: 'one', charStart: 0, charEnd: 3 }]),
++    } as unknown as DocumentStoreService;
++    const dispatch = {
++      runOne: jest.fn().mockResolvedValue({
++        runId: 'indexer_run:normal-unit',
++        packId: 'pack_normal_unit',
++        status: 'succeeded',
++      }),
++    } as unknown as IndexerDispatchService;
++    const enqueue = jest.fn().mockResolvedValue({ runId: 'job_run:commit-unit', created: true });
++    const workerLoop = {
++      register: jest.fn(),
++    } as unknown as WorkerLoopService;
++    const service = new DocumentAsyncService(
++      store,
++      dispatch,
++      {} as CandidateCommitService,
++      {} as CandidateStoreService,
++      workerLoop,
++      { enqueue } as unknown as JobClaimService,
++    );
++    service.onModuleInit();
++    const indexHandler = (workerLoop.register as unknown as jest.Mock).mock.calls.find(
++      ([jobType]: [string]) => jobType === 'index_document',
++    )?.[1] as Handler | undefined;
++    expect(indexHandler).toBeDefined();
++
++    await indexHandler!({
++      runId: 'job_run:normal-index',
++      jobType: 'index_document',
++      companyId: 'co_retry_unit',
++      payload: { docId: doc.id, packId: 'pack_normal_unit' },
++      attempts: 1,
++      abortSignal: new AbortController().signal,
++      workerId: 'test-worker',
++    });
++
++    expect(enqueue).toHaveBeenCalledWith(
++      expect.objectContaining({
++        jobType: 'commit_document',
++        dedupKey: 'commit_' + doc.id + '_pack_normal_unit',
++      }),
++    );
++  });
++});
+diff --git a/test/document-retry.e2e-spec.ts b/test/document-retry.e2e-spec.ts
+new file mode 100644
+index 0000000..98af51f
+--- /dev/null
++++ b/test/document-retry.e2e-spec.ts
+@@ -0,0 +1,506 @@
++import { randomUUID } from 'node:crypto';
++import { AppFixture, createApp } from './app-fixture';
++import { CandidateStoreService } from '../src/documents/candidate-store.service';
++import { CandidateCommitService } from '../src/documents/candidate-commit.service';
++import { DocumentAsyncService } from '../src/documents/document-async.service';
++import { DocumentStoreService } from '../src/documents/document-store.service';
++import { SurrealService } from '../src/db/surreal.service';
++import { GENERAL_INDEXER_ID } from '../src/indexers/candidate.types';
++import type { JobContext } from '../src/jobs/worker-loop.service';
++
++type RetryJobRow = {
++  dedupKey?: string;
++  payload?: Record<string, unknown> | null;
++};
++
++describe('failed document retry (e2e)', () => {
++  let f: AppFixture;
++  let candidates: CandidateStoreService;
++  let documents: DocumentStoreService;
++  const previousEnv = new Map<string, string | undefined>();
++  const writeKey = () => f.extraApiKeys[0]!;
++  const userBKey = () => f.extraApiKeys[1]!;
++  const auth = (key: string) => ({ Authorization: 'Bearer ' + key });
++  const retryPath = (docId: string) => '/v1/documents/' + encodeURIComponent(docId) + '/retry';
++
++  beforeAll(async () => {
++    for (const name of [
++      'DOCUMENT_INGEST_ENABLED',
++      'DOCUMENT_MULTI_INDEXER_ENABLED',
++      'WORKER_LOOP_ENABLED',
++    ]) {
++      previousEnv.set(name, process.env[name]);
++    }
++    process.env.DOCUMENT_INGEST_ENABLED = '1';
++    process.env.DOCUMENT_MULTI_INDEXER_ENABLED = '1';
++    process.env.WORKER_LOOP_ENABLED = '0';
++    f = await createApp({
++      companyId: 'co_document_retry_e2e',
++      scopes: ['brain:read'],
++      extraKeys: [{ scopes: ['brain:write'] }, { scopes: ['brain:write'], userId: 'retry-user-b' }],
++    });
++    candidates = f.app.get(CandidateStoreService);
++    documents = f.app.get(DocumentStoreService);
++  });
++
++  afterAll(async () => {
++    if (f) await f.close();
++    for (const [name, value] of previousEnv) {
++      if (value === undefined) delete process.env[name];
++      else process.env[name] = value;
++    }
++  });
++
++  async function makeDoc(userId?: string): Promise<string> {
++    const { doc } = await documents.createOrGet(f.companyId, {
++      kind: 'markdown',
++      text: 'Document retry fixture ' + randomUUID(),
++      occurredAt: '2026-09-16T12:00:00.000Z',
++      contextRef: { vertical: 'document_retry_e2e' },
++      ...(userId ? { userId } : {}),
++    });
++    return doc.id;
++  }
++
++  async function seedRun(
++    docId: string,
++    p: {
++      packId: string;
++      status: 'pending' | 'running' | 'failed' | 'succeeded';
++      external?: boolean;
++      packVersion?: string;
++    },
++  ): Promise<void> {
++    const run = {
++      docId,
++      packId: p.packId,
++      packVersion: p.packVersion ?? 'v1',
++      ...(p.external ? { external: true } : {}),
++    };
++    if (p.status === 'pending') {
++      await candidates.ensureRunPending(f.companyId, run);
++      return;
++    }
++    const created = await candidates.createRun(f.companyId, run);
++    expect(created.created).toBe(true);
++    if (p.status === 'failed' || p.status === 'succeeded') {
++      await candidates.finalizeRun(f.companyId, {
++        runId: created.runId,
++        status: p.status,
++      });
++    }
++  }
++
++  async function indexJobs(docId: string): Promise<RetryJobRow[]> {
++    const surreal = f.app.get(SurrealService);
++    return surreal.withCompany(f.companyId, async (db) => {
++      const [rows] = await db.query<[RetryJobRow[]]>(
++        'SELECT dedupKey, payload FROM job_run WHERE jobType = $jobType',
++        { jobType: 'index_document' },
++      );
++      return (rows as RetryJobRow[]).filter((row) => row.payload?.docId === docId);
++    });
++  }
++
++  async function commitJobs(docId: string): Promise<RetryJobRow[]> {
++    const surreal = f.app.get(SurrealService);
++    return surreal.withCompany(f.companyId, async (db) => {
++      const [rows] = await db.query<[RetryJobRow[]]>(
++        'SELECT dedupKey, payload FROM job_run WHERE jobType = $jobType',
++        { jobType: 'commit_document' },
++      );
++      return (rows as RetryJobRow[]).filter((row) => row.payload?.docId === docId);
++    });
++  }
++
++  it('queues a failed internal run with a stable retry key and replays idempotently', async () => {
++    const docId = await makeDoc();
++    await seedRun(docId, {
++      packId: GENERAL_INDEXER_ID,
++      packVersion: '0',
++      status: 'failed',
++    });
++    const retryKey = 'job-01ab2cd3efgh-attempt-1';
++
++    const first = await f.http.post(retryPath(docId)).set(auth(writeKey())).send({ retryKey });
++    expect(first.status).toBe(202);
++    expect(first.body.runs).toEqual([
++      { packId: GENERAL_INDEXER_ID, packVersion: '0', status: 'enqueued' },
++    ]);
++
++    const replay = await f.http.post(retryPath(docId)).set(auth(writeKey())).send({ retryKey });
++    expect(replay.status).toBe(202);
++    expect(replay.body.runs).toEqual([
++      { packId: GENERAL_INDEXER_ID, packVersion: '0', status: 'already_queued' },
++    ]);
++
++    const jobs = await indexJobs(docId);
++    expect(jobs).toHaveLength(1);
++    expect(jobs[0]?.dedupKey).toContain('_retry_' + retryKey);
++    expect(jobs[0]?.payload).toMatchObject({
++      docId,
++      packId: GENERAL_INDEXER_ID,
++      packVersion: '0',
++      retryKey,
++    });
++    expect((await documents.getById(f.companyId, docId))?.status).toBe('indexing');
++
++    const invalid = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'x'.repeat(129) });
++    expect(invalid.status).toBe(400);
++    expect(await indexJobs(docId)).toHaveLength(1);
++
++    const invalidChars = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'bad key' });
++    expect(invalidChars.status).toBe(400);
++    expect(await indexJobs(docId)).toHaveLength(1);
++  });
++
++  it('skips a failed run whose installed pack version has changed', async () => {
++    const packId = 'pack_retry_version_' + randomUUID().replaceAll('-', '_');
++    const surreal = f.app.get(SurrealService);
++    await surreal.withCompany(f.companyId, async (db) => {
++      await db.query(`CREATE domain_pack CONTENT $content`, {
++        content: {
++          packId,
++          version: '2.0.0',
++          status: 'active',
++          manifest: {
++            id: packId,
++            version: '2.0.0',
++            description: 'Retry version fixture',
++            indexer: { mode: 'dedicated' },
++            predicates: [],
++          },
++        },
++      });
++    });
++    const docId = await makeDoc();
++    await seedRun(docId, { packId, packVersion: '1.0.0', status: 'failed' });
++    const previousStatus = (await documents.getById(f.companyId, docId))?.status;
++
++    const response = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'old-pack-version' });
++
++    expect(response.status).toBe(202);
++    expect(response.body.runs).toEqual([
++      { packId, packVersion: '1.0.0', status: 'skipped_version_mismatch' },
++    ]);
++    expect(await indexJobs(docId)).toHaveLength(0);
++    expect((await documents.getById(f.companyId, docId))?.status).toBe(previousStatus);
++  });
++
++  it('rejects retries after content is purged without queueing or changing the header', async () => {
++    const docId = await makeDoc();
++    await seedRun(docId, {
++      packId: GENERAL_INDEXER_ID,
++      packVersion: '0',
++      status: 'failed',
++    });
++    await documents.purgeContent(f.companyId, docId);
++
++    const response = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'purged-content' });
++
++    expect(response.status).toBe(409);
++    expect(await indexJobs(docId)).toHaveLength(0);
++    expect((await documents.getById(f.companyId, docId))?.status).toBe('purged');
++  });
++
++  it('keeps a purged document terminal when content is purged after retry acceptance', async () => {
++    const docId = await makeDoc();
++    await seedRun(docId, {
++      packId: GENERAL_INDEXER_ID,
++      packVersion: '0',
++      status: 'failed',
++    });
++    const response = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'purge-after-acceptance' });
++    expect(response.status).toBe(202);
++    const queued = await indexJobs(docId);
++    expect(queued).toHaveLength(1);
++
++    await documents.purgeContent(f.companyId, docId);
++    const service = f.app.get(DocumentAsyncService) as unknown as {
++      handleIndexJob(ctx: JobContext): Promise<Record<string, unknown>>;
++    };
++    const result = await service.handleIndexJob({
++      runId: 'job_run:purge-race',
++      jobType: 'index_document',
++      companyId: f.companyId,
++      payload: queued[0]?.payload ?? {},
++      attempts: 1,
++      abortSignal: new AbortController().signal,
++      workerId: 'retry-e2e',
++    });
++
++    expect(result).toEqual({ skipped: 'no_stored_content' });
++    expect(await commitJobs(docId)).toHaveLength(0);
++    expect((await documents.getById(f.companyId, docId))?.status).toBe('purged');
++  });
++
++  it('does not auto-commit candidates staged after purge during extraction', async () => {
++    const docId = await makeDoc();
++    await seedRun(docId, {
++      packId: GENERAL_INDEXER_ID,
++      packVersion: '0',
++      status: 'failed',
++    });
++    const accepted = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'purge-during-extraction' });
++    expect(accepted.status).toBe(202);
++    const queued = await indexJobs(docId);
++    expect(queued).toHaveLength(1);
++
++    let markExtractionStarted!: () => void;
++    let resumeExtraction!: () => void;
++    const extractionStarted = new Promise<void>((resolve) => {
++      markExtractionStarted = resolve;
++    });
++    const extractionGate = new Promise<void>((resolve) => {
++      resumeExtraction = resolve;
++    });
++    const extraction = jest.spyOn(f.extractor, 'extract').mockImplementation(async () => {
++      markExtractionStarted();
++      await extractionGate;
++      return {
++        entities: [{ name: 'Late extraction entity', type: 'topic' }],
++        facts: [],
++        edges: [],
++      };
++    });
++    const service = f.app.get(DocumentAsyncService) as unknown as {
++      handleIndexJob(ctx: JobContext): Promise<Record<string, unknown>>;
++      handleCommitJob(ctx: JobContext): Promise<Record<string, unknown>>;
++    };
++    const indexContext: JobContext = {
++      runId: 'job_run:purge-race-index',
++      jobType: 'index_document',
++      companyId: f.companyId,
++      payload: queued[0]?.payload ?? {},
++      attempts: 1,
++      abortSignal: new AbortController().signal,
++      workerId: 'retry-e2e',
++    };
++
++    let indexPromise: Promise<Record<string, unknown>> | undefined;
++    try {
++      indexPromise = service.handleIndexJob(indexContext);
++      await extractionStarted;
++      await documents.purgeContent(f.companyId, docId);
++      resumeExtraction();
++      expect(await indexPromise).toMatchObject({ packId: GENERAL_INDEXER_ID, status: 'succeeded' });
++
++      const staged = await candidates.listByDoc(f.companyId, docId);
++      expect(staged.some((candidate) => candidate.status === 'pending')).toBe(true);
++      expect(await commitJobs(docId)).toHaveLength(0);
++
++      const commitService = f.app.get(CandidateCommitService);
++      const commitAttempt = jest.spyOn(commitService, 'commitIfRunsSettled').mockResolvedValue({
++        committed: false,
++        deferred: false,
++        entityIds: [],
++        factIds: [],
++        edgeIds: [],
++        counts: { pending: 0, committed: 0, merged: 0, rejected: 0 },
++      });
++      try {
++        const commitContext: JobContext = {
++          ...indexContext,
++          runId: 'job_run:purge-race-commit',
++          jobType: 'commit_document',
++          payload: { docId },
++        };
++        expect(await service.handleCommitJob(commitContext)).toEqual({
++          skipped: 'no_stored_content',
++        });
++        expect(commitAttempt).not.toHaveBeenCalled();
++        expect((await documents.getById(f.companyId, docId))?.status).toBe('purged');
++      } finally {
++        commitAttempt.mockRestore();
++      }
++    } finally {
++      resumeExtraction();
++      if (indexPromise) await indexPromise.catch(() => undefined);
++      extraction.mockRestore();
++    }
++  });
++
++  it('does not restore committed status if purge wins during async commit', async () => {
++    const docId = await makeDoc();
++    let markCommitStarted!: () => void;
++    let resumeCommit!: () => void;
++    const commitStarted = new Promise<void>((resolve) => {
++      markCommitStarted = resolve;
++    });
++    const commitGate = new Promise<void>((resolve) => {
++      resumeCommit = resolve;
++    });
++    const commitService = f.app.get(CandidateCommitService);
++    const commitAttempt = jest
++      .spyOn(commitService, 'commitIfRunsSettled')
++      .mockImplementation(async () => {
++        markCommitStarted();
++        await commitGate;
++        return {
++          committed: true,
++          deferred: false,
++          entityIds: [],
++          factIds: [],
++          edgeIds: [],
++          counts: { pending: 1, committed: 1, merged: 0, rejected: 0 },
++        };
++      });
++    const service = f.app.get(DocumentAsyncService) as unknown as {
++      handleCommitJob(ctx: JobContext): Promise<Record<string, unknown>>;
++    };
++    const commitContext: JobContext = {
++      runId: 'job_run:purge-during-commit',
++      jobType: 'commit_document',
++      companyId: f.companyId,
++      payload: { docId },
++      attempts: 1,
++      abortSignal: new AbortController().signal,
++      workerId: 'retry-e2e',
++    };
++    let handlerPromise: Promise<Record<string, unknown>> | undefined;
++
++    try {
++      handlerPromise = service.handleCommitJob(commitContext);
++      await commitStarted;
++      await documents.purgeContent(f.companyId, docId);
++      resumeCommit();
++
++      expect(await handlerPromise).toMatchObject({ committed: true });
++      expect((await documents.getById(f.companyId, docId))?.status).toBe('purged');
++    } finally {
++      resumeCommit();
++      if (handlerPromise) await handlerPromise.catch(() => undefined);
++      commitAttempt.mockRestore();
++    }
++  });
++
++  it('does not change the header to indexing if a purge wins the status update race', async () => {
++    const docId = await makeDoc();
++    await documents.purgeContent(f.companyId, docId);
++
++    expect(
++      await documents.setStatusIfContentAvailable({
++        companyId: f.companyId,
++        docId,
++        status: 'indexing',
++      }),
++    ).toBe(false);
++    expect((await documents.getById(f.companyId, docId))?.status).toBe('purged');
++  });
++
++  it('ignores pending, running, succeeded and failed external runs', async () => {
++    const cases = [
++      { packId: 'pack_retry_pending', status: 'pending' as const },
++      { packId: 'pack_retry_running', status: 'running' as const },
++      { packId: 'pack_retry_succeeded', status: 'succeeded' as const },
++      { packId: 'pack_retry_external', status: 'failed' as const, external: true },
++    ];
++    for (const item of cases) {
++      const docId = await makeDoc();
++      await seedRun(docId, item);
++      const response = await f.http
++        .post(retryPath(docId))
++        .set(auth(writeKey()))
++        .send({ retryKey: 'state-' + item.packId });
++      expect(response.status).toBe(202);
++      expect(response.body.runs).toEqual([]);
++      expect(await indexJobs(docId)).toHaveLength(0);
++    }
++  });
++
++  it('requires brain:write and hides missing, cross-user and cross-tenant documents', async () => {
++    const userDoc = await makeDoc('retry-user-a');
++    await seedRun(userDoc, { packId: 'pack_retry_auth', status: 'failed' });
++
++    const anonymous = await f.http.post(retryPath(userDoc)).send({ retryKey: 'anon-1' });
++    expect(anonymous.status).toBe(401);
++
++    const missing = await f.http
++      .post(retryPath('source_document:missing-retry-doc'))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'missing-1' });
++    expect(missing.status).toBe(404);
++
++    const readOnly = await f.http
++      .post(retryPath(userDoc))
++      .set(auth(f.apiKey))
++      .send({ retryKey: 'readonly-1' });
++    expect(readOnly.status).toBe(403);
++
++    const crossUser = await f.http
++      .post(retryPath(userDoc))
++      .set(auth(userBKey()))
++      .send({ retryKey: 'cross-user-1' });
++    expect(crossUser.status).toBe(404);
++
++    const otherTenant = await createApp({
++      companyId: 'co_document_retry_other',
++      scopes: ['brain:write'],
++    });
++    try {
++      const crossTenant = await otherTenant.http
++        .post(retryPath(userDoc))
++        .set(auth(otherTenant.apiKey))
++        .send({ retryKey: 'cross-tenant-1' });
++      expect(crossTenant.status).toBe(404);
++    } finally {
++      await otherTenant.close();
++    }
++
++    expect(await indexJobs(userDoc)).toHaveLength(0);
++  });
++
++  it('allows different retry keys to race while the run-ledger CAS admits one worker', async () => {
++    const docId = await makeDoc();
++    await seedRun(docId, {
++      packId: GENERAL_INDEXER_ID,
++      packVersion: '0',
++      status: 'failed',
++    });
++
++    const requests = await Promise.all(
++      ['race-a', 'race-b'].map((retryKey) =>
++        f.http.post(retryPath(docId)).set(auth(writeKey())).send({ retryKey }),
++      ),
++    );
++    expect(requests.map((response) => response.status)).toEqual([202, 202]);
++    expect(await indexJobs(docId)).toHaveLength(2);
++
++    const opened = await Promise.all(
++      Array.from({ length: 2 }, () =>
++        candidates.createRun(f.companyId, {
++          docId,
++          packId: GENERAL_INDEXER_ID,
++          packVersion: '0',
++        }),
++      ),
++    );
++    expect(opened.filter((run) => run.created)).toHaveLength(1);
++
++    const whileRunning = await f.http
++      .post(retryPath(docId))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'race-c' });
++    expect(whileRunning.status).toBe(202);
++    expect(whileRunning.body.runs).toEqual([]);
++    expect(await indexJobs(docId)).toHaveLength(2);
++  });
++});
+diff --git a/test/indexer-dispatch-retry-version.unit-spec.ts b/test/indexer-dispatch-retry-version.unit-spec.ts
+new file mode 100644
+index 0000000..b6149dc
+--- /dev/null
++++ b/test/indexer-dispatch-retry-version.unit-spec.ts
+@@ -0,0 +1,58 @@
++import { IndexerDispatchService } from '../src/documents/indexer-dispatch.service';
++import type { IndexerRouterService } from '../src/indexers/indexer-router.service';
++import type { IndexerRunService } from '../src/documents/indexer-run.service';
++import type { DedicatedExtractorService } from '../src/indexers/dedicated-extractor.service';
++import type { IndexerWebhookService } from '../src/documents/indexer-webhook.service';
++import type { StoredDocument } from '../src/documents/document-store.service';
++
++describe('IndexerDispatchService retry version pinning', () => {
++  it('skips a queued retry when the installed binding has since changed versions', async () => {
++    const binding = {
++      indexerId: 'pack_retry_version',
++      packVersion: '2.0.0',
++      mode: 'dedicated' as const,
++      description: 'Retry version fixture',
++    };
++    const router = {
++      bindingsFor: jest.fn().mockResolvedValue([binding]),
++    } as unknown as IndexerRouterService;
++    const runs = {
++      runIndexer: jest.fn().mockResolvedValue({
++        runId: 'indexer_run:retry-version',
++        packId: binding.indexerId,
++        status: 'succeeded',
++      }),
++    } as unknown as IndexerRunService;
++    const dispatch = new IndexerDispatchService(
++      router,
++      runs,
++      { modelId: () => 'test-model' } as unknown as DedicatedExtractorService,
++      {} as IndexerWebhookService,
++    );
++    const doc: StoredDocument = {
++      id: 'source_document:retry-version',
++      kind: 'markdown',
++      contentHash: 'hash',
++      charLen: 1,
++      chunkCount: 1,
++      hasContent: true,
++      vertical: 'retry_version',
++      occurredAt: new Date('2026-09-16T12:00:00.000Z'),
++      status: 'failed',
++    };
++    const input: Parameters<IndexerDispatchService['runOne']>[0] & {
++      expectedPackVersion: string;
++    } = {
++      companyId: 'co_retry_version',
++      doc,
++      chunks: [{ seq: 0, text: 'x', charStart: 0, charEnd: 1 }],
++      packId: binding.indexerId,
++      expectedPackVersion: '1.0.0',
++    };
++
++    const result = await dispatch.runOne(input);
++
++    expect(result.status).toBe('skipped');
++    expect(runs.runIndexer).not.toHaveBeenCalled();
++  });
++});
+diff --git a/test/openapi-doc.unit-spec.ts b/test/openapi-doc.unit-spec.ts
+index 9066b8c..2b74219 100644
+--- a/test/openapi-doc.unit-spec.ts
++++ b/test/openapi-doc.unit-spec.ts
+@@ -44,6 +44,7 @@ const PLATFORM_OPERATIONS: Array<[string, string]> = [
+   ['/v1/ingest/document', 'post'],
+   ['/v1/ingest/evidence-asset', 'post'],
+   ['/v1/documents/{id}', 'get'],
++  ['/v1/documents/{id}/retry', 'post'],
+   ['/v1/documents/{id}/candidates', 'get'],
+   ['/v1/documents/{id}/candidates', 'post'],
+   ['/v1/indexer/work', 'get'],

@@ -1420,6 +1420,38 @@ components:
       required:
         - items
       type: object
+    PipelineStatus:
+      additionalProperties: false
+      properties:
+        current_documents:
+          format: int64
+          type: integer
+        failed_documents:
+          format: int64
+          type: integer
+        failed_jobs:
+          format: int64
+          type: integer
+        incomplete_documents:
+          format: int64
+          type: integer
+        partially_ready_documents:
+          format: int64
+          type: integer
+        pending_jobs:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - state
+        - current_documents
+        - incomplete_documents
+        - partially_ready_documents
+        - failed_documents
+        - pending_jobs
+        - failed_jobs
+      type: object
     Relation:
       additionalProperties: false
       properties:
@@ -1595,8 +1627,6 @@ components:
           type: string
         revision:
           type: string
-        snapshot_oid:
-          type: string
       required:
         - document_id
         - revision
@@ -1771,6 +1801,8 @@ components:
           type:
             - array
             - "null"
+        pipeline:
+          $ref: "#/components/schemas/PipelineStatus"
         protocol_revision:
           format: int64
           type: integer
@@ -1790,6 +1822,7 @@ components:
         - state
         - components
         - counts
+        - pipeline
       type: object
     TextReplacement:
       additionalProperties: false

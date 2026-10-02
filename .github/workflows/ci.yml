@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
+          go-version: "1.27.1"
           cache: true
       - run: go test ./...
       - run: go test -race ./...
@@ -27,11 +27,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
+          go-version: "1.27.1"
           cache: true
       - uses: actions/setup-node@v7
         with:
-          node-version: "26"
+          node-version: "26.8.2"
           cache: npm
       - run: npm ci
       - run: npm run check
@@ -44,11 +44,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
+          go-version: "1.27.1"
           cache: true
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14.7"
       - run: scripts/build-skill-binaries.sh
       - run: git diff --exit-code -- skills/manifold/bin
       - run: make skill-check
@@ -58,10 +58,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: scripts/validate-compose.sh
-      - run: git clone --branch v0.8.1 --depth 1 https://github.com/inite-ai/inite-brain-service.git /tmp/brain
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
+      - run: python3 scripts/test-deploy-production.py
+      - run: git clone --branch v2.2.0 --depth 1 https://github.com/inite-ai/inite-brain-service.git /tmp/brain
+      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = b19b209fec92069d91df22af61db18b0a810ce82
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/openai-base-url.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/openai-base-url.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/scoped-session-recovery.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/scoped-session-recovery.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/document-origin-identity.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/document-origin-identity.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/worker-startup-order.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/worker-startup-order.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
+      - run: git -C /tmp/brain diff --check
 
   integration:
     runs-on: ubuntu-latest
@@ -70,7 +87,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
+          go-version: "1.27.1"
           cache: true
       - run: scripts/integration.sh
 

@@ -6,23 +6,30 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/iamwavecut/Manifold/internal/model"
 )
 
 type OpenViking struct {
-	http httpClient
+	http      httpClient
+	writeHTTP httpClient
 }
 
-func NewOpenViking(base, key string, client *http.Client) *OpenViking {
-	return &OpenViking{http: httpClient{
+func NewOpenViking(base, key string, client *http.Client, writeClients ...*http.Client) *OpenViking {
+	ordinary := httpClient{
 		name: "openviking", base: base, key: key, client: client,
 		auth: func(req *http.Request, key string) {
 			req.Header.Set("X-API-Key", key)
 			req.Header.Set("X-OpenViking-Account", "manifold")
 			req.Header.Set("X-OpenViking-User", "manifold")
 		},
-	}}
+	}
+	write := ordinary
+	if len(writeClients) > 0 && writeClients[0] != nil {
+		write.client = writeClients[0]
+	}
+	return &OpenViking{http: ordinary, writeHTTP: write}
 }
 
 func (o *OpenViking) Health(ctx context.Context) error {
@@ -56,9 +63,30 @@ func (o *OpenViking) Write(ctx context.Context, uri, content string, create bool
 	if create {
 		mode = "create"
 	}
-	var response envelope[map[string]any]
-	return o.http.do(ctx, http.MethodPost, "/api/v1/content/write",
-		map[string]any{"uri": uri, "content": content, "mode": mode, "wait": true}, &response)
+	var response envelope[struct {
+		SemanticStatus string `json:"semantic_status"`
+		VectorStatus   string `json:"vector_status"`
+	}]
+	body := map[string]any{"uri": uri, "content": content, "mode": mode, "wait": true}
+	if timeout := o.writeHTTP.client.Timeout; timeout > 0 {
+		// Let the dependency finish its bounded wait before the HTTP client
+		// disconnects; an interrupted response cannot prove indexing failed.
+		body["timeout"] = (timeout - min(time.Second, timeout/10)).Seconds()
+	}
+	if err := o.writeHTTP.do(ctx, http.MethodPost, "/api/v1/content/write", body, &response); err != nil {
+		return err
+	}
+	semantic := response.Result.SemanticStatus
+	vector := response.Result.VectorStatus
+	// wait=true forces immediate refresh in v0.4.20. Explicit queue errors
+	// still arrive as HTTP 200, so transport success alone is insufficient.
+	if response.Status != "ok" ||
+		(semantic != "complete" && semantic != "skipped") ||
+		(vector != "complete" && vector != "skipped") {
+		return &DependencyError{Dependency: "openviking", Operation: "POST /api/v1/content/write",
+			Status: http.StatusOK, Retryable: true, Cause: fmt.Errorf("document indexing did not complete")}
+	}
+	return nil
 }
 
 func (o *OpenViking) Move(ctx context.Context, from, to string) error {
@@ -82,7 +110,14 @@ func (o *OpenViking) Snapshot(ctx context.Context, message string, paths []strin
 	}]
 	err := o.http.do(ctx, http.MethodPost, "/api/v1/snapshot/commit",
 		map[string]any{"message": message, "paths": paths}, &response)
-	return response.Result.CommitOID, err
+	if err != nil {
+		return "", err
+	}
+	if response.Status != "ok" || response.Result.CommitOID == "" {
+		return "", &DependencyError{Dependency: "openviking", Operation: "POST /api/v1/snapshot/commit",
+			Status: http.StatusOK, Retryable: true, Cause: fmt.Errorf("snapshot checkpoint was not confirmed")}
+	}
+	return response.Result.CommitOID, nil
 }
 
 func (o *OpenViking) Search(ctx context.Context, query, targetURI string, limit int) ([]model.SearchHit, error) {

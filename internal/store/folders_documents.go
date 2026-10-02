@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/iamwavecut/Manifold/internal/identity"
 	"github.com/iamwavecut/Manifold/internal/model"
@@ -75,6 +77,14 @@ func (s *Store) CreateFolder(ctx context.Context, folder model.Folder) (model.Fo
 	folder.UpdatedAt = folder.CreatedAt
 	folder.ETag = `"v1"`
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		if err := ensureSlugNotReservedForRename(ctx, tx, "folder", folder.ID); err != nil {
+			return err
+		}
+		if folder.ParentID != "" {
+			if err := ensureSlugNotReservedForRename(ctx, tx, "folder", folder.ParentID); err != nil {
+				return err
+			}
+		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO folders(id, name, parent_id, summary, metadata_json, created_at, updated_at)
 			VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?)`,
@@ -240,8 +250,18 @@ func (s *Store) FolderEmpty(ctx context.Context, id string) (bool, error) {
 
 func (s *Store) CreateDocument(ctx context.Context, doc model.Document, job model.Job) (model.Document, model.Job, error) {
 	timestamp := now()
-	prepareDocumentCreate(&doc, &job, timestamp)
+	if err := prepareDocumentCreate(&doc, &job, timestamp); err != nil {
+		return model.Document{}, model.Job{}, err
+	}
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		if err := ensureSlugNotReservedForRename(ctx, tx, "document", doc.ID); err != nil {
+			return err
+		}
+		if doc.FolderID != "" {
+			if err := ensureSlugNotReservedForRename(ctx, tx, "folder", doc.FolderID); err != nil {
+				return err
+			}
+		}
 		if err := insertDocumentCreate(ctx, tx, doc, job, timestamp); err != nil {
 			return err
 		}
@@ -260,11 +280,16 @@ func (s *Store) CreateDocumentAtPath(
 	job model.Job,
 ) (model.Document, model.Job, []model.Folder, error) {
 	timestamp := now()
-	prepareDocumentCreate(&doc, &job, timestamp)
+	if err := prepareDocumentCreate(&doc, &job, timestamp); err != nil {
+		return model.Document{}, model.Job{}, nil, err
+	}
 	created := make([]model.Folder, 0, len(segments))
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
 		parentID := ""
 		for index, segment := range segments {
+			if err := ensureSlugNotReservedForRename(ctx, tx, "folder", segment); err != nil {
+				return err
+			}
 			var existingParent sql.NullString
 			err := tx.QueryRowContext(ctx, `SELECT parent_id FROM folders WHERE id = ?`, segment).Scan(&existingParent)
 			switch {
@@ -277,15 +302,6 @@ func (s *Store) CreateDocumentAtPath(
 					}
 				}
 			case errors.Is(err, sql.ErrNoRows):
-				var reserved int
-				if err := tx.QueryRowContext(ctx, `
-					SELECT EXISTS(SELECT 1 FROM rename_reservations WHERE resource_type = 'folder' AND slug = ?)`,
-					segment).Scan(&reserved); err != nil {
-					return err
-				}
-				if reserved != 0 {
-					return ErrConflict
-				}
 				folder := model.Folder{
 					ID: segment, Name: segment, ParentID: parentID,
 					Path: "/" + strings.Join(segments[:index+1], "/"), ETag: `"v1"`,
@@ -302,6 +318,9 @@ func (s *Store) CreateDocumentAtPath(
 				return err
 			}
 			parentID = segment
+		}
+		if err := ensureSlugNotReservedForRename(ctx, tx, "document", doc.ID); err != nil {
+			return err
 		}
 		doc.FolderID = parentID
 		if err := insertDocumentCreate(ctx, tx, doc, job, timestamp); err != nil {
@@ -334,7 +353,7 @@ SELECT '/' || path FROM ancestors WHERE parent_id IS NULL LIMIT 1`
 	return path, nil
 }
 
-func prepareDocumentCreate(doc *model.Document, job *model.Job, timestamp string) {
+func prepareDocumentCreate(doc *model.Document, job *model.Job, timestamp string) error {
 	doc.Revision = "r1"
 	doc.Status = model.JobAccepted
 	doc.ContentHash = contentHash(doc.Content)
@@ -344,6 +363,19 @@ func prepareDocumentCreate(doc *model.Document, job *model.Job, timestamp string
 	job.Status = model.JobAccepted
 	job.CreatedAt = doc.CreatedAt
 	job.UpdatedAt = doc.CreatedAt
+	return bindDocumentSyncRevision(job, 1)
+}
+
+func bindDocumentSyncRevision(job *model.Job, revision int) error {
+	if job.Kind != "document.sync" {
+		return nil
+	}
+	payload, err := mergeJobPayload(job.Payload, map[string]any{"revision": fmt.Sprintf("r%d", revision)})
+	if err != nil {
+		return fmt.Errorf("bind document sync revision: %w", err)
+	}
+	job.Payload = payload
+	return nil
 }
 
 func insertDocumentCreate(ctx context.Context, tx *sql.Tx, doc model.Document, job model.Job, timestamp string) error {
@@ -460,7 +492,13 @@ func (s *Store) UpdateDocument(ctx context.Context, id, ifMatch, title, content 
 	revision := revisionNumber(current.Revision) + 1
 	hash := contentHash(content)
 	job.Status = model.JobAccepted
+	if err := bindDocumentSyncRevision(&job, revision); err != nil {
+		return current, model.Job{}, err
+	}
 	err = s.InTx(ctx, func(tx *sql.Tx) error {
+		if err := ensureDocumentNotReservedForRename(ctx, tx, id); err != nil {
+			return err
+		}
 		res, err := tx.ExecContext(ctx, `
 			UPDATE documents SET title = ?, content = ?, content_hash = ?, revision = ?, status = ?,
 				metadata_json = ?, tags_json = ?, etag = etag + 1, updated_at = ?
@@ -508,6 +546,9 @@ func (s *Store) MarkDocumentDeleted(ctx context.Context, id, ifMatch string, job
 	timestamp := now()
 	job.Status = model.JobAccepted
 	err = s.InTx(ctx, func(tx *sql.Tx) error {
+		if err := ensureDocumentNotReservedForRename(ctx, tx, id); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE documents SET deleted = 1, status = ?, etag = etag + 1, updated_at = ? WHERE id = ?`,
 			model.JobAccepted, timestamp, id); err != nil {
@@ -522,6 +563,23 @@ func (s *Store) MarkDocumentDeleted(ctx context.Context, id, ifMatch string, job
 		return bumpVersion(ctx, tx)
 	})
 	return job, err
+}
+
+func ensureDocumentNotReservedForRename(ctx context.Context, tx *sql.Tx, id string) error {
+	return ensureSlugNotReservedForRename(ctx, tx, "document", id)
+}
+
+func ensureSlugNotReservedForRename(ctx context.Context, tx *sql.Tx, resourceType, slug string) error {
+	var reserved int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM rename_reservations WHERE resource_type = ? AND slug = ?)`, resourceType, slug).
+		Scan(&reserved); err != nil {
+		return err
+	}
+	if reserved != 0 {
+		return fmt.Errorf("%w: %s slug %s is reserved by a rename plan", ErrConflict, resourceType, slug)
+	}
+	return nil
 }
 
 func (s *Store) ListRevisions(ctx context.Context, documentID string) ([]model.Revision, error) {
@@ -564,6 +622,110 @@ func (s *Store) GetRevision(ctx context.Context, documentID string, revision int
 	result.Revision = fmt.Sprintf("r%d", revision)
 	result.CreatedAt = parseTime(created)
 	return result, nil
+}
+
+func (s *Store) ResolveDocumentSyncRevision(ctx context.Context, job model.Job) (string, error) {
+	if job.Kind != "document.sync" || job.ResourceType != "document" {
+		return "", fmt.Errorf("job %s is not a document sync job", job.ID)
+	}
+	var payload struct {
+		Revision string `json:"revision"`
+	}
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode document sync job payload: %w", err)
+		}
+	}
+	if payload.Revision != "" {
+		number := revisionNumber(payload.Revision)
+		if number < 1 || payload.Revision != fmt.Sprintf("r%d", number) {
+			return "", fmt.Errorf("%w: job %s has invalid revision %q", ErrDocumentSyncRevisionUnknown, job.ID, payload.Revision)
+		}
+		if _, err := s.GetRevision(ctx, job.ResourceID, number); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return "", fmt.Errorf("%w: job %s targets missing revision %s", ErrDocumentSyncRevisionUnknown, job.ID, payload.Revision)
+			}
+			return "", err
+		}
+		return payload.Revision, nil
+	}
+	if job.CreatedAt.IsZero() {
+		return "", fmt.Errorf("%w: legacy job %s has no creation timestamp", ErrDocumentSyncRevisionUnknown, job.ID)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT revision FROM revisions WHERE document_id = ? AND created_at = ? ORDER BY revision`,
+		job.ResourceID, job.CreatedAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var revisions []int
+	for rows.Next() {
+		var revision int
+		if err := rows.Scan(&revision); err != nil {
+			return "", err
+		}
+		revisions = append(revisions, revision)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	if len(revisions) != 1 {
+		return "", fmt.Errorf("%w: legacy job %s matches %d revisions", ErrDocumentSyncRevisionUnknown, job.ID, len(revisions))
+	}
+	resolved := fmt.Sprintf("r%d", revisions[0])
+	if err := s.MergeJobPayload(ctx, job.ID, map[string]any{"revision": resolved}); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func (s *Store) SetDocumentSyncForRevision(
+	ctx context.Context,
+	id, revision string,
+	status model.JobStatus,
+	brainID, snapshotOID string,
+) error {
+	number := revisionNumber(revision)
+	if number < 1 || revision != fmt.Sprintf("r%d", number) {
+		return fmt.Errorf("invalid document revision %q", revision)
+	}
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE documents SET status = ?, brain_id = CASE WHEN ? = '' THEN brain_id ELSE ? END, updated_at = ?
+			WHERE id = ? AND revision = ? AND deleted = 0`,
+			status, brainID, brainID, now(), id, number)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return ErrDocumentSyncSuperseded
+		}
+		if snapshotOID != "" {
+			result, err = tx.ExecContext(ctx, `
+				UPDATE revisions SET snapshot_oid = ? WHERE document_id = ? AND revision = ?`,
+				snapshotOID, id, number)
+			if err != nil {
+				return err
+			}
+			affected, err = result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if affected == 0 {
+				return fmt.Errorf("%w: revision %s for document %s is missing", ErrDocumentSyncRevisionUnknown, revision, id)
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) SetDocumentSync(ctx context.Context, id, status, brainID, snapshotOID string) error {

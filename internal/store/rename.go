@@ -229,6 +229,11 @@ func (s *Store) ApplyRename(ctx context.Context, planID string) ([]model.Documen
 			if affected != 1 {
 				return ErrNotFound
 			}
+			if operation.ResourceType == "entity" {
+				if err := renameDerivedEntityClaims(ctx, tx, operation.From, temp); err != nil {
+					return err
+				}
+			}
 		}
 		for index, operation := range plan.Preview.Operations {
 			table, _ := slugTable(operation.ResourceType)
@@ -239,6 +244,11 @@ func (s *Store) ApplyRename(ctx context.Context, planID string) ([]model.Documen
 			query := fmt.Sprintf(`UPDATE %s SET id = ? WHERE id = ?`, table)
 			if _, err := tx.ExecContext(ctx, query, operation.To, temp); err != nil {
 				return err
+			}
+			if operation.ResourceType == "entity" {
+				if err := renameDerivedEntityClaims(ctx, tx, temp, operation.To); err != nil {
+					return err
+				}
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO rename_audit(plan_id, resource_type, old_slug, new_slug, created_at)
@@ -487,6 +497,11 @@ func (s *Store) RollbackRename(ctx context.Context, planID string, semanticError
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET id = ? WHERE id = ?`, table), temp, operation.To); err != nil {
 				return err
 			}
+			if operation.ResourceType == "entity" {
+				if err := renameDerivedEntityClaims(ctx, tx, operation.To, temp); err != nil {
+					return err
+				}
+			}
 		}
 		for index, operation := range plan.Preview.Operations {
 			table, _ := slugTable(operation.ResourceType)
@@ -496,6 +511,11 @@ func (s *Store) RollbackRename(ctx context.Context, planID string, semanticError
 			}
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET id = ? WHERE id = ?`, table), operation.From, temp); err != nil {
 				return err
+			}
+			if operation.ResourceType == "entity" {
+				if err := renameDerivedEntityClaims(ctx, tx, temp, operation.From); err != nil {
+					return err
+				}
 			}
 		}
 		for _, backup := range backups {
@@ -537,6 +557,13 @@ func (s *Store) RollbackRename(ctx context.Context, planID string, semanticError
 		}
 		return bumpVersion(ctx, tx)
 	})
+}
+
+func renameDerivedEntityClaims(ctx context.Context, tx *sql.Tx, from, to string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE derived_graph_claims SET object_id = ?
+		WHERE object_kind = 'entity' AND object_id = ?`, to, from)
+	return err
 }
 
 func (s *Store) RenameProgress(ctx context.Context, planID string) (map[string]int, error) {

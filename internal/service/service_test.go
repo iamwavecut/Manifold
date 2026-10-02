@@ -10,6 +10,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,6 +106,7 @@ func TestSearchModesAndScopeGlobUseCanonicalPaths(t *testing.T) {
 }
 
 func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
+	var recovered atomic.Bool
 	var writes, snapshots, ingests int
 	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -112,7 +116,7 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 				http.Error(w, `{"error":"resource already exists"}`, http.StatusConflict)
 				return
 			}
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
 		case "/api/v1/snapshot/commit":
 			snapshots++
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-retry"}}`))
@@ -123,12 +127,15 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 	defer openViking.Close()
 
 	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveEmptyBrainResult(w, r, "brain-retry", "retry-memory") {
+			return
+		}
 		if r.URL.Path != "/v1/ingest/document" {
 			http.NotFound(w, r)
 			return
 		}
 		ingests++
-		if ingests == 1 {
+		if !recovered.Load() {
 			http.Error(w, `{"error":"provider unavailable"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -149,6 +156,8 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		time.Millisecond,
 	)
+	svc.SetBrainExtractionTimeout(25 * time.Millisecond)
+	svc.brainPollInterval = time.Millisecond
 	_, job, err := svc.CreateDocument(t.Context(), model.Document{
 		ID: "retry-memory", Title: "Retry memory", Format: "markdown", Content: "Resume from the durable checkpoint.",
 	})
@@ -167,6 +176,8 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 		t.Fatalf("checkpoint revision = %#v, err = %v", revision, err)
 	}
 
+	recovered.Store(true)
+	svc.SetBrainExtractionTimeout(time.Second)
 	if err := db.RetryJob(t.Context(), job.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +192,7 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 	if err != nil || document.Status != model.JobReady || document.BrainID != "brain-retry" {
 		t.Fatalf("retried document = %#v, err = %v", document, err)
 	}
-	if writes != 1 || snapshots != 1 || ingests != 2 {
+	if writes != 1 || snapshots != 1 || ingests < 2 {
 		t.Fatalf("upstream calls: writes=%d snapshots=%d ingests=%d", writes, snapshots, ingests)
 	}
 }
@@ -204,7 +215,7 @@ func TestDocumentRetryReconcilesCreateBeforeCheckpoint(t *testing.T) {
 				http.Error(w, `{"error":"resource already exists"}`, http.StatusConflict)
 				return
 			}
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
 		case "/api/v1/fs/stat":
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"uri":"viking://resources/manifold/retry-before-checkpoint.md"}}`))
 		case "/api/v1/snapshot/commit":
@@ -221,6 +232,9 @@ func TestDocumentRetryReconcilesCreateBeforeCheckpoint(t *testing.T) {
 	defer openViking.Close()
 
 	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveEmptyBrainResult(w, r, "brain-reconciled", "retry-before-checkpoint") {
+			return
+		}
 		if r.URL.Path != "/v1/ingest/document" {
 			http.NotFound(w, r)
 			return
@@ -282,7 +296,7 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 		case "/health":
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/api/v1/content/write", "/api/v1/fs/mkdir":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
 		case "/api/v1/fs/mv":
 			var body struct {
 				From string `json:"from_uri"`
@@ -293,7 +307,7 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 				return
 			}
 			openVikingMoves = append(openVikingMoves, body.From+" -> "+body.To)
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
 		case "/api/v1/snapshot/commit":
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-1"}}`))
 		case "/api/v1/search/find":
@@ -304,14 +318,43 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	}))
 	defer openViking.Close()
 
+	var brainFixtureMu sync.Mutex
+	brainSourceID, brainRevision := "old-memory", "r1"
 	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		brainFixtureMu.Lock()
+		defer brainFixtureMu.Unlock()
 		switch r.URL.Path {
 		case "/health":
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/v1/ingest/document":
+			var input struct {
+				Meta struct {
+					ID       string `json:"manifold_id"`
+					Revision string `json:"revision"`
+				} `json:"meta"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Error(err)
+				return
+			}
+			brainSourceID, brainRevision = input.Meta.ID, input.Meta.Revision
 			_, _ = w.Write([]byte(`{"documentId":"brain-doc-1","committed":{"entityIds":["entity-1"],"factIds":["fact-1"],"edgeIds":[]}}`))
+		case "/v1/documents/brain-doc-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "brain-doc-1", "status": "committed",
+				"meta": map[string]string{"manifold_id": brainSourceID, "revision": brainRevision},
+				"runs": []any{map[string]string{"runId": "run-1", "packId": "_general", "status": "succeeded"}},
+			})
+		case "/v1/documents/brain-doc-1/candidates":
+			_, _ = w.Write([]byte(`{"candidates":[{"id":"candidate-entity","runId":"run-1","chunkSeq":0,"kind":"entity","status":"committed","commitRef":"entity-1","payload":{"entityIndex":0,"name":"Retention","type":"concept"}},{"id":"candidate-fact","runId":"run-1","chunkSeq":0,"kind":"fact","status":"committed","commitRef":"fact-1","payload":{"entityIndex":0,"predicate":"retention","object":"canonical"}}]}`))
+		case "/v1/entities/entity-1":
+			_, _ = w.Write([]byte(`{"entityId":"entity-1","type":"concept","canonicalName":"Retention","facts":[{"factId":"fact-1"}]}`))
+		case "/v1/entities/entity-1/connections":
+			_, _ = w.Write([]byte(`{"edges":[]}`))
+		case "/v1/facts/fact-1":
+			_, _ = w.Write([]byte(`{"factId":"fact-1","aspect":"retention","statement":"canonical","confidence":1,"validFrom":"2026-09-16T00:00:00Z","retracted":false}`))
 		case "/v1/search":
-			_, _ = w.Write([]byte(`{"results":[{"entityId":"entity-1","entityType":"decision","canonicalName":"Retention","score":0.9,"facts":[{"factId":"fact-1","predicate":"retention","object":"canonical","score":0.9,"sourceKey":"brain-doc-1"}]}]}`))
+			_, _ = w.Write([]byte(`{"results":[{"entityId":"entity-1","entityType":"concept","canonicalName":"Retention","score":0.9,"facts":[{"factId":"fact-1","predicate":"retention","object":"canonical","score":0.9,"sourceKey":"manifold:_general"}]}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -353,12 +396,19 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(search.Items) != 1 || len(search.DegradedDependencies) != 0 {
+	if len(search.Items) != 2 || len(search.DegradedDependencies) != 0 {
 		t.Fatalf("hybrid search = %#v", search)
 	}
-	if search.Items[0].ID != "old-memory" || search.Items[0].CanonicalRef != "manifold://documents/old-memory@r1" ||
-		search.Items[0].Path != "old-memory" {
-		t.Fatalf("hybrid search exposed a non-canonical hit: %#v", search.Items[0])
+	for _, hit := range search.Items {
+		if hit.Path != "old-memory" || hit.Revision != "r1" || !strings.HasPrefix(hit.CanonicalRef, "manifold://") {
+			t.Fatalf("hybrid search exposed a non-canonical hit: %#v", hit)
+		}
+		if hit.Kind == "document" && (hit.ID != "old-memory" || hit.CanonicalRef != "manifold://documents/old-memory@r1") {
+			t.Fatalf("document mapping = %#v", hit)
+		}
+		if hit.Kind == "fact" && (!identity.IsXID(hit.ID) || hit.CanonicalRef != "manifold://facts/"+hit.ID) {
+			t.Fatalf("fact mapping = %#v", hit)
+		}
 	}
 	contextPack, degraded, err := svc.Context(t.Context(), SearchRequest{
 		Query: "canonical", Mode: model.SearchHybrid, Limit: 10,
@@ -461,7 +511,7 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 			moves = append(moves, body.From+" -> "+body.To)
 			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
 		case "/api/v1/content/write":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
 		case "/api/v1/snapshot/commit":
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot"}}`))
 		default:
@@ -471,7 +521,7 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 	defer openViking.Close()
 	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/ingest/document" {
-			http.Error(w, `{"private":"provider detail"}`, http.StatusServiceUnavailable)
+			http.Error(w, `{"private":"provider detail"}`, http.StatusBadRequest)
 			return
 		}
 		http.NotFound(w, r)
@@ -504,6 +554,8 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 		logger,
 		time.Millisecond,
 	)
+	svc.SetBrainExtractionTimeout(100 * time.Millisecond)
+	svc.brainPollInterval = 5 * time.Millisecond
 	plan, err := svc.CreateRenamePlan(t.Context(), []model.RenameOperation{{
 		ResourceType: "document", From: "old-memory", To: "new-memory",
 	}})
@@ -527,6 +579,16 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 	if err != nil || failedPlan.Status != "failed" || failedPlan.Error == nil ||
 		failedPlan.Error.Code != "dependency_unavailable" {
 		t.Fatalf("failed plan = %#v, err = %v", failedPlan, err)
+	}
+	if failedPlan.Error.Retryable || !slices.Contains(
+		failedPlan.Error.Remediation.Steps, "Create a fresh rename preview and review every change.",
+	) {
+		t.Fatalf("terminal rollback remediation = %#v; want a fresh reviewed plan, not retrying the failed job", failedPlan.Error)
+	}
+	for _, step := range failedPlan.Error.Remediation.Steps {
+		if strings.Contains(step, "/jobs/"+job.ID+"/retry") {
+			t.Fatalf("rolled-back rename advertises an unusable retry: %#v", failedPlan.Error.Remediation)
+		}
 	}
 	failedJob, err := db.GetJob(t.Context(), job.ID)
 	if err != nil || failedJob.Status != model.JobFailed || failedJob.Error == nil ||
@@ -735,4 +797,20 @@ func (fakeGraphStore) RetractFact(context.Context, string, string) error {
 
 func (fakeGraphStore) GetEntity(context.Context, string) (map[string]any, error) {
 	return map[string]any{}, nil
+}
+
+func serveEmptyBrainResult(w http.ResponseWriter, r *http.Request, brainID, documentID string) bool {
+	switch r.URL.Path {
+	case "/v1/documents/" + brainID:
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": brainID, "status": "committed",
+			"meta": map[string]string{"manifold_id": documentID, "revision": "r1"},
+			"runs": []any{map[string]string{"packId": "_general", "status": "succeeded"}},
+		})
+	case "/v1/documents/" + brainID + "/candidates":
+		_, _ = w.Write([]byte(`{"candidates":[]}`))
+	default:
+		return false
+	}
+	return true
 }

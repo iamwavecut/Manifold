@@ -34,7 +34,7 @@ func TestOpenVikingAdapterMatchesPinnedV0410Contract(t *testing.T) {
 				body["mode"] != "create" || body["wait"] != true {
 				t.Errorf("write body = %#v", body)
 			}
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"uri":"viking://resources/manifold/agent-memory.md"}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"uri":"viking://resources/manifold/agent-memory.md","semantic_status":"complete","vector_status":"complete"}}`))
 		case "/api/v1/snapshot/commit":
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-1"}}`))
 		case "/api/v1/search/find":
@@ -62,32 +62,35 @@ func TestOpenVikingAdapterMatchesPinnedV0410Contract(t *testing.T) {
 	}
 }
 
-func TestBrainAdapterMatchesPinnedV081DocumentContract(t *testing.T) {
+func TestBrainAdapterMatchesPinnedV220SyncDocumentContract(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/ingest/document" {
+		switch r.URL.Path {
+		case "/v1/ingest/document":
+			if r.Header.Get("Authorization") != "Bearer brain-secret" {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			contextRef, _ := body["contextRef"].(map[string]any)
+			meta, _ := body["meta"].(map[string]any)
+			if body["mode"] != "sync" || body["storeContent"] != false ||
+				body["originUri"] != "manifold://documents/agent-memory@r1" ||
+				contextRef["vertical"] != "manifold" || meta["manifold_id"] != "agent-memory" {
+				t.Errorf("ingest body = %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"documentId":"source_document:brain-document-1"}`))
+		case "/v1/documents/source_document:brain-document-1":
+			_, _ = w.Write([]byte(`{"id":"source_document:brain-document-1","status":"committed","meta":{"manifold_id":"agent-memory","revision":"r1"},"runs":[{"packId":"_general","status":"succeeded"}]}`))
+		case "/v1/documents/source_document:brain-document-1/candidates":
+			_, _ = w.Write([]byte(`{"documentId":"source_document:brain-document-1","candidates":[]}`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if r.Header.Get("Authorization") != "Bearer brain-secret" {
-			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-			return
-		}
-		contextRef, _ := body["contextRef"].(map[string]any)
-		meta, _ := body["meta"].(map[string]any)
-		if body["mode"] != "sync" || body["storeContent"] != false ||
-			contextRef["vertical"] != "manifold" || meta["manifold_id"] != "agent-memory" {
-			t.Errorf("ingest body = %#v", body)
-		}
-		_, _ = w.Write([]byte(`{
-			"documentId":"brain-document-1",
-			"committed":{"entityIds":["entity-1"],"factIds":["fact-1"],"edgeIds":["edge-1"]}
-		}`))
 	}))
 	defer server.Close()
 
@@ -100,8 +103,9 @@ func TestBrainAdapterMatchesPinnedV081DocumentContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.DocumentID != "brain-document-1" ||
-		len(result.EntityIDs) != 1 || len(result.FactIDs) != 1 || len(result.EdgeIDs) != 1 {
+	if result.DocumentID != "source_document:brain-document-1" ||
+		len(result.EntityIDs) != 0 || len(result.FactIDs) != 0 || len(result.EdgeIDs) != 0 ||
+		result.OriginURI != "manifold://documents/agent-memory@r1" || result.Revision != "r1" {
 		t.Fatalf("ingest result = %#v", result)
 	}
 }
@@ -136,12 +140,17 @@ func TestBrainDocumentIngestUsesDedicatedLongRunningClient(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/ingest/document" {
+		switch r.URL.Path {
+		case "/v1/ingest/document":
+			time.Sleep(30 * time.Millisecond)
+			_, _ = w.Write([]byte(`{"documentId":"source_document:brain-document-1"}`))
+		case "/v1/documents/source_document:brain-document-1":
+			_, _ = w.Write([]byte(`{"id":"source_document:brain-document-1","status":"committed","meta":{"manifold_id":"release-evidence","revision":"r1"},"runs":[{"packId":"_general","status":"succeeded"}]}`))
+		case "/v1/documents/source_document:brain-document-1/candidates":
+			_, _ = w.Write([]byte(`{"documentId":"source_document:brain-document-1","candidates":[]}`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		time.Sleep(30 * time.Millisecond)
-		_, _ = w.Write([]byte(`{"documentId":"brain-document-1","committed":{}}`))
 	}))
 	defer server.Close()
 
@@ -149,12 +158,12 @@ func TestBrainDocumentIngestUsesDedicatedLongRunningClient(t *testing.T) {
 	ingestClient := &http.Client{Timeout: 200 * time.Millisecond}
 	client := NewBrain(server.URL, "brain-secret", ordinaryClient, ingestClient)
 	result, err := client.IngestDocument(t.Context(), GraphDocument{
-		ID: "release-evidence", Title: "Release evidence", Format: "markdown", Content: "verified",
+		ID: "release-evidence", Title: "Release evidence", Format: "markdown", Content: "verified", Revision: "r1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.DocumentID != "brain-document-1" {
+	if result.DocumentID != "source_document:brain-document-1" {
 		t.Fatalf("document ID = %q", result.DocumentID)
 	}
 }

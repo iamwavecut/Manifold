@@ -2,6 +2,9 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# The Rust storage binding reads this file before Python expands environment
+# placeholders, so the template itself must be valid JSON.
+jq -e . "$root/deploy/openviking/ov.conf" >/dev/null
 config=$(docker compose --project-directory "$root" \
 	--env-file "$root/.env.example" config --format json)
 

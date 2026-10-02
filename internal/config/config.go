@@ -9,19 +9,21 @@ import (
 )
 
 type Config struct {
-	Addr               string
-	DBPath             string
-	PublicURL          string
-	BootstrapAPIKey    string
-	LogLevel           string
-	MaxBodyBytes       int64
-	OpenVikingURL      string
-	OpenVikingKey      string
-	BrainURL           string
-	BrainKey           string
-	HTTPTimeout        time.Duration
-	BrainIngestTimeout time.Duration
-	WorkerInterval     time.Duration
+	Addr                   string
+	DBPath                 string
+	PublicURL              string
+	BootstrapAPIKey        string
+	LogLevel               string
+	MaxBodyBytes           int64
+	OpenVikingURL          string
+	OpenVikingKey          string
+	BrainURL               string
+	BrainKey               string
+	HTTPTimeout            time.Duration
+	BrainIngestTimeout     time.Duration
+	BrainExtractionTimeout time.Duration
+	OpenVikingWriteTimeout time.Duration
+	WorkerInterval         time.Duration
 }
 
 func Load() (Config, error) {
@@ -40,24 +42,40 @@ func Load() (Config, error) {
 	if brainIngestTimeout <= 0 {
 		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_INGEST_TIMEOUT must be greater than zero")
 	}
+	extractionTimeout, err := envDuration("MANIFOLD_BRAIN_EXTRACTION_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if extractionTimeout <= 0 {
+		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_EXTRACTION_TIMEOUT must be greater than zero")
+	}
+	writeTimeout, err := envDuration("MANIFOLD_OPENVIKING_WRITE_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if writeTimeout <= 0 {
+		return Config{}, fmt.Errorf("MANIFOLD_OPENVIKING_WRITE_TIMEOUT must be greater than zero")
+	}
 	workerInterval, err := envDuration("MANIFOLD_WORKER_INTERVAL", time.Second)
 	if err != nil {
 		return Config{}, err
 	}
 	cfg := Config{
-		Addr:               env("MANIFOLD_ADDR", ":8080"),
-		DBPath:             env("MANIFOLD_DB_PATH", "manifold.db"),
-		PublicURL:          strings.TrimRight(env("MANIFOLD_PUBLIC_URL", "http://localhost:8080"), "/"),
-		BootstrapAPIKey:    os.Getenv("MANIFOLD_BOOTSTRAP_API_KEY"),
-		LogLevel:           env("MANIFOLD_LOG_LEVEL", "info"),
-		MaxBodyBytes:       maxBody,
-		OpenVikingURL:      strings.TrimRight(env("OPENVIKING_URL", ""), "/"),
-		OpenVikingKey:      os.Getenv("OPENVIKING_API_KEY"),
-		BrainURL:           strings.TrimRight(env("BRAIN_URL", ""), "/"),
-		BrainKey:           os.Getenv("BRAIN_API_KEY"),
-		HTTPTimeout:        httpTimeout,
-		BrainIngestTimeout: brainIngestTimeout,
-		WorkerInterval:     workerInterval,
+		Addr:                   env("MANIFOLD_ADDR", ":8080"),
+		DBPath:                 env("MANIFOLD_DB_PATH", "manifold.db"),
+		PublicURL:              strings.TrimRight(env("MANIFOLD_PUBLIC_URL", "http://localhost:8080"), "/"),
+		BootstrapAPIKey:        os.Getenv("MANIFOLD_BOOTSTRAP_API_KEY"),
+		LogLevel:               env("MANIFOLD_LOG_LEVEL", "info"),
+		MaxBodyBytes:           maxBody,
+		OpenVikingURL:          strings.TrimRight(env("OPENVIKING_URL", ""), "/"),
+		OpenVikingKey:          os.Getenv("OPENVIKING_API_KEY"),
+		BrainURL:               strings.TrimRight(env("BRAIN_URL", ""), "/"),
+		BrainKey:               os.Getenv("BRAIN_API_KEY"),
+		HTTPTimeout:            httpTimeout,
+		BrainIngestTimeout:     brainIngestTimeout,
+		BrainExtractionTimeout: extractionTimeout,
+		OpenVikingWriteTimeout: writeTimeout,
+		WorkerInterval:         workerInterval,
 	}
 	if cfg.MaxBodyBytes < 1024 {
 		return Config{}, fmt.Errorf("MANIFOLD_MAX_BODY_BYTES must be at least 1024")

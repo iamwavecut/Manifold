@@ -28,6 +28,8 @@ type SessionRecord struct {
 	ExpiresAt    time.Time
 }
 
+const defaultJobLeaseDuration = 2 * time.Minute
+
 func (s *Store) APIKeyCount(ctx context.Context) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys`).Scan(&count)
@@ -157,7 +159,7 @@ func (s *Store) NextJob(ctx context.Context) (model.Job, error) {
 			return err
 		}
 		timestamp := now()
-		lease := time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339Nano)
+		lease := time.Now().UTC().Add(defaultJobLeaseDuration).Format(time.RFC3339Nano)
 		res, err := tx.ExecContext(ctx, `
 			UPDATE jobs SET status = 'indexing', attempts = attempts + 1, started_at = COALESCE(started_at, ?),
 				lease_until = ?, updated_at = ? WHERE id = ? AND status = 'accepted'`,
@@ -165,7 +167,10 @@ func (s *Store) NextJob(ctx context.Context) (model.Job, error) {
 		if err != nil {
 			return err
 		}
-		affected, _ := res.RowsAffected()
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
 		if affected == 0 {
 			return ErrConflict
 		}
@@ -179,6 +184,28 @@ func (s *Store) NextJob(ctx context.Context) (model.Job, error) {
 		return model.Job{}, err
 	}
 	return s.GetJob(ctx, job.ID)
+}
+
+func (s *Store) RenewJobLease(ctx context.Context, id string, attempt int, duration time.Duration) error {
+	if duration <= 0 {
+		return fmt.Errorf("job lease duration must be positive")
+	}
+	timestamp := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE jobs SET lease_until = ?, updated_at = ?
+		WHERE id = ? AND status = 'indexing' AND attempts = ?`,
+		timestamp.Add(duration).Format(time.RFC3339Nano), timestamp.Format(time.RFC3339Nano), id, attempt)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Store) GetJob(ctx context.Context, id string) (model.Job, error) {
@@ -244,25 +271,127 @@ func (s *Store) SetJobStatus(ctx context.Context, id string, status model.JobSta
 	if status == model.JobReady || status == model.JobPartiallyReady || status == model.JobFailed {
 		finished = now()
 	}
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE jobs SET status = ?, error_json = ?, lease_until = NULL, updated_at = ?,
 			finished_at = COALESCE(?, finished_at) WHERE id = ?`,
 		status, errorJSON, now(), finished, id)
-	return err
-}
-
-func (s *Store) RetryJob(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE jobs SET status = 'accepted', error_json = NULL, lease_until = NULL, finished_at = NULL, updated_at = ?
-		WHERE id = ? AND status IN ('failed', 'partially_ready')`, now(), id)
 	if err != nil {
 		return err
 	}
-	count, _ := res.RowsAffected()
-	if count == 0 {
-		return ErrConflict
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) MergeJobPayload(ctx context.Context, id string, updates map[string]any) error {
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var payload string
+		if err := tx.QueryRowContext(ctx, `SELECT payload_json FROM jobs WHERE id = ?`, id).Scan(&payload); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		merged, err := mergeJobPayload(json.RawMessage(payload), updates)
+		if err != nil {
+			return fmt.Errorf("merge job payload: %w", err)
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE jobs SET payload_json = ?, updated_at = ? WHERE id = ?`,
+			string(merged), now(), id)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+func mergeJobPayload(payload json.RawMessage, updates map[string]any) (json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &fields); err != nil {
+			return nil, err
+		}
+	}
+	if fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	for key, value := range updates {
+		if key == "" {
+			return nil, errors.New("job payload field name is empty")
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		fields[key] = encoded
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func (s *Store) RetryJob(ctx context.Context, id string) error {
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var status, kind, payload string
+		if err := tx.QueryRowContext(ctx, `SELECT status, kind, payload_json FROM jobs WHERE id = ?`, id).
+			Scan(&status, &kind, &payload); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrConflict
+			}
+			return err
+		}
+		if status != string(model.JobFailed) && status != string(model.JobPartiallyReady) {
+			return ErrConflict
+		}
+		if kind == "document.sync" {
+			var retry struct {
+				Requested bool `json:"manual_retry_requested"`
+			}
+			if payload != "" {
+				if err := json.Unmarshal([]byte(payload), &retry); err != nil {
+					return fmt.Errorf("decode document retry payload: %w", err)
+				}
+			}
+			updates := map[string]any{"manual_retry_requested": true}
+			if !retry.Requested {
+				updates["brain_retry_key"] = ""
+			}
+			merged, err := mergeJobPayload(json.RawMessage(payload), updates)
+			if err != nil {
+				return fmt.Errorf("mark document retry request: %w", err)
+			}
+			payload = string(merged)
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE jobs SET status = 'accepted', error_json = NULL, lease_until = NULL,
+				finished_at = NULL, payload_json = ?, updated_at = ?
+			WHERE id = ? AND status IN ('failed', 'partially_ready')`, payload, now(), id)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return ErrConflict
+		}
+		return nil
+	})
 }
 
 func (s *Store) GetIdempotency(ctx context.Context, key, method, path string) (int, []byte, string, error) {
@@ -293,13 +422,17 @@ func (s *Store) SaveIdempotency(
 func (s *Store) Metrics(ctx context.Context) (map[string]int, error) {
 	result := map[string]int{}
 	for name, query := range map[string]string{
-		"folders":     `SELECT COUNT(*) FROM folders`,
-		"documents":   `SELECT COUNT(*) FROM documents WHERE deleted = 0`,
-		"entities":    `SELECT COUNT(*) FROM entities`,
-		"facts":       `SELECT COUNT(*) FROM facts`,
-		"relations":   `SELECT COUNT(*) FROM relations`,
-		"jobs":        `SELECT COUNT(*) FROM jobs`,
-		"failed_jobs": `SELECT COUNT(*) FROM jobs WHERE status = 'failed'`,
+		"folders":                   `SELECT COUNT(*) FROM folders`,
+		"documents":                 `SELECT COUNT(*) FROM documents WHERE deleted = 0`,
+		"documents_incomplete":      `SELECT COUNT(*) FROM documents WHERE deleted = 0 AND status IN ('accepted', 'indexing', 'extracting')`,
+		"documents_partially_ready": `SELECT COUNT(*) FROM documents WHERE deleted = 0 AND status = 'partially_ready'`,
+		"documents_failed":          `SELECT COUNT(*) FROM documents WHERE deleted = 0 AND status = 'failed'`,
+		"entities":                  `SELECT COUNT(*) FROM entities`,
+		"facts":                     `SELECT COUNT(*) FROM facts`,
+		"relations":                 `SELECT COUNT(*) FROM relations`,
+		"jobs":                      `SELECT COUNT(*) FROM jobs`,
+		"pending_jobs":              `SELECT COUNT(*) FROM jobs WHERE status IN ('accepted', 'indexing', 'extracting')`,
+		"failed_jobs":               `SELECT COUNT(*) FROM jobs WHERE status = 'failed'`,
 	} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, query).Scan(&count); err != nil {

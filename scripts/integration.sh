@@ -5,7 +5,13 @@ project=manifold-integration
 port=${MANIFOLD_PORT:-18080}
 url="http://127.0.0.1:${port}"
 api_key=${MANIFOLD_BOOTSTRAP_API_KEY:-replace-with-a-long-random-secret}
-compose="docker compose --project-name ${project} -f docker-compose.yml -f docker-compose.integration.yml --env-file .env.example"
+compose_files="docker-compose.yml:docker-compose.integration.yml"
+if [ -n "${MANIFOLD_INTEGRATION_COMPOSE_OVERRIDE:-}" ]; then
+	compose_files="$compose_files:$MANIFOLD_INTEGRATION_COMPOSE_OVERRIDE"
+fi
+compose() {
+	COMPOSE_FILE=$compose_files docker compose --project-name "$project" --env-file .env.example "$@"
+}
 state_file=
 
 has_degraded_dependencies() {
@@ -16,14 +22,14 @@ cleanup() {
 	if [ -n "$state_file" ]; then
 		rm -f "$state_file"
 	fi
-	$compose down --volumes --remove-orphans
+	compose down --volumes --remove-orphans
 }
 
 on_exit() {
 	status=$?
 	if [ "$status" -ne 0 ]; then
-		$compose ps --all || true
-		$compose logs --no-color --tail=300 || true
+		compose ps --all || true
+		compose logs --no-color --tail=300 || true
 	fi
 	cleanup
 	exit "$status"
@@ -32,7 +38,7 @@ on_exit() {
 trap on_exit EXIT INT TERM
 cleanup
 
-MANIFOLD_PORT=$port $compose up --detach --build --wait --wait-timeout 300
+MANIFOLD_PORT=$port compose up --detach --build --wait --wait-timeout 300
 
 curl --fail --silent --show-error "$url/openapi.yaml" >/dev/null
 curl --fail --silent --show-error "$url/app/" >/dev/null
@@ -70,7 +76,7 @@ esac
 
 # Keep Brain running while SurrealDB restarts. Its scoped pool must restore
 # authentication rather than remaining connected as an anonymous session.
-$compose restart surrealdb
+compose restart surrealdb
 attempt=0
 while :; do
 	recovery_search=$(MANIFOLD_URL=$url \
@@ -105,7 +111,7 @@ case "$recovery_context" in
 		;;
 esac
 
-$compose stop brain
+compose stop brain
 state_file=$(mktemp)
 MANIFOLD_URL=$url \
 	MANIFOLD_API_KEY=$api_key \
@@ -113,13 +119,13 @@ MANIFOLD_URL=$url \
 	MANIFOLD_INTEGRATION_STATE=$state_file \
 	go test -tags=integration -count=1 -v ./test/integration
 
-$compose restart manifold
+compose restart manifold
 
 attempt=0
 until curl --fail --silent --show-error "$url/health" >/dev/null; do
 	attempt=$((attempt + 1))
 	if [ "$attempt" -ge 60 ]; then
-		$compose logs --no-color manifold
+		compose logs --no-color manifold
 		exit 1
 	fi
 	sleep 1
@@ -128,6 +134,13 @@ done
 MANIFOLD_URL=$url \
 	MANIFOLD_API_KEY=$api_key \
 	MANIFOLD_INTEGRATION_PHASE=verify_failure \
+	MANIFOLD_INTEGRATION_STATE=$state_file \
+	go test -tags=integration -count=1 -v ./test/integration
+
+compose start --wait --wait-timeout 120 brain
+MANIFOLD_URL=$url \
+	MANIFOLD_API_KEY=$api_key \
+	MANIFOLD_INTEGRATION_PHASE=recover_failure \
 	MANIFOLD_INTEGRATION_STATE=$state_file \
 	go test -tags=integration -count=1 -v ./test/integration
 

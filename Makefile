@@ -31,7 +31,7 @@ openapi: web
 	go run -ldflags="$(LDFLAGS)" ./cmd/manifold openapi > api/openapi.yaml
 
 openapi-check: web
-	@tmp=$$(mktemp); go run -ldflags="$(LDFLAGS)" ./cmd/manifold openapi > $$tmp; diff -u api/openapi.yaml $$tmp; rm -f $$tmp
+	@set -e; tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; go run -ldflags="$(LDFLAGS)" ./cmd/manifold openapi > "$$tmp"; diff -u api/openapi.yaml "$$tmp"
 
 skill-check:
 	python3 scripts/validate-skill.py skills/manifold

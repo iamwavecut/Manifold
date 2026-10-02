@@ -11,8 +11,8 @@
     "mithril": "2.3.8"
   },
   "devDependencies": {
-    "@types/mithril": "2.2.7",
-    "esbuild": "0.28.1",
-    "typescript": "6.0.2"
+    "@types/mithril": "2.2.9",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
   }
 }

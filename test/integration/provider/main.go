@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,12 @@ func chatCompletion(w http.ResponseWriter, r *http.Request) {
 			if schema, ok := schemaWrapper["schema"].(map[string]any); ok {
 				content = valueForSchema(schema)
 			}
+			if fixture, ok := extractionFixture(request, schemaWrapper); ok {
+				content = fixture
+			}
+			if schemaWrapper["name"] == "entity_judge_verdict" {
+				content = map[string]string{"verdict": "different"}
+			}
 		}
 	}
 	encoded, _ := json.Marshal(content)
@@ -108,6 +115,38 @@ func chatCompletion(w http.ResponseWriter, r *http.Request) {
 			"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
 		},
 	})
+}
+
+func extractionFixture(request, schema map[string]any) (any, bool) {
+	if schema["name"] != "extraction" {
+		return nil, false
+	}
+	messages, _ := request["messages"].([]any)
+	for _, raw := range messages {
+		message, _ := raw.(map[string]any)
+		text, _ := message["content"].(string)
+		if message["role"] != "user" {
+			continue
+		}
+		for _, company := range []string{"Meridian Labs", "Borealis Labs"} {
+			clause := "Mira Chen works at " + company + "."
+			if !strings.Contains(text, clause) {
+				continue
+			}
+			return map[string]any{
+				"clauses": []string{clause},
+				"entities": []map[string]any{
+					{"name": "Mira Chen", "type": "staff", "canonical": nil},
+					{"name": company, "type": "project", "canonical": nil},
+				},
+				"facts": []map[string]any{{"entityIndex": 0, "clauseIndex": 0,
+					"predicate": "works_at", "valueSpan": company, "confidence": 1}},
+				"edges": []map[string]any{{"fromEntityIndex": 0, "toEntityIndex": 1,
+					"kind": "works_at", "clauseIndex": 0, "confidence": 1}},
+			}, true
+		}
+	}
+	return nil, false
 }
 
 func valueForSchema(schema map[string]any) any {

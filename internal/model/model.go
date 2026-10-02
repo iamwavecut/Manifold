@@ -43,7 +43,7 @@ type Revision struct {
 	Content     string    `json:"content"`
 	ContentHash string    `json:"content_hash"`
 	OVURI       string    `json:"-"`
-	SnapshotOID string    `json:"snapshot_oid,omitempty"`
+	SnapshotOID string    `json:"-"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

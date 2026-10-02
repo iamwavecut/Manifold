@@ -72,9 +72,11 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 
 	httpClient := &http.Client{Timeout: cfg.HTTPTimeout}
 	brainIngestHTTPClient := &http.Client{Timeout: cfg.BrainIngestTimeout}
-	documents := upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient)
+	writeHTTPClient := &http.Client{Timeout: cfg.OpenVikingWriteTimeout}
+	documents := upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient, writeHTTPClient)
 	graph := upstream.NewBrain(cfg.BrainURL, cfg.BrainKey, httpClient, brainIngestHTTPClient)
 	svc := service.New(db, documents, graph, cfg.PublicURL, logger, cfg.WorkerInterval, buildinfo.New(version, commit))
+	svc.SetBrainExtractionTimeout(cfg.BrainExtractionTimeout)
 	handler := manifoldapi.New(svc, authManager, cfg, logger, web.Handler()).Handler
 
 	server := &http.Server{
@@ -128,9 +130,10 @@ func writeOpenAPI(cfg config.Config, logger *slog.Logger) error {
 
 	httpClient := &http.Client{Timeout: cfg.HTTPTimeout}
 	brainIngestHTTPClient := &http.Client{Timeout: cfg.BrainIngestTimeout}
+	writeHTTPClient := &http.Client{Timeout: cfg.OpenVikingWriteTimeout}
 	svc := service.New(
 		db,
-		upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient),
+		upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient, writeHTTPClient),
 		upstream.NewBrain(cfg.BrainURL, cfg.BrainKey, httpClient, brainIngestHTTPClient),
 		cfg.PublicURL,
 		logger,
