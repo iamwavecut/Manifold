@@ -143,8 +143,9 @@ differences:
   a running Brain to prove it.
 - With an OpenRouter-compatible `OPENAI_BASE_URL`, set
   `OPENAI_CHAT_EXTRA_BODY` (see `.env.example`) before starting the stack.
-  Brain merges it into its chat calls and OpenViking passes it as
-  `vlm.extra_request_body`; OpenViking's own `thinking: false` only reaches
+  Brain merges it into its chat calls, and OpenViking's start renders it into
+  `vlm.extra_request_body` (`deploy/openviking/render-config.py`, because the
+  template must stay valid JSON before placeholder expansion); OpenViking's own `thinking: false` only reaches
   DashScope endpoints. Without it, hybrid reasoning models spend the small
   output budgets of rerank and classification calls on hidden reasoning and
   return no JSON, and OpenViking's semantic summaries run long enough for

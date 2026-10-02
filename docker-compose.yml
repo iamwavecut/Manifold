@@ -55,9 +55,13 @@ services:
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
-      OPENVIKING_VLM_EXTRA_BODY: ${OPENAI_CHAT_EXTRA_BODY:-{}}
+      OPENVIKING_VLM_EXTRA_BODY: ${OPENAI_CHAT_EXTRA_BODY:-}
+    # The rendered config gains vlm.extra_request_body from the environment;
+    # see deploy/openviking/render-config.py.
+    entrypoint: ["python", "/app/.openviking/render-config.py", "/app/.openviking/ov.template.conf"]
     volumes:
-      - ./deploy/openviking/ov.conf:/app/.openviking/ov.conf:ro
+      - ./deploy/openviking/ov.conf:/app/.openviking/ov.template.conf:ro
+      - ./deploy/openviking/render-config.py:/app/.openviking/render-config.py:ro
       - openviking-data:/app/.openviking/data
     networks:
       - private
