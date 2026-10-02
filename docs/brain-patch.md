@@ -1,10 +1,10 @@
-# INITE Brain v2.2.0 integration
+# INITE Brain v2.3.0 integration
 
-Manifold builds INITE Brain from tag `v2.2.0`, pinned to commit
-`b19b209fec92069d91df22af61db18b0a810ce82`. The exact ref, base-image
+Manifold builds INITE Brain from tag `v2.3.0`, pinned to commit
+`0f3d16db0d175794b79b73ef186351aa9f2da3c0`. The exact ref, base-image
 digests, and patch application order live in
-[`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile). The build uses the
-Node 22 runtime from that release's upstream Dockerfile and an Alpine source
+[`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile). The build uses Node 22 LTS,
+the major line of that release's upstream Dockerfile, and an Alpine source
 stage pinned by digest.
 
 The downstream patches are narrow and covered by the patch-application check
@@ -13,11 +13,6 @@ in [CI](../.github/workflows/ci.yml):
 - [`openai-base-url.patch`](../deploy/brain/openai-base-url.patch) passes
   `OPENAI_BASE_URL` into the shared OpenAI client and accepts API keys that do
   not use OpenAI's `sk-` prefix.
-- [`scoped-session-recovery.patch`](../deploy/brain/scoped-session-recovery.patch)
-  restores the scoped SurrealDB session after websocket reconnects. It retries
-  a bounded signin, replaces a dead connection when needed, and restores its
-  namespace/database selection. First-boot schema migrations still use the
-  root connection before the scoped user is available.
 - [`document-origin-identity.patch`](../deploy/brain/document-origin-identity.patch)
   salts the content hash with canonical Manifold document/revision identity.
   Retries for one revision remain idempotent, while different documents or
@@ -40,9 +35,9 @@ in [CI](../.github/workflows/ci.yml):
   commit pipeline. The conditional header write still preserves `purged`.
 - [`worker-startup-order.patch`](../deploy/brain/worker-startup-order.patch)
   starts the worker scheduler in `onApplicationBootstrap`, after module-owned
-  job handlers register in `onModuleInit`. This prevents an early lease tick
-  from setting the one-time loop-start guard before the document handlers are
-  available.
+  job handlers register in `onModuleInit`. In v2.3 an early lease tick with no
+  handlers retries later, but one with some handlers starts only those and
+  never the ones registered afterwards.
 - [`corroborated-commit-ref.patch`](../deploy/brain/corroborated-commit-ref.patch)
   makes Manifold document candidates reference the resolver's serving fact
   when an identical claim corroborates it. Brain retains the corroborating
@@ -60,21 +55,31 @@ in [CI](../.github/workflows/ci.yml):
   model output. Reprocess earlier false-success runs through new revisions.
 
 - [`fatal-signal-default.patch`](../deploy/brain/fatal-signal-default.patch)
-  removes Nest's all-signal shutdown hooks. Upstream registers them for
-  `SIGSEGV`, `SIGBUS`, `SIGILL`, and `SIGFPE` as well; on September 30 a real
-  segmentation fault after an onnxruntime worker crash then re-faulted about
-  3,000 times per second while Nest closed the HTTP listener, leaving Brain
-  without a port and unhealthy for two days. Fatal signals now keep their
-  default action so the container exits and restarts. `SIGTERM` and `SIGINT`
-  keep the existing bounded graceful shutdown, which closes the application
-  once.
+  limits Nest's shutdown hooks to `SIGTERM` and `SIGINT`. Upstream calls
+  `enableShutdownHooks()` without a list, which also subscribes to `SIGSEGV`,
+  `SIGBUS`, `SIGILL`, and `SIGFPE`. On September 30 a real segmentation fault
+  after an onnxruntime worker crash then re-faulted about 3,000 times per
+  second while Nest closed the HTTP listener, leaving Brain without a port and
+  unhealthy for two days. Fatal signals now keep their default action so the
+  container exits and restarts.
+- [`openai-chat-extra-body.patch`](../deploy/brain/openai-chat-extra-body.patch)
+  merges the JSON object in `OPENAI_CHAT_EXTRA_BODY` into every
+  chat-completions request; fields a call sets itself win, and an invalid value
+  fails boot validation. Brain treats non-OpenAI model names as deterministic
+  and never sets their reasoning controls, so a hybrid model behind OpenRouter
+  runs its default reasoning. Measured on 2026-10-02 with
+  `deepseek/deepseek-v4.1-flash`, the reranker's 256-token json_schema call
+  spent all 256 tokens on reasoning and returned no content (24–32 s); with
+  `{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}` it
+  returned schema-valid JSON in about 3 s. `require_parameters` keeps strict
+  json_schema calls off providers that silently ignore it.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
 `originUri` of `manifold://documents/<slug>@rN`. Brain returns its durable
 document ID; the Manifold worker stores that ID as its checkpoint and polls
 `GET /v1/documents/:id` and `GET /v1/documents/:id/candidates`. It considers
-the run ledger and candidate statuses when deciding completion. Brain v2.2 can
+the run ledger and candidate statuses when deciding completion. Brain can
 leave the document header at `indexing` after all runs and candidates have
 settled, so the header status alone is not a completion signal.
 The worker polls every ten seconds. Rate-limited durable submissions, polls,
@@ -112,23 +117,23 @@ To verify the patch chain against a clean source checkout:
 
 ```bash
 brain_src=$(mktemp -d)
-git clone --depth 1 --branch v2.2.0 https://github.com/inite-ai/inite-brain-service.git "$brain_src"
-test "$(git -C "$brain_src" rev-parse HEAD)" = b19b209fec92069d91df22af61db18b0a810ce82
+git clone --depth 1 --branch v2.3.0 https://github.com/inite-ai/inite-brain-service.git "$brain_src"
+test "$(git -C "$brain_src" rev-parse HEAD)" = 0f3d16db0d175794b79b73ef186351aa9f2da3c0
 git -C "$brain_src" apply --check "$PWD/deploy/brain/openai-base-url.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/openai-base-url.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/scoped-session-recovery.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/scoped-session-recovery.patch"
 git -C "$brain_src" apply --check "$PWD/deploy/brain/document-origin-identity.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/document-origin-identity.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/failed-run-retry.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/failed-run-retry.patch"
 git -C "$brain_src" apply --check "$PWD/deploy/brain/worker-startup-order.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/worker-startup-order.patch"
 git -C "$brain_src" apply --check "$PWD/deploy/brain/corroborated-commit-ref.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/corroborated-commit-ref.patch"
+git -C "$brain_src" apply --check "$PWD/deploy/brain/failed-run-retry.patch"
+git -C "$brain_src" apply "$PWD/deploy/brain/failed-run-retry.patch"
 git -C "$brain_src" apply --check "$PWD/deploy/brain/extraction-completion.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/extraction-completion.patch"
 git -C "$brain_src" apply --check "$PWD/deploy/brain/fatal-signal-default.patch"
 git -C "$brain_src" apply "$PWD/deploy/brain/fatal-signal-default.patch"
+git -C "$brain_src" apply --check "$PWD/deploy/brain/openai-chat-extra-body.patch"
+git -C "$brain_src" apply "$PWD/deploy/brain/openai-chat-extra-body.patch"
 git -C "$brain_src" diff --check
 ```

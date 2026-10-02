@@ -1,8 +1,8 @@
 diff --git a/brain-landing/public/openapi.json b/brain-landing/public/openapi.json
-index e314286..2ffc452 100644
+index 049d8dc..658c418 100644
 --- a/brain-landing/public/openapi.json
 +++ b/brain-landing/public/openapi.json
-@@ -2922,6 +2922,63 @@
+@@ -7103,6 +7103,63 @@
          ],
          "type": "object"
        },
@@ -66,7 +66,7 @@ index e314286..2ffc452 100644
        "SetPricingRequest": {
          "additionalProperties": false,
          "properties": {
-@@ -4461,6 +4518,70 @@
+@@ -12492,6 +12549,70 @@
          ]
        }
      },
@@ -138,10 +138,10 @@ index e314286..2ffc452 100644
        "get": {
          "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
 diff --git a/docs/openapi.json b/docs/openapi.json
-index e314286..2ffc452 100644
+index 049d8dc..658c418 100644
 --- a/docs/openapi.json
 +++ b/docs/openapi.json
-@@ -2922,6 +2922,63 @@
+@@ -7103,6 +7103,63 @@
          ],
          "type": "object"
        },
@@ -205,7 +205,7 @@ index e314286..2ffc452 100644
        "SetPricingRequest": {
          "additionalProperties": false,
          "properties": {
-@@ -4461,6 +4518,70 @@
+@@ -12492,6 +12549,70 @@
          ]
        }
      },
@@ -277,10 +277,10 @@ index e314286..2ffc452 100644
        "get": {
          "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
 diff --git a/scripts/build-openapi.ts b/scripts/build-openapi.ts
-index 6cf2f69..a4b0ccd 100644
+index 0d16568..5f363e1 100644
 --- a/scripts/build-openapi.ts
 +++ b/scripts/build-openapi.ts
-@@ -90,6 +90,8 @@ import {
+@@ -185,6 +185,8 @@ import {
    IngestDocumentAsyncResponseSchema,
    IngestDocumentRequestSchema,
    IngestDocumentSyncResponseSchema,
@@ -289,7 +289,7 @@ index 6cf2f69..a4b0ccd 100644
    SubmitCandidatesRequestSchema,
    SubmitCandidatesResponseSchema,
    SubmittedEntitySchema,
-@@ -185,6 +187,8 @@ const ZOD_COMPONENTS: Record<string, z.ZodType> = {
+@@ -364,6 +366,8 @@ const ZOD_COMPONENTS: Record<string, z.ZodType> = {
    IngestDocumentAsyncResponse: IngestDocumentAsyncResponseSchema,
    IngestDocumentRequest: IngestDocumentRequestSchema,
    IngestDocumentSyncResponse: IngestDocumentSyncResponseSchema,
@@ -298,7 +298,7 @@ index 6cf2f69..a4b0ccd 100644
    SubmitCandidatesRequest: SubmitCandidatesRequestSchema,
    SubmitCandidatesResponse: SubmitCandidatesResponseSchema,
    SubmittedEntity: SubmittedEntitySchema,
-@@ -797,6 +801,36 @@ function documentsPaths(): Json {
+@@ -1480,6 +1484,36 @@ function documentsPaths(): Json {
          },
        }),
      },
@@ -336,7 +336,7 @@ index 6cf2f69..a4b0ccd 100644
        get: operation({
          operationId: 'listDocumentCandidates',
 diff --git a/src/contracts/documents/documents.schema.ts b/src/contracts/documents/documents.schema.ts
-index b39cd7c..468ecea 100644
+index 6503ceb..c8e9673 100644
 --- a/src/contracts/documents/documents.schema.ts
 +++ b/src/contracts/documents/documents.schema.ts
 @@ -86,6 +86,27 @@ export const IngestDocumentRequestSchema = z.object({
@@ -368,7 +368,7 @@ index b39cd7c..468ecea 100644
  export const CommitCountsSchema = z.object({
    pending: z.number().int().nonnegative(),
 diff --git a/src/documents/candidate-store.service.ts b/src/documents/candidate-store.service.ts
-index 0cf6f61..91a070a 100644
+index 70e9b8b..face05c 100644
 --- a/src/documents/candidate-store.service.ts
 +++ b/src/documents/candidate-store.service.ts
 @@ -65,6 +65,12 @@ interface RunLedgerRow {
@@ -414,7 +414,7 @@ index 0cf6f61..91a070a 100644
     * Reap non-terminal indexer_run rows past the stale window:
     *   - 'running' — a worker that crashed between createRun and finalizeRun
 diff --git a/src/documents/document-async.service.ts b/src/documents/document-async.service.ts
-index f8b9174..5dd3d0e 100644
+index d6be915..c0be26e 100644
 --- a/src/documents/document-async.service.ts
 +++ b/src/documents/document-async.service.ts
 @@ -1,4 +1,4 @@
@@ -423,7 +423,7 @@ index f8b9174..5dd3d0e 100644
  import { JobClaimService } from '../jobs/job-claim.service';
  import { WorkerLoopService, JobContext } from '../jobs/worker-loop.service';
  import { GENERAL_INDEXER_ID } from '../indexers/candidate.types';
-@@ -21,6 +21,15 @@ export interface DocumentAsyncResponse {
+@@ -28,6 +28,15 @@ export interface DocumentAsyncResponse {
    }>;
  }
  
@@ -439,7 +439,7 @@ index f8b9174..5dd3d0e 100644
  /**
   * Queue-driven document ingest: one `index_document` job per selected
   * indexer, each finishing job enqueues a `commit_document` that DEFERS
-@@ -88,7 +97,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -119,7 +128,7 @@ export class DocumentAsyncService implements OnModuleInit {
        ...dedicated.map((b) => ({ packId: b.indexerId, packVersion: b.packVersion })),
      ];
  
@@ -448,7 +448,7 @@ index f8b9174..5dd3d0e 100644
      const runs: DocumentAsyncResponse['runs'] = [];
      for (const spec of specs) {
        // Pre-create the run ledger row as 'pending' BEFORE enqueuing, so
-@@ -136,11 +145,88 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -167,11 +176,88 @@ export class DocumentAsyncService implements OnModuleInit {
      };
    }
  
@@ -537,7 +537,7 @@ index f8b9174..5dd3d0e 100644
      const chunks = await this.store.getChunks(ctx.companyId, docId);
      if (chunks.length === 0) return { skipped: 'no_stored_content' };
  
-@@ -151,15 +237,18 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -182,15 +268,18 @@ export class DocumentAsyncService implements OnModuleInit {
          doc,
          chunks,
          packId,
@@ -559,7 +559,7 @@ index f8b9174..5dd3d0e 100644
      }
      return { packId, status };
    }
-@@ -168,6 +257,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -199,6 +288,7 @@ export class DocumentAsyncService implements OnModuleInit {
      const docId = String(ctx.payload?.docId ?? '');
      const doc = await this.store.getById(ctx.companyId, docId);
      if (!doc) return { skipped: 'missing_document' };
@@ -567,7 +567,7 @@ index f8b9174..5dd3d0e 100644
      const result = await this.commit.commitIfRunsSettled(ctx.companyId, doc);
      if (result.deferred) return { deferred: true };
      if (result.committed) {
-@@ -182,7 +272,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -213,7 +303,7 @@ export class DocumentAsyncService implements OnModuleInit {
  
    private async enqueueCommit(
      companyId: string,
@@ -576,7 +576,7 @@ index f8b9174..5dd3d0e 100644
    ): Promise<void> {
      if (!this.claim) return;
      try {
-@@ -192,7 +282,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -223,7 +313,7 @@ export class DocumentAsyncService implements OnModuleInit {
          jobType: 'commit_document',
          companyId,
          triggeredBy: 'manual',
@@ -585,7 +585,7 @@ index f8b9174..5dd3d0e 100644
          payload: { docId: p.docId },
        });
      } catch (e) {
-@@ -205,6 +295,13 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -236,6 +326,13 @@ export class DocumentAsyncService implements OnModuleInit {
      doc: StoredDocument,
      status: string,
    ): Promise<void> {
@@ -601,10 +601,10 @@ index f8b9174..5dd3d0e 100644
    }
  }
 diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
-index 6a70d5a..0eafd50 100644
+index ca4f3a9..88787be 100644
 --- a/src/documents/document-store.service.ts
 +++ b/src/documents/document-store.service.ts
-@@ -255,6 +255,23 @@ export class DocumentStoreService {
+@@ -337,6 +337,23 @@ export class DocumentStoreService {
      });
    }
  
@@ -629,7 +629,7 @@ index 6a70d5a..0eafd50 100644
     * Explicit erasure: delete the chunk rows, keep the header + contentHash
     * (re-ingest of the same text still dedupes; committed facts keep a
 diff --git a/src/documents/documents-ingest.controller.ts b/src/documents/documents-ingest.controller.ts
-index cacc738..6edca55 100644
+index 20ef5dd..8226701 100644
 --- a/src/documents/documents-ingest.controller.ts
 +++ b/src/documents/documents-ingest.controller.ts
 @@ -2,6 +2,8 @@ import {
@@ -707,10 +707,10 @@ index 0000000..db24bd6
 +  retryKey!: string;
 +}
 diff --git a/src/documents/indexer-dispatch.service.ts b/src/documents/indexer-dispatch.service.ts
-index ed0ed01..81373e3 100644
+index 8a7f928..a6c6528 100644
 --- a/src/documents/indexer-dispatch.service.ts
 +++ b/src/documents/indexer-dispatch.service.ts
-@@ -82,15 +82,28 @@ export class IndexerDispatchService {
+@@ -84,15 +84,28 @@ export class IndexerDispatchService {
      doc: StoredDocument;
      chunks: DocumentChunk[];
      packId: string;
@@ -740,10 +740,10 @@ index ed0ed01..81373e3 100644
        // Backfill for an external pack: don't burn LLM calls extracting
        // with its vocabulary in-process — register the work item and let
 diff --git a/src/policy/action-registry.ts b/src/policy/action-registry.ts
-index 27acc3d..77c63e6 100644
+index da7be5a..17f3a24 100644
 --- a/src/policy/action-registry.ts
 +++ b/src/policy/action-registry.ts
-@@ -91,6 +91,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
+@@ -106,6 +106,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
    'rest.documents.get': { kind: 'read', family: 'rest', title: 'Get document' },
    'rest.documents.candidates': { kind: 'read', family: 'rest', title: 'List candidates' },
    'rest.documents.commit': { kind: 'write', family: 'rest', title: 'Commit candidates' },
@@ -1405,6 +1405,18 @@ index 0000000..98af51f
 +    expect(await indexJobs(docId)).toHaveLength(2);
 +  });
 +});
+diff --git a/test/document-write-origin.unit-spec.ts b/test/document-write-origin.unit-spec.ts
+index ded22ed..4734689 100644
+--- a/test/document-write-origin.unit-spec.ts
++++ b/test/document-write-origin.unit-spec.ts
+@@ -43,6 +43,7 @@ function makeAsync(opts: {
+       };
+     },
+     setStatus: async () => undefined,
++    setStatusIfContentAvailable: async () => true,
+   };
+   const dispatch = { selectDedicated: async () => [], planExternal: async () => [] };
+   const candidates = { ensureRunPending: async () => undefined };
 diff --git a/test/indexer-dispatch-retry-version.unit-spec.ts b/test/indexer-dispatch-retry-version.unit-spec.ts
 new file mode 100644
 index 0000000..b6149dc
@@ -1470,12 +1482,12 @@ index 0000000..b6149dc
 +  });
 +});
 diff --git a/test/openapi-doc.unit-spec.ts b/test/openapi-doc.unit-spec.ts
-index 9066b8c..2b74219 100644
+index 6a086a4..599ca5c 100644
 --- a/test/openapi-doc.unit-spec.ts
 +++ b/test/openapi-doc.unit-spec.ts
-@@ -44,6 +44,7 @@ const PLATFORM_OPERATIONS: Array<[string, string]> = [
-   ['/v1/ingest/document', 'post'],
-   ['/v1/ingest/evidence-asset', 'post'],
+@@ -79,6 +79,7 @@ const PLATFORM_OPERATIONS: Array<[string, string]> = [
+   // Byte custody (MM-7, EVIDENCE_BLOB_UPLOAD_ENABLED — 404 until on).
+   ['/v1/ingest/evidence-blob', 'post'],
    ['/v1/documents/{id}', 'get'],
 +  ['/v1/documents/{id}/retry', 'post'],
    ['/v1/documents/{id}/candidates', 'get'],

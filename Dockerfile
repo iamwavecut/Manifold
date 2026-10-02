@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:26.8.2-alpine3.24 AS web
+FROM node:26.10.0-alpine3.24 AS web
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH}" \
     version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
     && go build -trimpath -ldflags="-s -w -X main.version=${version} -X main.commit=${COMMIT}" -o /out/manifold ./cmd/manifold
 
-FROM alpine:3.24.1
+FROM alpine:3.24.2
 RUN apk add --no-cache ca-certificates tzdata wget \
     && addgroup -S manifold \
     && adduser -S -G manifold -h /var/lib/manifold manifold \

@@ -31,7 +31,7 @@ jobs:
           cache: true
       - uses: actions/setup-node@v7
         with:
-          node-version: "26.8.2"
+          node-version: "26.10.0"
           cache: npm
       - run: npm ci
       - run: npm run check
@@ -62,24 +62,24 @@ jobs:
         with:
           python-version: "3.14.7"
       - run: python3 scripts/test-deploy-production.py
-      - run: git clone --branch v2.2.0 --depth 1 https://github.com/inite-ai/inite-brain-service.git /tmp/brain
-      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = b19b209fec92069d91df22af61db18b0a810ce82
+      - run: git clone --branch v2.3.0 --depth 1 https://github.com/inite-ai/inite-brain-service.git /tmp/brain
+      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = 0f3d16db0d175794b79b73ef186351aa9f2da3c0
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/openai-base-url.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/openai-base-url.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/scoped-session-recovery.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/scoped-session-recovery.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/document-origin-identity.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/document-origin-identity.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/worker-startup-order.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/worker-startup-order.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/fatal-signal-default.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/fatal-signal-default.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/openai-chat-extra-body.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/openai-chat-extra-body.patch"
       - run: git -C /tmp/brain diff --check
 
   integration:

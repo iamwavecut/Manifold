@@ -4,9 +4,9 @@ Manifold integrates with, links to, or distributes components from these origina
 
 | Component | Pinned version | Original repository | License |
 | --- | --- | --- | --- |
-| OpenViking | v0.4.20 | <https://github.com/volcengine/OpenViking> | AGPL-3.0 |
-| INITE Brain | v2.2.0 | <https://github.com/inite-ai/inite-brain-service> | AGPL-3.0-or-later |
-| SurrealDB | v3.2.4 | <https://github.com/surrealdb/surrealdb> | Business Source License 1.1 / upstream terms |
+| OpenViking | v0.4.22 | <https://github.com/volcengine/OpenViking> | AGPL-3.0 |
+| INITE Brain | v2.3.0 | <https://github.com/inite-ai/inite-brain-service> | AGPL-3.0-or-later |
+| SurrealDB | v3.3.0 | <https://github.com/surrealdb/surrealdb> | Business Source License 1.1 / upstream terms |
 | Huma | v2.39.1 | <https://github.com/danielgtaylor/huma> | MIT |
 | Mithril.js | v2.3.8 | <https://github.com/MithrilJS/mithril.js> | MIT |
 | rs/xid | v1.6.0 | <https://github.com/rs/xid> | MIT |

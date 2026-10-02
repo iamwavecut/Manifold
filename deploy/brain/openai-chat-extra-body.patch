@@ -1,0 +1,165 @@
+diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
+index 708e7ab..15030d6 100644
+--- a/src/ai/openai-client.ts
++++ b/src/ai/openai-client.ts
+@@ -38,10 +38,48 @@ export function chatModel(config: ConfigService): string {
+   return config.get<string>('OPENAI_CHAT_MODEL', DEFAULT_CHAT_MODEL);
+ }
+ 
++/**
++ * Fields merged into every chat-completions request body, for an
++ * OpenAI-compatible router whose controls live outside the OpenAI schema —
++ * OpenRouter's `reasoning` switch and `provider.require_parameters`, which
++ * keeps a strict json_schema call off providers that silently drop it.
++ * A field the call sets itself wins. Unset means a byte-identical request.
++ */
++export function chatExtraBody(raw: string | undefined): Record<string, unknown> | undefined {
++  const trimmed = raw?.trim();
++  if (!trimmed) return undefined;
++  const parsed: unknown = JSON.parse(trimmed);
++  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
++    throw new Error('OPENAI_CHAT_EXTRA_BODY must be a JSON object');
++  }
++  return parsed as Record<string, unknown>;
++}
++
++function requestUrl(input: string | URL | Request): string {
++  if (typeof input === 'string') return input;
++  return input instanceof URL ? input.href : input.url;
++}
++
++function withChatExtraBody(extra: Record<string, unknown>) {
++  return (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
++    if (
++      init?.method === 'POST' &&
++      typeof init.body === 'string' &&
++      new URL(requestUrl(input)).pathname.endsWith('/chat/completions')
++    ) {
++      const body = JSON.parse(init.body) as Record<string, unknown>;
++      init = { ...init, body: JSON.stringify({ ...extra, ...body }) };
++    }
++    return fetch(input, init);
++  };
++}
++
+ function buildClient(config: ConfigService, apiKey: string): OpenAI {
++  const extra = chatExtraBody(config.get<string>('OPENAI_CHAT_EXTRA_BODY'));
+   return new OpenAI({
+     apiKey,
+     baseURL: config.get<string>('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
++    ...(extra ? { fetch: withChatExtraBody(extra) } : {}),
+     timeout: parseInt(config.get<string>('OPENAI_TIMEOUT_MS', '30000'), 10),
+     maxRetries: parseInt(config.get<string>('OPENAI_MAX_RETRIES', '3'), 10),
+   });
+diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
+index acf722c..3928fab 100644
+--- a/src/common/env-validation.ts
++++ b/src/common/env-validation.ts
+@@ -4,6 +4,7 @@ import {
+   validateEvidenceStorageEnv,
+   validateOcrEnvValues,
+ } from './evidence-flags';
++import { chatExtraBody } from '../ai/openai-client';
+ import { KNOWN_BOOLEAN_FLAGS } from './known-boolean-flags';
+ import { isProcessRole, normalizeProcessRole } from './process-role';
+ 
+@@ -33,6 +34,11 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
+   // planner all build an OpenAI client eagerly in their constructors, so a
+   // key-less boot fails there instead of here.
+   required({ env, name: 'OPENAI_API_KEY', errors });
++  try {
++    chatExtraBody(env.OPENAI_CHAT_EXTRA_BODY);
++  } catch (e) {
++    errors.push(`OPENAI_CHAT_EXTRA_BODY is invalid: ${(e as Error).message}`);
++  }
+ 
+   // ── Auth ─────────────────────────────────────────────────────────
+   // BRAIN_API_KEYS is required, but [] is acceptable in dev (no callers).
+diff --git a/test/openai-chat-extra-body.unit-spec.ts b/test/openai-chat-extra-body.unit-spec.ts
+new file mode 100644
+index 0000000..454adae
+--- /dev/null
++++ b/test/openai-chat-extra-body.unit-spec.ts
+@@ -0,0 +1,82 @@
++import { ConfigService } from '@nestjs/config';
++import { createOpenAiClient } from '../src/ai/openai-client';
++import { validateEnv } from '../src/common/env-validation';
++
++const completion = {
++  id: 'c',
++  object: 'chat.completion',
++  created: 0,
++  model: 'm',
++  choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: '{}' } }],
++};
++const embedding = { object: 'list', data: [{ object: 'embedding', index: 0, embedding: [0] }] };
++
++function client(extra?: string) {
++  return createOpenAiClient(
++    new ConfigService({
++      OPENAI_API_KEY: 'router-key',
++      OPENAI_BASE_URL: 'http://router.test/api/v1',
++      OPENAI_MAX_RETRIES: '0',
++      ...(extra === undefined ? {} : { OPENAI_CHAT_EXTRA_BODY: extra }),
++    }),
++  )!;
++}
++
++describe('OPENAI_CHAT_EXTRA_BODY', () => {
++  let fetchSpy: jest.SpyInstance;
++  beforeEach(() => {
++    fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
++      const url = input instanceof Request ? input.url : String(input);
++      const body = url.endsWith('/embeddings') ? embedding : completion;
++      return new Response(JSON.stringify(body), {
++        headers: { 'content-type': 'application/json' },
++      });
++    });
++  });
++  afterEach(() => fetchSpy.mockRestore());
++
++  const sentBody = (call = 0) =>
++    JSON.parse(String((fetchSpy.mock.calls[call]![1] as RequestInit).body)) as Record<
++      string,
++      unknown
++    >;
++
++  it('merges router controls into chat completions, with call fields winning', async () => {
++    await client(
++      '{"reasoning":{"enabled":false},"provider":{"require_parameters":true},"temperature":1}',
++    ).chat.completions.create({
++      model: 'deepseek/deepseek-v4.1-flash',
++      messages: [{ role: 'user', content: 'rank' }],
++      temperature: 0,
++    });
++    expect(sentBody()).toMatchObject({
++      model: 'deepseek/deepseek-v4.1-flash',
++      reasoning: { enabled: false },
++      provider: { require_parameters: true },
++      temperature: 0,
++    });
++  });
++
++  it('leaves other endpoints and unset configuration unchanged', async () => {
++    await client('{"reasoning":{"enabled":false}}').embeddings.create({
++      model: 'e',
++      input: 'x',
++    });
++    expect(sentBody()).not.toHaveProperty('reasoning');
++    await client().chat.completions.create({ model: 'm', messages: [] });
++    expect(sentBody(1)).not.toHaveProperty('reasoning');
++  });
++
++  it.each(['[]', '"text"', '{broken'])('rejects %s at boot', (raw) => {
++    expect(() =>
++      validateEnv({
++        NODE_ENV: 'test',
++        SURREALDB_URL: 'ws://db:8000',
++        SURREALDB_USERNAME: 'u',
++        SURREALDB_PASSWORD: 'p',
++        OPENAI_API_KEY: 'router-key',
++        OPENAI_CHAT_EXTRA_BODY: raw,
++      }),
++    ).toThrow('OPENAI_CHAT_EXTRA_BODY');
++  });
++});

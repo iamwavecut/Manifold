@@ -1,5 +1,5 @@
 diff --git a/src/jobs/worker-loop.service.ts b/src/jobs/worker-loop.service.ts
-index f4f9cca..de73792 100644
+index aff54e5..0988202 100644
 --- a/src/jobs/worker-loop.service.ts
 +++ b/src/jobs/worker-loop.service.ts
 @@ -2,7 +2,7 @@ import {
@@ -11,7 +11,7 @@ index f4f9cca..de73792 100644
    BeforeApplicationShutdown,
  } from '@nestjs/common';
  import { LeaderLeaseService } from './leader-lease.service';
-@@ -27,7 +27,7 @@ export type { JobContext, JobHandler } from './worker-loop.types';
+@@ -34,7 +34,7 @@ const DISPATCH_DRAIN_MS = 12_000;
   * up. Cadence/enabled flags read from the environment.
   */
  @Injectable()
@@ -20,7 +20,7 @@ index f4f9cca..de73792 100644
    private readonly logger = new Logger(WorkerLoopService.name);
    private readonly handlers = new Map<JobType, RegisteredHandler>();
    private readonly enabled = envFlagNotDisabled(process.env.WORKER_LOOP_ENABLED);
-@@ -90,7 +90,7 @@ export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdow
+@@ -101,7 +101,7 @@ export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdow
      return this.isLeader;
    }
  
@@ -29,7 +29,7 @@ index f4f9cca..de73792 100644
      if (!this.enabled) {
        this.logger.log('Worker loop disabled (WORKER_LOOP_ENABLED=0)');
        return;
-@@ -99,12 +99,11 @@ export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdow
+@@ -110,12 +110,11 @@ export class WorkerLoopService implements OnModuleInit, BeforeApplicationShutdow
        this.logger.warn('JobClaimService not available — worker loop inert');
        return;
      }
@@ -45,31 +45,52 @@ index f4f9cca..de73792 100644
      );
      this.poller.startDecay();
    }
+diff --git a/test/worker-loop-leadership.unit-spec.ts b/test/worker-loop-leadership.unit-spec.ts
+index 359ddaf..251e580 100644
+--- a/test/worker-loop-leadership.unit-spec.ts
++++ b/test/worker-loop-leadership.unit-spec.ts
+@@ -151,7 +151,7 @@ describe('WorkerLoopService — shutdown drains dispatches before releasing the
+   }
+ 
+   async function becomeLeader(svc: WorkerLoopService) {
+-    await svc.onModuleInit();
++    await svc.onApplicationBootstrap();
+     await jest.advanceTimersByTimeAsync(100);
+     for (let i = 0; i < 5; i++) await Promise.resolve();
+     expect(svc.leader()).toBe(true);
 diff --git a/test/worker-loop.unit-spec.ts b/test/worker-loop.unit-spec.ts
-index 99e9b84..4cae46b 100644
+index be1cd65..76360b1 100644
 --- a/test/worker-loop.unit-spec.ts
 +++ b/test/worker-loop.unit-spec.ts
-@@ -98,6 +98,53 @@ describe('WorkerLoopService.register', () => {
+@@ -100,6 +100,63 @@ describe('WorkerLoopService.register', () => {
    });
  });
  
 +describe('WorkerLoopService startup lifecycle', () => {
-+  it('starts a handler registered by slow module initialization exactly once', async () => {
++  it('starts every handler, including one registered by slow module initialization', async () => {
 +    const priorEnabled = process.env.WORKER_LOOP_ENABLED;
 +    const priorRenewInterval = process.env.WORKER_LOOP_LEASE_RENEW_MS;
 +    process.env.WORKER_LOOP_ENABLED = '1';
 +    process.env.WORKER_LOOP_LEASE_RENEW_MS = '30000';
 +    jest.useFakeTimers();
 +
-+    const runLoop = jest.fn();
++    const runLoop = jest.fn(
++      (_reg: unknown, control: { signal: AbortSignal }) =>
++        new Promise<void>((resolve) => {
++          control.signal.addEventListener('abort', () => resolve(), { once: true });
++        }),
++    );
 +    const poller = {
 +      hasClaim: true,
 +      startDecay: jest.fn(),
 +      stopDecay: jest.fn(),
 +      runLoop,
++      activeClaims: () => [],
++      releaseActiveClaims: jest.fn(async () => 0),
 +    };
 +    const lease = {
-+      tryAcquire: jest.fn(async () => true),
++      acquire: jest.fn(async () => 1),
++      isHeld: jest.fn(async () => true),
 +      release: jest.fn(async () => undefined),
 +    };
 +    const svc = new WorkerLoopService(poller as never, lease as never);
@@ -79,6 +100,7 @@ index 99e9b84..4cae46b 100644
 +    };
 +
 +    try {
++      svc.register('compaction', async () => ({}));
 +      await lifecycle.onModuleInit?.();
 +      // Model another provider still initializing after WorkerLoop's hook.
 +      await jest.advanceTimersByTimeAsync(5_000);
@@ -87,8 +109,9 @@ index 99e9b84..4cae46b 100644
 +      await jest.advanceTimersByTimeAsync(5_000);
 +      await jest.advanceTimersByTimeAsync(30_000);
 +
-+      expect(runLoop).toHaveBeenCalledTimes(1);
-+      expect(runLoop.mock.calls[0]?.[0].jobType).toBe('index_document');
++      expect(
++        runLoop.mock.calls.map(([reg]) => (reg as { jobType: string }).jobType).sort(),
++      ).toEqual(['compaction', 'index_document']);
 +    } finally {
 +      await svc.beforeApplicationShutdown();
 +      jest.useRealTimers();

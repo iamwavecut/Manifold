@@ -17,13 +17,13 @@ actual volume names with `docker volume ls` first.
 ```bash
 install -d -m 700 backups
 docker compose stop manifold brain openviking surrealdb
-docker run --rm -v manifold_manifold-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
+docker run --rm -v manifold_manifold-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
   tar -C /source -czf /backup/manifold-data.tgz .
-docker run --rm -v manifold_openviking-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
+docker run --rm -v manifold_openviking-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
   tar -C /source -czf /backup/openviking-data.tgz .
-docker run --rm -v manifold_surrealdb-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
+docker run --rm -v manifold_surrealdb-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
   tar -C /source -czf /backup/surrealdb-data.tgz .
-docker run --rm -v manifold_brain-cache:/source:ro -v "$PWD/backups":/backup alpine:3.24.1 \
+docker run --rm -v manifold_brain-cache:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
   tar -C /source -czf /backup/brain-cache.tgz .
 docker compose start surrealdb openviking brain manifold
 ```
@@ -121,6 +121,37 @@ Brain's `/health` stays successful while SurrealDB is unreachable, so the
 watchdog reacts to a wedged process rather than to a dependency outage. The
 log of the restarted container contains the watchdog line, and its restart
 count increases; investigate both instead of treating the restart as recovery.
+
+## Data version 3 migration
+
+This release moves Brain v2.2.0 to v2.3.0, SurrealDB v3.2.4 to v3.3.0 and
+OpenViking v0.4.20 to v0.4.22. Brain applies migrations 0130–0160 on startup
+and SurrealDB 3.3 rewrites its storage on first open; neither can be undone by
+starting older images. `DATA_VERSION=3` therefore stops automatic deployment
+before the checkout or runtime changes. Follow the steps of the
+[data version 2 procedure](#brain-v2--data-version-2-migration) with these
+differences:
+
+- The cold four-volume backup in step 2 is the only rollback path. Verify the
+  archive hashes before any new image opens the volumes.
+- Brain v2.3 changes these defaults, which the Compose file sets explicitly:
+  `EXTRACTOR_SC_PASSES` (three extraction samples per document,
+  `BRAIN_EXTRACTOR_SC_PASSES`), and `EPISODE_SUBSTRATE_ENABLED=0`, because
+  Manifold sends documents rather than conversational turns.
+- `scoped-session-recovery.patch` is gone: v2.3 re-authenticates scoped
+  SurrealDB sessions itself. The integration run still restarts SurrealDB under
+  a running Brain to prove it.
+- With an OpenRouter-compatible `OPENAI_BASE_URL`, set
+  `OPENAI_CHAT_EXTRA_BODY` (see `.env.example`) before starting the stack.
+  Brain merges it into its chat calls, and OpenViking's start renders it into
+  `vlm.extra_request_body` (`deploy/openviking/render-config.py`, because the
+  template must stay valid JSON before placeholder expansion); OpenViking's own `thinking: false` only reaches
+  DashScope endpoints. Without it, hybrid reasoning models spend the small
+  output budgets of rerank and classification calls on hidden reasoning and
+  return no JSON, and OpenViking's semantic summaries run long enough for
+  waited writes to hit their 300-second timeout.
+- After acceptance, recover documents that are `partially_ready` from the
+  September 30 Brain outage through their jobs' retry action, one at a time.
 
 ## Brain v2 / data version 2 migration
 
