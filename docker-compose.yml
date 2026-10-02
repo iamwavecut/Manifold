@@ -98,6 +98,7 @@ services:
       EXTRACTOR_MAX_COMPLETION_TOKENS: ${BRAIN_EXTRACTOR_MAX_COMPLETION_TOKENS:-16384}
       THROTTLE_LIMIT: ${BRAIN_THROTTLE_LIMIT:-600}
       THROTTLE_EXPENSIVE_LIMIT: ${BRAIN_THROTTLE_EXPENSIVE_LIMIT:-600}
+      BRAIN_HEALTH_RESTART_FAILURES: ${BRAIN_HEALTH_RESTART_FAILURES:-20}
       DOCUMENT_INGEST_ENABLED: "1"
       DOCUMENT_MULTI_INDEXER_ENABLED: "1"
       FACTS_API_ENABLED: "1"
@@ -110,7 +111,9 @@ services:
       - private
       - provider
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      # Compose does not restart unhealthy containers. The probe terminates
+      # a Brain process that stops serving after it was healthy.
+      test: ["CMD", "brain-healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 8

@@ -35,6 +35,7 @@ services:
       DOCUMENT_MULTI_INDEXER_ENABLED: "1"
       FACTS_API_ENABLED: "1"
       CHAT_ROUTE_NLI_ENABLED: "false"
+      BRAIN_HEALTH_RESTART_FAILURES: 2
     depends_on:
       provider:
         condition: service_healthy

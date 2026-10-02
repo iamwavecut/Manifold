@@ -111,6 +111,63 @@ case "$recovery_context" in
 		;;
 esac
 
+# A Brain process that stops serving must be replaced, and fatal signals must
+# terminate it instead of starting a graceful shutdown that keeps it alive.
+brain_container=$(compose ps --quiet brain)
+brain_exec() {
+	compose exec -T brain sh -c "$1"
+}
+brain_restarts() {
+	docker inspect --format '{{.RestartCount}}' "$brain_container"
+}
+# Health status survives a restart, so require a successful probe that began
+# after the signal in addition to a higher restart count.
+wait_for_brain_replacement() {
+	previous=$1
+	signalled=$2
+	attempt=0
+	while :; do
+		probes=$(docker inspect --format \
+			'{{range .State.Health.Log}}{{if eq .ExitCode 0}}{{.Start.Unix}} {{end}}{{end}}' \
+			"$brain_container")
+		probed=0
+		for probe in $probes; do
+			if [ "$probe" -gt "$signalled" ]; then
+				probed=1
+			fi
+		done
+		if [ "$(brain_restarts)" -gt "$previous" ] && [ "$probed" -eq 1 ]; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		if [ "$attempt" -ge 180 ]; then
+			echo "Brain was not replaced after $3" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+}
+# shellcheck disable=SC2016 # expanded inside the Brain container
+caught=$(brain_exec 'pid=$(cat /proc/1/task/1/children); grep "^SigCgt:" /proc/${pid%% *}/status')
+caught=${caught##*[[:space:]]}
+# Nest's all-signal hooks add SIGILL, SIGBUS and SIGFPE (signals 4, 7 and 8)
+# together with SIGSEGV. Node itself already catches SIGSEGV for its
+# WebAssembly trap handler, so that case is checked by delivering it below.
+if [ $((0x$caught & 0xc8)) -ne 0 ]; then
+	echo "Brain intercepts fatal signals: SigCgt=$caught" >&2
+	exit 1
+fi
+restarts=$(brain_restarts)
+signalled=$(date +%s)
+# shellcheck disable=SC2016
+brain_exec 'kill -STOP $(cat /proc/1/task/1/children)'
+wait_for_brain_replacement "$restarts" "$signalled" "it stopped serving"
+restarts=$(brain_restarts)
+signalled=$(date +%s)
+# shellcheck disable=SC2016
+brain_exec 'kill -SEGV $(cat /proc/1/task/1/children)'
+wait_for_brain_replacement "$restarts" "$signalled" "a fatal signal"
+
 compose stop brain
 state_file=$(mktemp)
 MANIFOLD_URL=$url \

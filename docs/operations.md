@@ -108,6 +108,20 @@ document withdraws it from current public retrieval but does not purge those
 private Brain chunks. Review the [retention boundary](brain-patch.md) before
 production migration; the service key is not granted administrator scope.
 
+## Brain liveness
+
+Compose reports an unhealthy container but never restarts it. Brain's
+healthcheck (`deploy/brain/healthcheck.sh`) therefore acts as a watchdog: once
+the current Brain process has answered `/health`, `BRAIN_HEALTH_RESTART_FAILURES`
+consecutive failures (default 20, five minutes at the 15-second interval) send
+it `SIGTERM`, and a further failure sends `SIGKILL`. `restart: unless-stopped`
+then replaces the container. Failures before the first successful probe are
+not counted, so a slow startup or migration is left to `compose up --wait`.
+Brain's `/health` stays successful while SurrealDB is unreachable, so the
+watchdog reacts to a wedged process rather than to a dependency outage. The
+log of the restarted container contains the watchdog line, and its restart
+count increases; investigate both instead of treating the restart as recovery.
+
 ## Brain v2 / data version 2 migration
 
 This release moves Brain v0.8.1 to v2.2.0, SurrealDB v3.1.5 to v3.2.4 and

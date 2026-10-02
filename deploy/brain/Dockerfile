@@ -48,6 +48,7 @@ WORKDIR /app
 COPY --from=source /source/package.json /source/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/dist ./dist
+COPY --chmod=0755 deploy/brain/healthcheck.sh /usr/local/bin/brain-healthcheck
 RUN mkdir -p /app/.cache && chown node:node /app/.cache
 ENV NODE_ENV=production \
     TRANSFORMERS_CACHE=/app/.cache \
