@@ -11,6 +11,11 @@ import (
 	"github.com/iamwavecut/Manifold/internal/model"
 )
 
+// ErrWriteIndexingPending reports that a waited write stored the requested
+// content but its indexing outlived the wait. OpenViking finishes indexing
+// on its own; callers treat the write as complete.
+var ErrWriteIndexingPending = errors.New("openviking stored the content; indexing is still running")
+
 type OpenViking struct {
 	http      httpClient
 	writeHTTP httpClient
@@ -74,6 +79,9 @@ func (o *OpenViking) Write(ctx context.Context, uri, content string, create bool
 		body["timeout"] = (timeout - min(time.Second, timeout/10)).Seconds()
 	}
 	if err := o.writeHTTP.do(ctx, http.MethodPost, "/api/v1/content/write", body, &response); err != nil {
+		if o.writeStored(ctx, uri, content, err) {
+			return ErrWriteIndexingPending
+		}
 		return err
 	}
 	semantic := response.Result.SemanticStatus
@@ -87,6 +95,29 @@ func (o *OpenViking) Write(ctx context.Context, uri, content string, create bool
 			Status: http.StatusOK, Retryable: true, Cause: fmt.Errorf("document indexing did not complete")}
 	}
 	return nil
+}
+
+// writeStored reports whether a waited write that failed only while waiting
+// left the requested content in place. OpenViking stores the content before it
+// waits for its queue, and that queue also refreshes the summary of every
+// ancestor folder up to the root. A wait that outlives its timeout (HTTP 504)
+// or the write client's deadline therefore does not mean the write failed;
+// retrying it would repeat the same wait. The read-back proves the write.
+func (o *OpenViking) writeStored(ctx context.Context, uri, content string, writeErr error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	var dependency *DependencyError
+	if !errors.As(writeErr, &dependency) || !dependency.Retryable ||
+		(dependency.Status != http.StatusGatewayTimeout && dependency.Status != 0) {
+		return false
+	}
+	var response envelope[string]
+	path := "/api/v1/content/read?raw=true&uri=" + url.QueryEscape(uri)
+	if err := o.http.do(ctx, http.MethodGet, path, nil, &response); err != nil {
+		return false
+	}
+	return response.Status == "ok" && response.Result == content
 }
 
 func (o *OpenViking) Move(ctx context.Context, from, to string) error {

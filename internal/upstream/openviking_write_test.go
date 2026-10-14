@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -87,6 +88,64 @@ func TestOpenVikingSnapshotRequiresDurableCheckpoint(t *testing.T) {
 			checkpoint, err := NewOpenViking(server.URL, "test-key", server.Client()).Snapshot(t.Context(), "revision", []string{"test-resource"})
 			if err == nil || checkpoint != "" {
 				t.Fatalf("invalid snapshot accepted: checkpoint=%q error=%v", checkpoint, err)
+			}
+		})
+	}
+}
+
+func TestOpenVikingWriteReconcilesAWaitThatOutlivedItsDeadline(t *testing.T) {
+	const uri = "viking://resources/manifold/notes/note.md"
+	for _, tc := range []struct {
+		name        string
+		writeStatus int
+		writeDelay  time.Duration
+		stored      string
+		wantErr     bool
+		wantPending bool
+		wantRead    bool
+	}{
+		{name: "queue wait 504 with stored content", writeStatus: http.StatusGatewayTimeout, stored: "verified", wantPending: true, wantRead: true},
+		{name: "queue wait 504 with other content", writeStatus: http.StatusGatewayTimeout, stored: "older", wantErr: true, wantRead: true},
+		{name: "client deadline with stored content", writeDelay: 200 * time.Millisecond, stored: "verified", wantPending: true, wantRead: true},
+		{name: "server failure", writeStatus: http.StatusInternalServerError, stored: "verified", wantErr: true},
+		{name: "rejected write", writeStatus: http.StatusConflict, stored: "verified", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var read atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/content/write":
+					if tc.writeDelay > 0 {
+						select {
+						case <-r.Context().Done():
+						case <-time.After(tc.writeDelay):
+						}
+						return
+					}
+					w.WriteHeader(tc.writeStatus)
+					_, _ = w.Write([]byte(`{"status":"error","error":{"code":"DEADLINE_EXCEEDED"}}`))
+				case "/api/v1/content/read":
+					read.Store(true)
+					if r.URL.Query().Get("uri") != uri || r.URL.Query().Get("raw") != "true" {
+						t.Errorf("read-back query = %q", r.URL.RawQuery)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "result": tc.stored})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			client := NewOpenViking(server.URL, "test-key", server.Client(), &http.Client{Timeout: 20 * time.Millisecond})
+			err := client.Write(t.Context(), uri, "verified", false)
+			if pending := errors.Is(err, ErrWriteIndexingPending); pending != tc.wantPending {
+				t.Fatalf("write error = %v, want indexing pending %v", err, tc.wantPending)
+			}
+			if failed := err != nil && !errors.Is(err, ErrWriteIndexingPending); failed != tc.wantErr {
+				t.Fatalf("write error = %v, want failure %v", err, tc.wantErr)
+			}
+			if read.Load() != tc.wantRead {
+				t.Fatalf("read-back performed = %v, want %v", read.Load(), tc.wantRead)
 			}
 		})
 	}

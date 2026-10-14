@@ -219,7 +219,7 @@ func (s *Service) syncDocument(ctx context.Context, job model.Job) error {
 				return err
 			}
 		}
-		if err := s.documents.Write(ctx, revision.OVURI, revision.Content, payload.Create); err != nil {
+		if err := s.writeDocument(ctx, revision.OVURI, revision.Content, payload.Create); err != nil {
 			if !payload.Create {
 				return err
 			}
@@ -227,7 +227,7 @@ func (s *Service) syncDocument(ctx context.Context, job model.Job) error {
 			if existsErr != nil || !exists {
 				return err
 			}
-			if replaceErr := s.documents.Write(ctx, revision.OVURI, revision.Content, false); replaceErr != nil {
+			if replaceErr := s.writeDocument(ctx, revision.OVURI, revision.Content, false); replaceErr != nil {
 				return replaceErr
 			}
 		}

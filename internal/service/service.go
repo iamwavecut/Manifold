@@ -517,6 +517,18 @@ func (s *Service) Context(ctx context.Context, request SearchRequest, budget int
 	}, search.DegradedDependencies, nil
 }
 
+// writeDocument writes canonical content to OpenViking. A write whose content
+// is stored but whose indexing outlived the wait counts as complete: the wait
+// also covers summaries of every ancestor folder, and retrying would repeat it.
+func (s *Service) writeDocument(ctx context.Context, uri, content string, create bool) error {
+	err := s.documents.Write(ctx, uri, content, create)
+	if errors.Is(err, upstream.ErrWriteIndexingPending) {
+		s.logger.Warn("openviking indexing outlived the write wait; continuing")
+		return nil
+	}
+	return err
+}
+
 func (s *Service) deleteDocument(ctx context.Context, job model.Job) error {
 	var payload struct {
 		OVURI   string `json:"ov_uri"`
@@ -679,7 +691,7 @@ func (s *Service) syncRenamedDocuments(
 			if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobIndexing, "", ""); err != nil {
 				return err
 			}
-			if err := s.documents.Write(ctx, expected, revision.Content, false); err != nil {
+			if err := s.writeDocument(ctx, expected, revision.Content, false); err != nil {
 				return err
 			}
 			snapshot, err = s.documents.Snapshot(ctx, "rename plan "+job.ResourceID, []string{expected})
@@ -908,7 +920,7 @@ func (s *Service) compensateRenameUpstreams(
 	s.rollbackRenamedResources(ctx, documentMoves, planID)
 	s.rollbackRenamedFolders(ctx, folderMoves, planID)
 	for _, original := range before {
-		if err := s.documents.Write(ctx, original.OVURI, original.Content, false); err != nil {
+		if err := s.writeDocument(ctx, original.OVURI, original.Content, false); err != nil {
 			s.logger.Error("rename upstream content compensation failed", "plan_id", planID, "document_id", original.ID)
 			continue
 		}
