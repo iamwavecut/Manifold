@@ -424,11 +424,11 @@ func (s *Service) waitForBrainDocument(
 	revision string,
 	state upstream.GraphDocumentState,
 ) (upstream.GraphDocumentState, error) {
-	for state.Status == upstream.GraphDocumentPending {
+	for polls := 0; state.Status == upstream.GraphDocumentPending; polls++ {
 		if err := s.ensureDocumentSyncCurrent(ctx, localDocumentID, revision); err != nil {
 			return upstream.GraphDocumentState{}, err
 		}
-		if err := waitForContext(ctx, s.brainPollInterval); err != nil {
+		if err := waitForContext(ctx, s.brainPollDelay(polls)); err != nil {
 			return upstream.GraphDocumentState{}, brainDeadlineError(ctx, "wait for document extraction", nil)
 		}
 		var err error

@@ -1,8 +1,8 @@
 diff --git a/src/documents/commit-writer.service.ts b/src/documents/commit-writer.service.ts
-index 194b947..16e0340 100644
+index 6c22d88aa..5e9cf91fd 100644
 --- a/src/documents/commit-writer.service.ts
 +++ b/src/documents/commit-writer.service.ts
-@@ -165,7 +165,17 @@ export class CommitWriterService {
+@@ -211,7 +211,17 @@ export class CommitWriterService {
          );
          outcomes.push({
            fact: mf,
@@ -22,7 +22,7 @@ index 194b947..16e0340 100644
          });
        } catch (err) {
 diff --git a/test/documents-pipeline.e2e-spec.ts b/test/documents-pipeline.e2e-spec.ts
-index 1a57cb9..47a8fa9 100644
+index 1a57cb975..47a8fa98f 100644
 --- a/test/documents-pipeline.e2e-spec.ts
 +++ b/test/documents-pipeline.e2e-spec.ts
 @@ -171,6 +171,52 @@ describe('documents pipeline (e2e)', () => {

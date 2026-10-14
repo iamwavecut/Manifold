@@ -600,3 +600,100 @@ func TestWithdrawnDocumentFactsAreRetractedInBrain(t *testing.T) {
 		t.Fatal("transient Brain failure did not fail the delete job")
 	}
 }
+
+func derivedRelationResult(doc model.Document, edgeIDs ...string) upstream.GraphIngestResult {
+	result := upstream.GraphIngestResult{
+		DocumentID: "brain-" + doc.ID,
+		OriginURI:  "manifold://documents/" + doc.ID + "@" + doc.Revision,
+		Revision:   doc.Revision,
+		EntityIDs:  []string{"brain-mira", "brain-meridian"},
+		EdgeIDs:    edgeIDs,
+		Entities: []upstream.GraphEntity{
+			{BrainID: "brain-mira", Name: "Mira Chen", Type: "staff"},
+			{BrainID: "brain-meridian", Name: "Meridian Labs", Type: "project"},
+		},
+	}
+	for _, id := range edgeIDs {
+		result.Relations = append(result.Relations, upstream.GraphRelation{
+			BrainID: id, FromEntityBrainID: "brain-mira", ToEntityBrainID: "brain-meridian",
+			Predicate: "works_at", Status: "active", Confidence: 0.9,
+		})
+	}
+	return result
+}
+
+func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
+	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	create := func(id string) model.Document {
+		t.Helper()
+		doc, _, err := db.CreateDocument(t.Context(), model.Document{
+			ID: id, Title: id, Format: "markdown", Content: "First revision.",
+			OVURI: "viking://resources/manifold/" + id + ".md",
+		}, model.Job{ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	doc := create("withdrawn-relations")
+	live := create("live-relations")
+	if err := svc.materializeGraphDocument(t.Context(), live, derivedRelationResult(live, "edge-shared")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), doc,
+		derivedRelationResult(doc, "edge-old", "edge-shared")); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.calls) != 0 {
+		t.Fatalf("current relations were retracted: %v", graph.calls)
+	}
+
+	updated, _, err := db.UpdateDocument(t.Context(), doc.ID, doc.ETag, "", "Second revision.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: doc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), updated,
+		derivedRelationResult(updated, "edge-kept", "edge-admin", "edge-gone", "edge-shared")); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(graph.calls, []string{"edge-old"}) {
+		t.Fatalf("revision retractions = %v, want the dropped relation only", graph.calls)
+	}
+
+	graph.calls = nil
+	graph.failures["edge-admin"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusForbidden}
+	graph.failures["edge-gone"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusNotFound}
+	job, err := db.MarkDocumentDeleted(t.Context(), updated.ID, updated.ETag, model.Job{
+		ID: identity.NewXID(), Kind: "document.delete", ResourceType: "document", ResourceID: updated.ID,
+		Payload: []byte(`{"ov_uri":"` + updated.OVURI + `"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.deleteDocument(t.Context(), job); err != nil {
+		t.Fatalf("delete with skipped and missing upstream relations failed: %v", err)
+	}
+	got := slices.Clone(graph.calls)
+	slices.Sort(got)
+	if want := []string{"edge-admin", "edge-gone", "edge-kept"}; !slices.Equal(got, want) {
+		t.Fatalf("deletion retractions = %v, want %v (edge-shared belongs to a live document)", got, want)
+	}
+	left, err := db.OrphanedDerivedRelations(t.Context(), updated.ID)
+	if err != nil || len(left) != 1 || left[0].UpstreamID != "edge-admin" {
+		t.Fatalf("unretracted orphans = %#v, err = %v; want only the forbidden relation", left, err)
+	}
+
+	graph.calls = nil
+	graph.failures["edge-admin"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusServiceUnavailable, Retryable: true}
+	if err := svc.deleteDocument(t.Context(), job); err == nil {
+		t.Fatal("transient Brain failure did not fail the delete job")
+	}
+}

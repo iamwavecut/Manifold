@@ -1,18 +1,20 @@
-# INITE Brain v2.3.0 integration
+# INITE Brain integration
 
-Manifold builds INITE Brain from tag `v2.3.0`, pinned to commit
-`0f3d16db0d175794b79b73ef186351aa9f2da3c0`. The exact ref, base-image
-digests, and patch application order live in
-[`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile). The build uses Node 22 LTS,
-the major line of that release's upstream Dockerfile, and an Alpine source
-stage pinned by digest.
+Manifold builds INITE Brain from upstream commit
+`a567f6960c031b916549699fec7b89423c650d1e`: `main` after v2.3.0 (39 later commits, the last
+on 2026-09-26). Brain has published no release since v2.3.0. `main` adds the
+batched entity judge for document commits (#705) and migrations 0161-0167;
+they are one-way, like every Brain migration. The exact ref, base-image digests, and patch application
+order live in [`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile). The build
+uses Node 22 LTS, the major line of upstream's Dockerfile, and an Alpine
+source stage pinned by digest.
 
 The downstream patches are narrow and covered by the patch-application check
 in [CI](../.github/workflows/ci.yml):
 
-- [`openai-base-url.patch`](../deploy/brain/openai-base-url.patch) passes
-  `OPENAI_BASE_URL` into the shared OpenAI client and accepts API keys that do
-  not use OpenAI's `sk-` prefix.
+- [`openai-api-key-format.patch`](../deploy/brain/openai-api-key-format.patch)
+  accepts API keys that do not use OpenAI's `sk-` prefix. Upstream `main`
+  reads `OPENAI_BASE_URL` itself, so this patch no longer touches the client.
 - [`document-origin-identity.patch`](../deploy/brain/document-origin-identity.patch)
   salts the content hash with canonical Manifold document/revision identity.
   Retries for one revision remain idempotent, while different documents or
@@ -25,7 +27,9 @@ in [CI](../.github/workflows/ci.yml):
   external runs. A bounded `retryKey` makes request replays idempotent; the
   existing run-ledger compare-and-swap admits only one worker to reopen a
   failed run. Retries require retained source chunks and the original installed
-  pack version. The queued payload pins that version for execution-time
+  pack version (for the general indexer, upstream's `GENERAL_INDEXER_VERSION`;
+  runs recorded under an older extraction contract report
+  `skipped_version_mismatch`). The queued payload pins that version for execution-time
   validation. The worker rechecks source availability after extraction and
   before automatic commit; conditional header writes preserve `purged` during
   concurrent extraction or commit. Purge does not retract already committed
@@ -49,7 +53,9 @@ in [CI](../.github/workflows/ci.yml):
 
 - [`extraction-completion.patch`](../deploy/brain/extraction-completion.patch)
   replaces the 1,500-token extraction cap with a configurable 16,384-token
-  budget. Truncated responses, malformed JSON, missing arrays, and failed
+  budget. The configured value also replaces upstream's input-size allowance
+  (`extractionOutputAllowance`, 1,500 to 16,000 tokens), so the operator's
+  setting stays authoritative. Truncated responses, malformed JSON, missing arrays, and failed
   extraction passes fail the durable run instead of producing a successful
   empty graph. Valid explicit empty results remain valid. Errors contain no
   model output. Reprocess earlier false-success runs through new revisions.
@@ -65,7 +71,8 @@ in [CI](../.github/workflows/ci.yml):
 - [`openai-chat-extra-body.patch`](../deploy/brain/openai-chat-extra-body.patch)
   merges the JSON object in `OPENAI_CHAT_EXTRA_BODY` into every
   chat-completions request; fields a call sets itself win, and an invalid value
-  fails boot validation. Brain treats non-OpenAI model names as deterministic
+  fails boot validation. It applies to the primary provider only, not to
+  the optional fallback provider. Brain treats non-OpenAI model names as deterministic
   and never sets their reasoning controls, so a hybrid model behind OpenRouter
   runs its default reasoning. Measured on 2026-10-02 with
   `deepseek/deepseek-v4.1-flash`, the reranker's 256-token json_schema call
@@ -73,6 +80,61 @@ in [CI](../.github/workflows/ci.yml):
   `{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}` it
   returned schema-valid JSON in about 3 s. `require_parameters` keeps strict
   json_schema calls off providers that silently ignore it.
+
+- [`entity-fact-read-index-hints.patch`](../deploy/brain/entity-fact-read-index-hints.patch)
+  reads facts by entity through `WITH INDEX fact_entity_idx` in two places:
+  `GET /v1/entities/:id` (the entity profile) and upstream's post-resolve
+  expectation stamp, which runs for every corroborated (restated) fact.
+  SurrealDB 3.3 otherwise picks the single-field `userId` index for
+  `userId IS NONE`, which matches every row of a tenant without per-user
+  memory, or scans the table for `entityId = $t.entityId`. Measured on a copy
+  of the production graph (3,496 facts): a profile took 278 ms before and
+  1 ms after, an expectation stamp 236 ms before; on the production VPS a
+  profile took 1.4-4.7 s. Hydration calls the profile once per entity.
+- [`resolve-fact-entity-index.patch`](../deploy/brain/resolve-fact-entity-index.patch)
+  is migration 0168: `fn::resolve_fact` (and the unchanged batch mapper
+  `fn::resolve_facts`) with `WITH INDEX fact_entity_idx` on the `$candidates`
+  query, and with the two `UPDATE knowledge_fact SET status = 'competing'
+  WHERE id IN ...` statements rewritten as direct record updates. Inside a
+  function body the planner scans the whole fact table for both forms (the
+  `WHERE` runs against every row even for an empty list). A document commit
+  calls the function once per fact. On the copy of the production graph an
+  inserting or corroborating resolve fell from 290 ms to 10-15 ms and a
+  superseding one from 1.1 s to 24 ms; the production VPS took 0.8-1.2 s for
+  the candidate query alone. Parameters are unchanged, so the rolling-deploy
+  signature gate still holds.
+- [`selective-entity-fact-indexes.patch`](../deploy/brain/selective-entity-fact-indexes.patch)
+  is migration 0169 plus a source guard test. It removes `fact_user_idx` and
+  `entity_user_idx` (per-user memory indexes this deployment never uses) and
+  adds element indexes `aliases[*]` and `nameKeys[*]`. SurrealDB 3 indexes an
+  array field as a single value, so `aliases CONTAINS $x` and
+  `nameKeys CONTAINS $x` scanned all entities (46 ms per lookup on the copy,
+  0 ms with the element indexes). A deployment with per-user memory should
+  re-create the two removed indexes.
+- [`derived-stale-cascade.patch`](../deploy/brain/derived-stale-cascade.patch)
+  is migration 0170. `fn::mark_derived_stale` and `fn::cascade_retract` find a
+  fact's dependents with `UPDATE ... WHERE derivedFrom CONTAINSANY $parents`,
+  which scans the table; they now find them with a SELECT served by a new
+  element index on `derivedFrom[*]` (2 ms instead of 330 ms) and update only
+  those rows. Inside a `DEFINE EVENT` the planner cannot use the index for any
+  spelling of the lookup (280-470 ms), so the migration removes the
+  `fact_staleness` event (0089). Upstream documents that removal: the nightly
+  drain then marks stale derived summaries instead of the write that superseded
+  their source. Manifold never reads derived summaries. Restore the event with
+  0089's definition to get write-time marking back at the cost of one table
+  pass per superseded fact. The patch also skips the event's e2e spec.
+- [`edge-retraction.patch`](../deploy/brain/edge-retraction.patch) lets
+  `POST /v1/facts/:id/retract` take a `knowledge_edge:` id. Brain `main` serves
+  every live edge of a matched entity as a fact-shaped line in search (the
+  relation leg), and v2.3 had no way to withdraw an edge, so the relation of a
+  deleted document kept ranking. The route closes the edge on both time axes
+  (`validUntil` unless it already ended, `invalidatedAt`) and records the
+  retraction and the earlier end in `source.retraction`, with the same
+  ownership fence as a fact and idempotent repeats. When a later document
+  states the same triple, `createEdgeBetween` finds the closed edge through
+  the unique index and reopens it from that record; an edge closed by
+  supersession or by a stated end has no record and stays closed. There is no
+  migration.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
@@ -82,13 +144,15 @@ document ID; the Manifold worker stores that ID as its checkpoint and polls
 the run ledger and candidate statuses when deciding completion. Brain can
 leave the document header at `indexing` after all runs and candidates have
 settled, so the header status alone is not a completion signal.
-The worker polls every ten seconds. Rate-limited durable submissions, polls,
-and graph hydration honor Brain's `Retry-After` within the extraction deadline;
-interactive reads and legacy writes remain single-attempt.
+The worker first polls after 250 ms and doubles the wait up to
+`MANIFOLD_BRAIN_POLL_INTERVAL` (2 seconds by default). Rate-limited durable
+submissions, polls, and graph hydration honor Brain's `Retry-After` within the
+extraction deadline; interactive reads and legacy writes remain single-attempt.
 
 Committed entity and fact candidates are hydrated through the entity and fact
-read APIs. Relations are resolved by exact committed edge ID and endpoints
-through entity connections. A later document can confirm an existing edge;
+read APIs, up to six reads at a time and once per distinct committed ID.
+Relations are resolved by exact committed edge ID and endpoints through entity
+connections. A later document can confirm an existing edge;
 its committed candidate provides the new source revision while the edge keeps
 its original source. The adapter skips candidates Brain redacts and
 does not use search's `sourceKey` as a document reference. Manifold projects
@@ -116,11 +180,12 @@ retracted as superseded. When retracting a successor revives a predecessor
 that is also unclaimed, Manifold retracts the predecessor again. Brain answers
 404 for a fact that no longer exists, which counts as done, and 403 for the
 predicates it reserves for `brain:admin`; Manifold logs and skips those. A
-transient failure fails the job, which retries. Brain v2.3 has no retraction
-route for edges, so withdrawn relations remain in Brain; Manifold does not map
-relations from Brain search, and its public projection already hides them.
-Facts of documents deleted before this behavior existed stay active in Brain
-until they are retracted separately.
+transient failure fails the job, which retries. Relations follow the same
+rule through the same route with `edge-retraction.patch`: after the facts, the
+job retracts the relations that no live document claims, and a relation that a
+later document states again is reopened in Brain. Facts and relations of
+documents deleted before this behavior existed stay active in Brain until they
+are retracted separately.
 
 Brain has no published host port. Manifold and SurrealDB communicate with it
 over the private Compose network; Brain also joins the provider network for
@@ -132,23 +197,14 @@ To verify the patch chain against a clean source checkout:
 
 ```bash
 brain_src=$(mktemp -d)
-git clone --depth 1 --branch v2.3.0 https://github.com/inite-ai/inite-brain-service.git "$brain_src"
-test "$(git -C "$brain_src" rev-parse HEAD)" = 0f3d16db0d175794b79b73ef186351aa9f2da3c0
-git -C "$brain_src" apply --check "$PWD/deploy/brain/openai-base-url.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/openai-base-url.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/document-origin-identity.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/document-origin-identity.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/worker-startup-order.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/worker-startup-order.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/corroborated-commit-ref.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/corroborated-commit-ref.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/failed-run-retry.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/failed-run-retry.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/extraction-completion.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/extraction-completion.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/fatal-signal-default.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/fatal-signal-default.patch"
-git -C "$brain_src" apply --check "$PWD/deploy/brain/openai-chat-extra-body.patch"
-git -C "$brain_src" apply "$PWD/deploy/brain/openai-chat-extra-body.patch"
+git init -q "$brain_src"
+git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-service.git
+git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
+git -C "$brain_src" checkout -q FETCH_HEAD
+test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction; do
+    git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
+    git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
+done
 git -C "$brain_src" diff --check
 ```

@@ -62,7 +62,9 @@ long a sync waits for indexing, not whether the sync succeeds; keep the 5-minute
 default unless measurements call for more.
 
 Brain receives an asynchronous submission with a bounded request timeout
-`MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes). Its returned document ID is stored
+`MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes). The worker checks the extraction
+state after 250 ms, then waits twice as long each time up to
+`MANIFOLD_BRAIN_POLL_INTERVAL` (2 seconds). Its returned document ID is stored
 privately in the job before polling. `MANIFOLD_BRAIN_EXTRACTION_TIMEOUT`
 (30 minutes) bounds each polling attempt. Retry resumes the same operation
 after a timeout or restart. Increase these limits to match measured provider
@@ -112,7 +114,7 @@ rolled-back plan can resume.
 
 Async Brain extraction retains normalized source chunks. Deleting a Manifold
 document withdraws it from current public retrieval and retracts its unshared
-Brain facts, but it does not purge those private Brain chunks. Review the [retention boundary](brain-patch.md) before
+Brain facts and relations, but it does not purge those private Brain chunks. Review the [retention boundary](brain-patch.md) before
 production migration; the service key is not granted administrator scope.
 
 ## Brain liveness
@@ -128,6 +130,56 @@ Brain's `/health` stays successful while SurrealDB is unreachable, so the
 watchdog reacts to a wedged process rather than to a dependency outage. The
 log of the restarted container contains the watchdog line, and its restart
 count increases; investigate both instead of treating the restart as recovery.
+
+## Data version 4 migration
+
+This release moves INITE Brain from v2.3.0 to upstream commit `a567f69`
+(`main` after v2.3.0) and OpenViking from v0.4.22 to v0.5.0. SurrealDB stays at
+v3.3.0. Brain applies migrations 0161-0170 on startup: 0161-0167 come from
+upstream, 0168-0170 from Manifold's [performance patches](brain-patch.md).
+None can be undone by starting older images, so `DATA_VERSION=4` stops
+automatic deployment before the checkout or runtime changes. Follow the steps
+of the [data version 2 procedure](#brain-v2--data-version-2-migration) and the
+differences listed under [data version 3](#data-version-3-migration), with
+these changes:
+
+- The cold four-volume backup is the only rollback path. Verify the archive
+  hashes before any new image opens the volumes. On a copy of the production
+  graph (3,500 facts) the nine migrations took under one second.
+- Brain `main` reads a new document in a batched pass: it remembers the
+  document at once and a separate `extract_documents` job extracts it after a
+  gathering window (upstream default 20 seconds). Manifold submits one document
+  per job and waits, so the window is dead time. Compose sets
+  `EXTRACTION_BATCH_WINDOW_SECONDS` from `BRAIN_EXTRACTION_BATCH_WINDOW_SECONDS`
+  (1 by default; the effective minimum is one second).
+- Brain's job loops sleep `WORKER_LOOP_POLL_MS` after every claim attempt and
+  `WORKER_LOOP_EMPTY_BACKOFF_MS` more when the queue is empty (upstream: 1000
+  and 5000 ms), so a new job waited up to six seconds for a worker. Compose
+  sets 250 and 750 ms (`BRAIN_WORKER_LOOP_POLL_MS`,
+  `BRAIN_WORKER_LOOP_EMPTY_BACKOFF_MS`). The price is one claim query per job
+  type each second while idle.
+- Migration 0169 removes the per-user indexes `fact_user_idx` and
+  `entity_user_idx` and adds element indexes on `aliases` and `nameKeys`.
+  Migration 0170 removes the write-time `fact_staleness` event; derived
+  summaries turn stale at the nightly drain. Both are described in the patch
+  notes, together with the commands that restore the old shape.
+- The general indexer's pack version moved from `0` to `3`. A failed or
+  `partially_ready` run recorded under version `0` reports
+  `skipped_version_mismatch` from `POST /v1/documents/:id/retry` and from the
+  Manifold retry action. Recover those documents with a same-content update
+  that uses the current ETag and a fresh idempotency key; each update creates
+  a new revision and a new extraction.
+- OpenViking v0.5.0 logs deprecation warnings for `agfs.path` and
+  `vectordb.path` defaults; Manifold's configuration sets neither. Search
+  scores and ordering differ from v0.4.22. Manifold fuses by rank and
+  canonicalizes hits through SQLite.
+- `MANIFOLD_BRAIN_POLL_INTERVAL` (new, 2 seconds) caps the wait between status
+  checks.
+- Acceptance: write a small synthetic document, wait for `ready`, and confirm
+  that the job finished in seconds, that `INFO FOR TABLE knowledge_fact`
+  lists no `fact_user_idx`, and that the entity and fact counts in
+  `GET /api/v1/status` grew by the document's extracted graph. Then update it
+  and delete it.
 
 ## Data version 3 migration
 

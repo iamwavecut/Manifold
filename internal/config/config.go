@@ -22,6 +22,7 @@ type Config struct {
 	HTTPTimeout            time.Duration
 	BrainIngestTimeout     time.Duration
 	BrainExtractionTimeout time.Duration
+	BrainPollInterval      time.Duration
 	OpenVikingWriteTimeout time.Duration
 	WorkerInterval         time.Duration
 }
@@ -49,6 +50,13 @@ func Load() (Config, error) {
 	if extractionTimeout <= 0 {
 		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_EXTRACTION_TIMEOUT must be greater than zero")
 	}
+	pollInterval, err := envDuration("MANIFOLD_BRAIN_POLL_INTERVAL", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	if pollInterval <= 0 {
+		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_POLL_INTERVAL must be greater than zero")
+	}
 	writeTimeout, err := envDuration("MANIFOLD_OPENVIKING_WRITE_TIMEOUT", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
@@ -74,6 +82,7 @@ func Load() (Config, error) {
 		HTTPTimeout:            httpTimeout,
 		BrainIngestTimeout:     brainIngestTimeout,
 		BrainExtractionTimeout: extractionTimeout,
+		BrainPollInterval:      pollInterval,
 		OpenVikingWriteTimeout: writeTimeout,
 		WorkerInterval:         workerInterval,
 	}
