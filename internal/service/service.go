@@ -35,7 +35,14 @@ type Service struct {
 }
 
 const defaultBrainExtractionTimeout = 15 * time.Minute
-const defaultBrainPollInterval = 10 * time.Second
+
+// Brain finishes small documents within seconds, so polling starts at
+// initialBrainPollInterval and doubles up to the configured ceiling instead of
+// sleeping the ceiling before every check.
+const (
+	defaultBrainPollInterval = 2 * time.Second
+	initialBrainPollInterval = 250 * time.Millisecond
+)
 
 type Status struct {
 	Service          string            `json:"service"`
@@ -109,6 +116,30 @@ func (s *Service) SetBrainExtractionTimeout(timeout time.Duration) {
 	if timeout > 0 {
 		s.brainExtractionTimeout = timeout
 	}
+}
+
+func (s *Service) SetBrainPollInterval(interval time.Duration) {
+	if interval > 0 {
+		s.brainPollInterval = interval
+	}
+}
+
+// brainPollDelay is the wait before the next status check after the given
+// number of checks: initialBrainPollInterval, doubling, capped at the
+// configured poll interval.
+func (s *Service) brainPollDelay(polls int) time.Duration {
+	ceiling := s.brainPollInterval
+	if ceiling <= 0 {
+		ceiling = defaultBrainPollInterval
+	}
+	delay := initialBrainPollInterval
+	for range polls {
+		if delay >= ceiling {
+			break
+		}
+		delay *= 2
+	}
+	return min(delay, ceiling)
 }
 
 func (s *Service) Store() *store.Store {
