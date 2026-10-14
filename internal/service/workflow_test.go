@@ -97,6 +97,27 @@ func TestPipelineStatusSeparatesHistoricalFailedJobFromCurrentReadyDocument(t *t
 	}
 }
 
+func TestDocumentSyncContinuesWhenOnlyOpenVikingIndexingOutlivedTheWait(t *testing.T) {
+	docs := &workflowDocuments{writeErr: upstream.ErrWriteIndexingPending}
+	db, svc := newWorkflowService(t, ":memory:", docs, &workflowGraph{})
+	_, job, err := svc.CreateDocument(t.Context(), model.Document{
+		ID: "indexing-pending", Title: "Indexing pending", Format: "markdown", Content: "stored content",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.processOne(t.Context()); err != nil {
+		t.Fatalf("stored write with pending indexing failed the sync: %v", err)
+	}
+	finished, err := db.GetJob(t.Context(), job.ID)
+	if err != nil || finished.Status != model.JobReady || finished.Attempts != 1 {
+		t.Fatalf("sync job = %#v, err = %v; want ready after one attempt", finished, err)
+	}
+	if len(docs.writes) != 1 || docs.snapshots != 1 {
+		t.Fatalf("writes = %d, snapshots = %d; want one write and its snapshot", len(docs.writes), docs.snapshots)
+	}
+}
+
 func TestSupersededQueuedDocumentSyncDoesNotIndexNewerRevision(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "workflow.db")
 	db, svc := newWorkflowService(t, dbPath, &workflowDocuments{}, &workflowGraph{})

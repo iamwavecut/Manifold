@@ -50,9 +50,16 @@ Jobs in `indexing` or `extracting` are returned to `accepted` when Manifold rest
 Ordinary dependency requests use `MANIFOLD_HTTP_TIMEOUT` (30 seconds by
 default). OpenViking writes use `MANIFOLD_OPENVIKING_WRITE_TIMEOUT` (5 minutes)
 with `wait: true`; an HTTP 200 response is accepted only when semantic and
-vector indexing report completion or an intentional skip. OpenViking exposes
-no per-write operation ID, so a timed-out write is reconciled against its
-existing resource before retrying.
+vector indexing report completion or an intentional skip. The wait also covers
+the summary refresh of every ancestor folder up to the root, so it can outlive
+the deadline while the document itself is stored. OpenViking exposes no
+per-write operation ID. After an HTTP 504 or the write client's deadline,
+Manifold reads the content back; if it matches, the sync continues and logs
+`openviking indexing outlived the write wait; continuing`. OpenViking search
+returns the new revision once its queue finishes. Any other failure, or a
+mismatched read-back, fails the job and it retries. The deadline now bounds how
+long a sync waits for indexing, not whether the sync succeeds; keep the 5-minute
+default unless measurements call for more.
 
 Brain receives an asynchronous submission with a bounded request timeout
 `MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes). The worker checks the extraction
