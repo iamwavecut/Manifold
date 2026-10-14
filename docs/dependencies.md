@@ -76,20 +76,18 @@ v0.4.20 source preserves `POST /api/v1/content/write` with `wait` and `timeout`;
 it does not return a per-write task identifier or expose a write-status poll
 route. With `wait: true`, the request waits for work associated with that write.
 A timeout is not proof that the write was rolled back: content is written and
-post-processing is started before the queue wait. In v0.4.22 that wait covers
-every queue item registered for the request, including the semantic refresh it
-enqueues for each ancestor folder up to the root, and an expired `timeout`
-returns HTTP 504 `DEADLINE_EXCEEDED`
-([content_write.py](https://raw.githubusercontent.com/volcengine/OpenViking/v0.4.22/openviking/storage/content_write.py)).
+post-processing is started before the queue wait. In v0.4.22 and v0.5.0 that
+wait covers every queue item registered for the request, including the semantic
+refresh it enqueues for each ancestor folder up to the root, and an expired
+`timeout` returns HTTP 504 `DEADLINE_EXCEEDED`
+([content_write.py](https://raw.githubusercontent.com/volcengine/OpenViking/v0.5.0/openviking/storage/content_write.py)).
 The adapter therefore uses a dedicated write deadline and, after a 504 or a
 client deadline, reads the content back with `GET /api/v1/content/read?raw=true`.
 A matching read-back completes the write with indexing still pending; anything
 else keeps the original retryable error. `processing_mode: "vectors_only"` would
-skip the summaries, but it vectorizes the file with an empty summary, and the
-v0.4.22 retriever starts from L0/L1 records. Whether new documents stay findable
-in that mode is unverified, so Manifold does not use it. Unreleased
-OpenViking `main` removes the write `timeout` field (#6048); revisit this adapter
-before upgrading past v0.4.22.
+skip the summaries, but it vectorizes the file with an empty summary, and
+whether new documents stay findable in that mode is unverified, so Manifold
+does not use it.
 
 The v0.4.20 write response can be HTTP 200 while reporting
 `semantic_status: "failed"` or `vector_status: "failed"` when queue work has
