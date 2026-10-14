@@ -77,6 +77,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	graph := upstream.NewBrain(cfg.BrainURL, cfg.BrainKey, httpClient, brainIngestHTTPClient)
 	svc := service.New(db, documents, graph, cfg.PublicURL, logger, cfg.WorkerInterval, buildinfo.New(version, commit))
 	svc.SetBrainExtractionTimeout(cfg.BrainExtractionTimeout)
+	svc.SetBrainPollInterval(cfg.BrainPollInterval)
 	handler := manifoldapi.New(svc, authManager, cfg, logger, web.Handler()).Handler
 
 	server := &http.Server{

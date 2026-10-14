@@ -542,6 +542,63 @@ func (s *Store) MarkOrphanedDerivedFactRetracted(ctx context.Context, id string)
 	return changed, err
 }
 
+// OrphanedDerivedRelation is a derived relation that a document claimed at
+// some revision and that no live document claims at its current revision.
+type OrphanedDerivedRelation struct {
+	ID         string
+	UpstreamID string
+}
+
+// OrphanedDerivedRelations lists the derived relations that documentID once
+// claimed and that lost every current claim, through deletion of that
+// document or a later revision that no longer states them. Relations that
+// another live document still claims stay out of the list.
+func (s *Store) OrphanedDerivedRelations(ctx context.Context, documentID string) ([]OrphanedDerivedRelation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.id, r.upstream_id FROM relations r
+		WHERE r.origin = ? AND r.status <> 'retracted' AND r.upstream_id <> ''
+			AND EXISTS (
+				SELECT 1 FROM derived_graph_claims c
+				WHERE c.object_kind = 'relation' AND c.object_id = r.id AND c.document_id = ?
+			)
+			AND NOT `+currentDerivedGraphClaim("r", "relation")+`
+		ORDER BY r.id`, derivedGraphOrigin, documentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var relations []OrphanedDerivedRelation
+	for rows.Next() {
+		var relation OrphanedDerivedRelation
+		if err := rows.Scan(&relation.ID, &relation.UpstreamID); err != nil {
+			return nil, err
+		}
+		relations = append(relations, relation)
+	}
+	return relations, rows.Err()
+}
+
+// MarkOrphanedDerivedRelationRetracted records that the upstream relation was
+// retracted. It changes nothing when a live document claims the relation
+// again, and reports whether the relation changed.
+func (s *Store) MarkOrphanedDerivedRelationRetracted(ctx context.Context, id string) (bool, error) {
+	changed := false
+	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE relations SET status = 'retracted'
+			WHERE id = ? AND origin = ? AND status <> 'retracted'
+				AND NOT `+currentDerivedGraphClaim("relations", "relation"), id, derivedGraphOrigin)
+		if err != nil {
+			return err
+		}
+		if changed = resultChanged(result); !changed {
+			return nil
+		}
+		return bumpVersion(ctx, tx)
+	})
+	return changed, err
+}
+
 func currentDerivedGraphClaim(objectAlias, kind string) string {
 	return fmt.Sprintf(`EXISTS (
 		SELECT 1 FROM derived_graph_claims c

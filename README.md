@@ -131,8 +131,8 @@ flowchart LR
     Agent["Agents / Manifold skill"] -->|"REST + OpenAPI"| API["Manifold Go binary"]
     Browser["Mithril workbench"] -->|"HttpOnly session + CSRF"| API
     API --> SQLite["SQLite control plane"]
-    API --> OV["OpenViking v0.4.22\ncanonical content + snapshots"]
-    API -->|"submit + durable poll"| Brain["INITE Brain v2.3.0\nfacts + relations + provenance"]
+    API --> OV["OpenViking v0.5.0\ncanonical content + snapshots"]
+    API -->|"submit + durable poll"| Brain["INITE Brain a567f69 (v2.3.0+39)\nfacts + relations + provenance"]
     Brain --> Surreal["SurrealDB v3.3.0"]
     Brain -->|"committed graph + source revision"| SQLite
     OV --> Provider["OpenAI-compatible provider"]
@@ -335,7 +335,7 @@ make integration
 
 It starts an isolated `manifold-integration` Compose project with a repository-owned OpenAI-compatible test provider and removes only that project's volumes when finished. It does not validate a production provider.
 
-Native container images are built for `linux/amd64` and `linux/arm64`. See [docs/operations.md](docs/operations.md) for backup, restore, and recovery.
+Native container images are built for `linux/amd64` and `linux/arm64`. See [docs/operations.md](docs/operations.md) for backup, restore, and recovery, and [docs/performance.md](docs/performance.md) for where a document sync spends its time and how to measure it.
 
 Every successful `main` CI run is deployed to the configured GitHub
 `production` environment by exact commit SHA. The host-side deployment keeps
@@ -351,8 +351,8 @@ migration procedure in [docs/operations.md](docs/operations.md).
 
 Manifold is an integration layer built on the original projects:
 
-- [OpenViking](https://github.com/volcengine/OpenViking) v0.4.22
-- [INITE Brain](https://github.com/inite-ai/inite-brain-service) v2.3.0
+- [OpenViking](https://github.com/volcengine/OpenViking) v0.5.0
+- [INITE Brain](https://github.com/inite-ai/inite-brain-service) `a567f69` (v2.3.0 plus 39 commits)
 - [SurrealDB](https://github.com/surrealdb/surrealdb)
 - [Huma](https://github.com/danielgtaylor/huma)
 - [Mithril.js](https://github.com/MithrilJS/mithril.js)

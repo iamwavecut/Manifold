@@ -1,5 +1,5 @@
 diff --git a/src/jobs/worker-loop.service.ts b/src/jobs/worker-loop.service.ts
-index aff54e5..0988202 100644
+index aff54e53e..098820210 100644
 --- a/src/jobs/worker-loop.service.ts
 +++ b/src/jobs/worker-loop.service.ts
 @@ -2,7 +2,7 @@ import {
@@ -46,7 +46,7 @@ index aff54e5..0988202 100644
      this.poller.startDecay();
    }
 diff --git a/test/worker-loop-leadership.unit-spec.ts b/test/worker-loop-leadership.unit-spec.ts
-index 359ddaf..251e580 100644
+index 359ddafe7..251e5800d 100644
 --- a/test/worker-loop-leadership.unit-spec.ts
 +++ b/test/worker-loop-leadership.unit-spec.ts
 @@ -151,7 +151,7 @@ describe('WorkerLoopService — shutdown drains dispatches before releasing the
@@ -59,7 +59,7 @@ index 359ddaf..251e580 100644
      for (let i = 0; i < 5; i++) await Promise.resolve();
      expect(svc.leader()).toBe(true);
 diff --git a/test/worker-loop.unit-spec.ts b/test/worker-loop.unit-spec.ts
-index be1cd65..76360b1 100644
+index be1cd6516..76360b1b4 100644
 --- a/test/worker-loop.unit-spec.ts
 +++ b/test/worker-loop.unit-spec.ts
 @@ -100,6 +100,63 @@ describe('WorkerLoopService.register', () => {

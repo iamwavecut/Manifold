@@ -20,6 +20,7 @@ services:
       MANIFOLD_OPENVIKING_WRITE_TIMEOUT: ${MANIFOLD_OPENVIKING_WRITE_TIMEOUT:-5m}
       MANIFOLD_BRAIN_INGEST_TIMEOUT: ${MANIFOLD_BRAIN_INGEST_TIMEOUT:-2m}
       MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: ${MANIFOLD_BRAIN_EXTRACTION_TIMEOUT:-30m}
+      MANIFOLD_BRAIN_POLL_INTERVAL: ${MANIFOLD_BRAIN_POLL_INTERVAL:-2s}
       OPENVIKING_URL: http://openviking:1933
       OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
       BRAIN_URL: http://brain:3000
@@ -44,7 +45,7 @@ services:
       start_period: 5s
 
   openviking:
-    image: ghcr.io/volcengine/openviking:v0.4.22@sha256:f52ab2c309e46e47a746ffc5715bb280111588ff27bc7c9ae62ef5b915df9de1
+    image: ghcr.io/volcengine/openviking:v0.5.0@sha256:c60a83cd79cfce80db5266acb8bdd0908eee8abe8ff559a5f786aa504c251ccf
     restart: unless-stopped
     init: true
     environment:
@@ -78,7 +79,7 @@ services:
       context: .
       dockerfile: deploy/brain/Dockerfile
       args:
-        BRAIN_REF: 0f3d16db0d175794b79b73ef186351aa9f2da3c0
+        BRAIN_REF: a567f6960c031b916549699fec7b89423c650d1e
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -112,6 +113,15 @@ services:
       # Brain v2.3 stores every conversational turn verbatim by default.
       # Manifold sends documents, not turns, so keep that store closed.
       EPISODE_SUBSTRATE_ENABLED: "0"
+      # Brain gathers new documents for this many seconds before one
+      # extraction pass reads them (upstream default 20). Manifold submits one
+      # document per job and waits for it, so the window is dead time.
+      EXTRACTION_BATCH_WINDOW_SECONDS: ${BRAIN_EXTRACTION_BATCH_WINDOW_SECONDS:-1}
+      # Brain's job loops sleep this long after every claim attempt, and the
+      # backoff more when the queue is empty (upstream: 1000 and 5000 ms), so a
+      # new job waited up to six seconds for a worker.
+      WORKER_LOOP_POLL_MS: ${BRAIN_WORKER_LOOP_POLL_MS:-250}
+      WORKER_LOOP_EMPTY_BACKOFF_MS: ${BRAIN_WORKER_LOOP_EMPTY_BACKOFF_MS:-750}
     volumes:
       - brain-cache:/app/.cache
     depends_on:

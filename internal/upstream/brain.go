@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/iamwavecut/Manifold/internal/model"
@@ -242,6 +243,18 @@ func documentIdentity(document brainDocument) (string, string, error) {
 	return originURI, match[2], nil
 }
 
+// brainHydrationConcurrency bounds the Brain reads in flight while one
+// finished document is hydrated. The reads are independent, so waiting for
+// each in turn made hydration last (entities + facts + connections) times the
+// slowest read. Brain's own throttle and its eight-connection SurrealDB pool
+// leave room for a handful of parallel readers.
+const brainHydrationConcurrency = 6
+
+type hydratedEntity struct {
+	entity   GraphEntity
+	profiles map[string]brainFactProfile
+}
+
 func (b *Brain) materializeCandidates(
 	ctx context.Context,
 	documentID, originURI, revision string,
@@ -262,25 +275,45 @@ func (b *Brain) materializeCandidates(
 	relationByID := make(map[string]GraphRelation)
 	relationCandidates := make([]brainCandidate, 0)
 
+	// Entities first: facts and relations resolve their entity indexes
+	// through them. A merged or duplicate candidate shares its leader's
+	// commit reference, so each entity is read once.
+	var entityRefs []string
+	for _, candidate := range candidates {
+		if candidateCommitted(candidate) && candidate.CommitRef != "" && candidate.Kind == "entity" {
+			entityRefs = append(entityRefs, candidate.CommitRef)
+		}
+	}
+	entities, err := readAll(ctx, uniqueStrings(entityRefs...), func(ctx context.Context, ref string) (hydratedEntity, error) {
+		entity, profiles, err := b.getGraphEntity(ctx, ref)
+		return hydratedEntity{entity: entity, profiles: profiles}, err
+	})
+	if err != nil {
+		return GraphIngestResult{}, err
+	}
 	for _, candidate := range candidates {
 		if !candidateCommitted(candidate) || candidate.CommitRef == "" || candidate.Kind != "entity" {
 			continue
 		}
-		entity, profiles, err := b.getGraphEntity(ctx, candidate.CommitRef)
-		if err != nil {
-			return GraphIngestResult{}, err
-		}
-		entityByID[entity.BrainID] = entity
-		for factID, profile := range profiles {
+		hydrated := entities[candidate.CommitRef]
+		entityByID[hydrated.entity.BrainID] = hydrated.entity
+		for factID, profile := range hydrated.profiles {
 			factProfileByID[factID] = profile
 		}
 		if index, ok := payloadIndex(candidate.Payload, "entityIndex"); ok {
-			entityByIndex[candidateBatchKey(candidate, index)] = entity.BrainID
+			entityByIndex[candidateBatchKey(candidate, index)] = hydrated.entity.BrainID
 		}
 	}
 
 	// Candidates are ordered by chunk and creation time, not by kind. Resolve
 	// all entity indexes before reading fact and relation candidates.
+	type factRead struct {
+		candidate brainCandidate
+		entityID  string
+	}
+	var factReads []factRead
+	factEntity := make(map[string]string)
+	var factRefs []string
 	for _, candidate := range candidates {
 		if !candidateCommitted(candidate) || candidate.CommitRef == "" {
 			continue
@@ -298,23 +331,36 @@ func (b *Brain) materializeCandidates(
 			if entityID == "" {
 				continue
 			}
-			fact, err := b.getGraphFact(ctx, candidate.CommitRef, entityID, documentID)
-			if err != nil {
-				return GraphIngestResult{}, err
+			factReads = append(factReads, factRead{candidate: candidate, entityID: entityID})
+			if _, seen := factEntity[candidate.CommitRef]; !seen {
+				factEntity[candidate.CommitRef] = entityID
+				factRefs = append(factRefs, candidate.CommitRef)
 			}
-			profile := factProfileByID[fact.BrainID]
-			if fact.Status != "retracted" && profile.Status != "" {
-				fact.Status = profile.Status
-			}
-			fact.ValidUntil = profile.ValidUntil
-			factByID[fact.BrainID] = fact
 		case "relation":
 			relationCandidates = append(relationCandidates, candidate)
 		}
 	}
+	facts, err := readAll(ctx, factRefs, func(ctx context.Context, ref string) (GraphFact, error) {
+		return b.getGraphFact(ctx, ref, factEntity[ref], documentID)
+	})
+	if err != nil {
+		return GraphIngestResult{}, err
+	}
+	for _, read := range factReads {
+		fact := facts[read.candidate.CommitRef]
+		fact.EntityBrainID = read.entityID
+		profile := factProfileByID[fact.BrainID]
+		if fact.Status != "retracted" && profile.Status != "" {
+			fact.Status = profile.Status
+		}
+		fact.ValidUntil = profile.ValidUntil
+		factByID[fact.BrainID] = fact
+	}
 
-	edgesByEntity := make(map[string]map[string]brainConnection)
-	for _, candidate := range relationCandidates {
+	type relationEnds struct{ from, to string }
+	ends := make([]relationEnds, len(relationCandidates))
+	var connectionRefs []string
+	for i, candidate := range relationCandidates {
 		fromIndex, fromOK := payloadIndex(candidate.Payload, "fromEntityIndex")
 		toIndex, toOK := payloadIndex(candidate.Payload, "toEntityIndex")
 		if !fromOK || !toOK {
@@ -325,15 +371,17 @@ func (b *Brain) materializeCandidates(
 		if fromID == "" || toID == "" {
 			continue
 		}
-		for _, entityID := range uniqueStrings(fromID, toID) {
-			if _, ok := edgesByEntity[entityID]; ok {
-				continue
-			}
-			edges, err := b.entityConnections(ctx, entityID)
-			if err != nil {
-				return GraphIngestResult{}, err
-			}
-			edgesByEntity[entityID] = edges
+		ends[i] = relationEnds{from: fromID, to: toID}
+		connectionRefs = append(connectionRefs, fromID, toID)
+	}
+	edgesByEntity, err := readAll(ctx, uniqueStrings(connectionRefs...), b.entityConnections)
+	if err != nil {
+		return GraphIngestResult{}, err
+	}
+	for i, candidate := range relationCandidates {
+		fromID, toID := ends[i].from, ends[i].to
+		if fromID == "" {
+			continue
 		}
 		for _, edge := range edgesByEntity[fromID] {
 			// Brain reuses an existing edge when another document confirms
@@ -376,6 +424,67 @@ func (b *Brain) materializeCandidates(
 	sort.Strings(result.FactIDs)
 	sort.Strings(result.EdgeIDs)
 	return result, nil
+}
+
+// readAll calls read for every key with at most brainHydrationConcurrency
+// calls in flight and returns the results by key. The first failure cancels
+// the reads still waiting and is the error returned, not the cancellation its
+// siblings report.
+func readAll[V any](
+	ctx context.Context,
+	keys []string,
+	read func(context.Context, string) (V, error),
+) (map[string]V, error) {
+	results := make(map[string]V, len(keys))
+	if len(keys) == 0 {
+		return results, nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		failure error
+		slots   = make(chan struct{}, brainHydrationConcurrency)
+		fail    = func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if failure == nil {
+				failure = err
+				cancel()
+			}
+		}
+	)
+	for _, key := range keys {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			value, err := read(ctx, key)
+			if err != nil {
+				fail(err)
+				return
+			}
+			mu.Lock()
+			results[key] = value
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (b *Brain) getGraphEntity(ctx context.Context, entityID string) (GraphEntity, map[string]brainFactProfile, error) {

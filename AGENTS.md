@@ -77,9 +77,12 @@ Run `make integration` for changes that cross the API, durable worker, OpenVikin
 For changes to the pinned Brain integration, also verify:
 
 ```bash
-git clone --branch v2.3.0 --depth 1 https://github.com/inite-ai/inite-brain-service.git /tmp/brain
-test "$(git -C /tmp/brain rev-parse HEAD)" = 0f3d16db0d175794b79b73ef186351aa9f2da3c0
-for patch in openai-base-url document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body; do
+git init -q /tmp/brain
+git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
+git -C /tmp/brain fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
+git -C /tmp/brain checkout -q FETCH_HEAD
+test "$(git -C /tmp/brain rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction; do
     git -C /tmp/brain apply --check "$PWD/deploy/brain/$patch.patch"
     git -C /tmp/brain apply "$PWD/deploy/brain/$patch.patch"
 done

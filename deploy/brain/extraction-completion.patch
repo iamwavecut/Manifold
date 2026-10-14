@@ -1,5 +1,5 @@
 diff --git a/src/ai/extractor-llm.service.ts b/src/ai/extractor-llm.service.ts
-index 283988a..f7b9827 100644
+index b6af9aee7..1afb44b9a 100644
 --- a/src/ai/extractor-llm.service.ts
 +++ b/src/ai/extractor-llm.service.ts
 @@ -1,4 +1,4 @@
@@ -7,8 +7,8 @@ index 283988a..f7b9827 100644
 +import { Injectable, Optional } from '@nestjs/common';
  import { ConfigService } from '@nestjs/config';
  import OpenAI from 'openai';
- import { chatCallParams, chatModel, createOpenAiClientOrThrow } from './openai-client';
-@@ -28,9 +28,9 @@ import { resolveExtractionProfile } from './extraction-profile';
+ import {
+@@ -33,9 +33,9 @@ import { resolveExtractionProfile } from './extraction-profile';
   */
  @Injectable()
  export class ExtractorLlmService {
@@ -19,7 +19,7 @@ index 283988a..f7b9827 100644
    private readonly systemPromptHeader: string;
    private readonly limiter: Semaphore;
    /** Self-consistency / N-pass driver count (1 = single-pass). */
-@@ -42,6 +42,16 @@ export class ExtractorLlmService {
+@@ -47,6 +47,16 @@ export class ExtractorLlmService {
    ) {
      this.openai = createOpenAiClientOrThrow(this.configService);
      this.model = chatModel(this.configService);
@@ -36,14 +36,16 @@ index 283988a..f7b9827 100644
      // The static EXTRACTION_SYSTEM_PROMPT override is no longer the
      // source of truth for vocabulary — that's the registry. The env
      // var stays as an escape hatch for operators who want to fully
-@@ -159,19 +169,32 @@ export class ExtractorLlmService {
-                   }),
-                 },
+@@ -174,7 +184,7 @@ export class ExtractorLlmService {
                },
--              ...chatCallParams(model, { temperature, visibleCap: 1500 }),
-+              ...chatCallParams(model, { temperature, visibleCap: this.maxCompletionTokens }),
+               ...chatCallParams(model, {
+                 temperature,
+-                visibleCap: extractionOutputAllowance(trimmed.length),
++                visibleCap: this.maxCompletionTokens,
+                 tier: args.tier,
+               }),
              },
-             { signal: getAbortSignal() },
+@@ -182,14 +192,27 @@ export class ExtractorLlmService {
            ),
        ),
      );
@@ -76,13 +78,14 @@ index 283988a..f7b9827 100644
 +    return parsed;
    }
  }
+ 
 diff --git a/src/ai/extractor.service.ts b/src/ai/extractor.service.ts
-index 4d902ba..0a49044 100644
+index 1b20dfc92..f5c1df6ec 100644
 --- a/src/ai/extractor.service.ts
 +++ b/src/ai/extractor.service.ts
-@@ -114,13 +114,10 @@ export class ExtractorService {
- 
-     const result = await this.runner.run({ trimmed, companyId, snapshot, context });
+@@ -155,13 +155,10 @@ export class ExtractorService {
+       throw new Error('extraction produced no usable response (transient LLM failure)');
+     }
      if (!result) {
 -      // Transient LLM failure (null JSON / all SC passes failed). Return
 -      // empty WITHOUT caching — the no-TTL LRU would otherwise pin this
@@ -98,7 +101,7 @@ index 4d902ba..0a49044 100644
      this.extractionCache.set(cacheKey, result);
      return result;
 diff --git a/test/extractor-negative-cache.unit-spec.ts b/test/extractor-negative-cache.unit-spec.ts
-index dd9f712..d45383d 100644
+index dd9f7127d..d45383dc9 100644
 --- a/test/extractor-negative-cache.unit-spec.ts
 +++ b/test/extractor-negative-cache.unit-spec.ts
 @@ -44,11 +44,10 @@ function build(runResults: Array<ExtractionResult | null>) {
@@ -117,7 +120,7 @@ index dd9f712..d45383d 100644
      // result; the fix retries the runner and gets the real extraction.
 diff --git a/test/extractor-output.unit-spec.ts b/test/extractor-output.unit-spec.ts
 new file mode 100644
-index 0000000..7fa2be6
+index 000000000..7fa2be650
 --- /dev/null
 +++ b/test/extractor-output.unit-spec.ts
 @@ -0,0 +1,48 @@
@@ -170,7 +173,7 @@ index 0000000..7fa2be6
 +  });
 +});
 diff --git a/test/extractor-prompt-injection.unit-spec.ts b/test/extractor-prompt-injection.unit-spec.ts
-index d4dcb75..3f72394 100644
+index d4dcb751d..3f7239492 100644
 --- a/test/extractor-prompt-injection.unit-spec.ts
 +++ b/test/extractor-prompt-injection.unit-spec.ts
 @@ -118,12 +118,13 @@ describe('ExtractorService — prompt injection resistance', () => {

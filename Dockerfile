@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:26.10.0-alpine3.24 AS web
+FROM node:26.11.1-alpine3.24 AS web
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -8,7 +8,7 @@ COPY tsconfig.json ./
 COPY web ./web
 RUN npm run check && npm run build
 
-FROM golang:1.27.1-alpine3.24 AS build
+FROM golang:1.27.2-alpine3.24 AS build
 ARG VERSION
 ARG COMMIT=unknown
 ARG TARGETOS

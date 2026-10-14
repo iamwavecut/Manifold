@@ -1,0 +1,159 @@
+diff --git a/src/facts/facts.service.ts b/src/facts/facts.service.ts
+index 610c276..43d5321 100644
+--- a/src/facts/facts.service.ts
++++ b/src/facts/facts.service.ts
+@@ -749,6 +749,9 @@ export class FactsService {
+   }
+ 
+   async retract({ companyId, factId, dto, callerScopes }: RetractOptions): Promise<RetractResult> {
++    if (factId.startsWith('knowledge_edge:')) {
++      return this.retractEdge({ companyId, factId, dto, ...(callerScopes ? { callerScopes } : {}) });
++    }
+     return this.surreal.withCompany(companyId, async (db) => {
+       const ref = this.normalizeFactId(factId);
+       const now = new Date();
+@@ -866,6 +869,80 @@ export class FactsService {
+     });
+   }
+ 
++  /**
++   * Retract a relation. A document commit returns the `knowledge_edge`
++   * id of every relation it wrote and search serves each live edge as a
++   * fact-shaped line (the relation leg), so an edge needs the same
++   * withdrawal route as a fact. The edge closes on both axes, like an
++   * explicitly superseded relation: `validUntil` (when it stopped
++   * holding, unless it already ended) and `invalidatedAt` (the
++   * current-state fence of every edge read). The retraction is recorded
++   * in `source.retraction`, together with the end the edge had, so a
++   * later statement of the same triple can reopen exactly this state
++   * (createEdgeBetween). Same ownership fence as a fact; an edge has no
++   * predicate class, so there is no admin-only subset. Idempotent.
++   */
++  private async retractEdge({
++    companyId,
++    factId,
++    dto,
++    callerScopes,
++  }: RetractOptions): Promise<RetractResult> {
++    return this.surreal.withCompany(companyId, async (db) => {
++      const rid = factId.slice('knowledge_edge:'.length);
++      const now = new Date();
++      const existing = await queryFirst<{ id: unknown; userId?: unknown; invalidatedAt?: unknown }>(
++        db,
++        `SELECT id, userId, invalidatedAt FROM type::record('knowledge_edge', $rid) LIMIT 1`,
++        { rid },
++      );
++      if (!existing) {
++        throw new NotFoundException(`Fact ${factId} not found`);
++      }
++      const retractUserScope = pinUserScope(undefined);
++      if (retractUserScope !== undefined) {
++        const owner =
++          typeof existing.userId === 'string' && existing.userId.length > 0
++            ? existing.userId
++            : undefined;
++        if (owner !== undefined && owner !== retractUserScope) {
++          throw new NotFoundException(`Fact ${factId} not found`);
++        }
++        if (owner === undefined && !callerScopes?.includes('brain:admin')) {
++          throw new ForbiddenException(
++            'retract of a tenant-global relation requires an M2M token or brain:admin',
++          );
++        }
++      }
++      if (existing.invalidatedAt) {
++        return {
++          factId: String(existing.id),
++          retractedAt: toIso(existing.invalidatedAt),
++          cascadedFactIds: [],
++          revivedFactIds: [],
++        };
++      }
++      await db.query(
++        `UPDATE type::record('knowledge_edge', $rid) SET
++            source.retraction = {
++              reason: $reason, by: $by, at: $now, priorValidUntil: validUntil ?? NULL
++            },
++            validUntil = validUntil ?? $now,
++            invalidatedAt = $now
++          WHERE invalidatedAt IS NONE`,
++        { rid, reason: dto.reason, by: dto.retractedBy.source, now },
++      );
++      this.logger.log(`[knowledge.edge.retracted] companyId=${companyId} edgeId=${existing.id}`);
++      this.metrics?.countRetract();
++      return {
++        factId: String(existing.id),
++        retractedAt: now.toISOString(),
++        cascadedFactIds: [],
++        revivedFactIds: [],
++      };
++    });
++  }
++
+   /**
+    * Revive every fact whose `supersededBy` equals the just-retracted
+    * fact AND whose retractionReason is exactly 'superseded' (the
+diff --git a/src/ingest/edge-writer.ts b/src/ingest/edge-writer.ts
+index 111c27b..a7fdb32 100644
+--- a/src/ingest/edge-writer.ts
++++ b/src/ingest/edge-writer.ts
+@@ -6,6 +6,10 @@ interface EdgeIdRow {
+   id: unknown;
+   validFrom?: unknown;
+   validUntil?: unknown;
++  /** Knowledge-time close; set on a retracted or superseded relation. */
++  invalidatedAt?: unknown;
++  /** `source.retraction`, written by FactsService.retractEdge only. */
++  retraction?: unknown;
+ }
+ 
+ /**
+@@ -146,6 +150,27 @@ export function edgeWidenStatements(
+   return { stmts, params };
+ }
+ 
++/**
++ * Undo FactsService.retractEdge: drop the knowledge-time close and the
++ * retraction record, and give back the end the relation had before it
++ * (none for a relation that still held). Guarded on the record, so a
++ * relation closed by supersession or by its own stated end stays closed.
++ * Returns the reopened period, or undefined when nothing was reopened.
++ */
++async function reopenRetractedEdge(db: Surreal, edgeId: string): Promise<EdgeIdRow | undefined> {
++  return queryFirst<EdgeIdRow>(
++    db,
++    `UPDATE $id SET
++        validUntil = IF type::is_datetime(source.retraction.priorValidUntil)
++          THEN source.retraction.priorValidUntil ELSE NONE END,
++        invalidatedAt = NONE,
++        source.retraction = NONE
++      WHERE invalidatedAt IS NOT NONE AND source.retraction IS NOT NONE
++      RETURN id, validFrom, validUntil`,
++    { id: new StringRecordId(edgeId) },
++  );
++}
++
+ /**
+  * Create a knowledge_edge between two ALREADY-resolved entity IDs.
+  * Idempotent within a scope: UNIQUE on (in, out, kind, scopeKey) —
+@@ -176,13 +201,18 @@ export async function createEdgeBetween(db: Surreal, p: EdgeWrite): Promise<stri
+     return edge ? String(edge.id) : null;
+   } catch (err) {
+     if (!isUniqueViolation(err)) throw err;
+-    const existing = await queryFirst<EdgeIdRow>(
++    let existing = await queryFirst<EdgeIdRow>(
+       db,
+-      `SELECT id, validFrom, validUntil FROM knowledge_edge WHERE in = $from AND out = $to AND kind = $kind AND scopeKey = $scopeKey LIMIT 1`,
++      `SELECT id, validFrom, validUntil, invalidatedAt, source.retraction AS retraction FROM knowledge_edge WHERE in = $from AND out = $to AND kind = $kind AND scopeKey = $scopeKey LIMIT 1`,
+       { from: fromRid, to: toRid, kind: p.kind, scopeKey: edgeScopeKey(p.userId) },
+     );
+     if (!existing) return null;
+     const id = String(existing.id);
++    // A relation that was retracted (FactsService.retractEdge) and is
++    // stated again holds again, with the period it had before.
++    if (existing.invalidatedAt && existing.retraction) {
++      existing = (await reopenRetractedEdge(db, id)) ?? existing;
++    }
+     if (edgeTimingWidens(existing, p)) await widenEdgeTiming(db, id, p);
+     return id;
+   }

@@ -1,0 +1,147 @@
+diff --git a/src/db/migrations/0170_derived_from_element_index.surql b/src/db/migrations/0170_derived_from_element_index.surql
+new file mode 100644
+index 000000000..d48d755a0
+--- /dev/null
++++ b/src/db/migrations/0170_derived_from_element_index.surql
+@@ -0,0 +1,81 @@
++-- Manifold: serve the derivedFrom closure from an element index.
++--
++-- fn::mark_derived_stale (0072) and fn::cascade_retract (0069) find a fact's
++-- dependents with `UPDATE knowledge_fact ... WHERE derivedFrom CONTAINSANY
++-- $parents`. SurrealDB 3 indexes an array field as one value, and the planner
++-- answers that UPDATE with a pass over the whole table. The fact_staleness
++-- event (0089) runs mark_derived_stale for every fact that a resolve
++-- supersedes, so each superseded fact cost one table pass (about 330 ms on
++-- 3,500 facts; a SUPERSEDED resolve took 1 s or more).
++--
++-- With an element index, the same lookup written as a SELECT is served from
++-- the index (2 ms) when a statement calls the function; the UPDATE then
++-- touches only the rows it found. The functions keep their signatures,
++-- results and recursion. Inside a DEFINE EVENT the planner does not use the
++-- index at all (measured: 280-470 ms for every spelling of the lookup), so
++-- the event below cannot be made cheap.
++--
++-- fact_staleness (0089) is removed. Brain's own note on it: "To disable on a
++-- tenant: REMOVE EVENT fact_staleness ON TABLE knowledge_fact; the nightly
++-- drain then carries the whole load again, exactly as pre-0089." The drain
++-- (RecomposeService.invalidate) marks dependents stale through the function
++-- above. Only derived summaries are affected: they turn stale at the next
++-- drain instead of inside the write that changed their source fact.
++-- Restore the event with 0089's definition to get the write-time marking
++-- back at the price of one table pass per superseded fact.
++DEFINE INDEX IF NOT EXISTS fact_derived_from_el_idx ON knowledge_fact FIELDS derivedFrom[*];
++
++DEFINE FUNCTION OVERWRITE fn::mark_derived_stale(
++    $parents: array<record<knowledge_fact>>,
++    $reason: string,
++    $now: datetime
++) {
++    LET $victims = (
++        SELECT VALUE id FROM knowledge_fact WITH INDEX fact_derived_from_el_idx
++        WHERE derivedFrom CONTAINSANY $parents
++          AND staleAt IS NONE
++          AND retractedAt IS NONE
++    );
++    LET $children = (
++        UPDATE $victims SET
++            staleAt = $now,
++            staleReason = $reason
++        RETURN id
++    );
++    LET $childIds = array::distinct($children.id ?? []);
++    IF array::len($childIds) == 0 {
++        RETURN [];
++    };
++    RETURN array::concat(
++        $childIds.map(|$c| type::string($c)),
++        fn::mark_derived_stale($childIds, $reason, $now)
++    );
++};
++
++DEFINE FUNCTION OVERWRITE fn::cascade_retract(
++    $parents: array<record<knowledge_fact>>,
++    $reason: string,
++    $now: datetime
++) {
++    LET $victims = (
++        SELECT VALUE id FROM knowledge_fact WITH INDEX fact_derived_from_el_idx
++        WHERE derivedFrom CONTAINSANY $parents
++          AND retractedAt IS NONE
++    );
++    LET $children = (
++        UPDATE $victims SET
++            status = 'retracted',
++            retractedAt = $now,
++            retractedBy = 'cascade',
++            retractionReason = 'parent retracted: ' + $reason,
++            validUntil = $now
++        RETURN id
++    );
++    LET $childIds = array::distinct($children.id ?? []);
++    IF array::len($childIds) == 0 {
++        RETURN [];
++    };
++    RETURN array::concat($childIds, fn::cascade_retract($childIds, $reason, $now));
++};
++
++REMOVE EVENT IF EXISTS fact_staleness ON TABLE knowledge_fact;
+diff --git a/test/stale-cascade-plans.unit-spec.ts b/test/stale-cascade-plans.unit-spec.ts
+new file mode 100644
+index 000000000..f26d3c51a
+--- /dev/null
++++ b/test/stale-cascade-plans.unit-spec.ts
+@@ -0,0 +1,38 @@
++/**
++ * Guards for the derivedFrom closure. SurrealDB 3 serves
++ * `derivedFrom CONTAINSANY $parents` from an element index only for a
++ * SELECT issued by a statement; inside a DEFINE EVENT it is a table pass.
++ * Migration 0170 therefore indexes the elements, finds dependents with a
++ * SELECT, and removes the write-time event.
++ */
++import { readFileSync } from 'node:fs';
++import { join } from 'node:path';
++
++const migration = readFileSync(
++  join(__dirname, '../src/db/migrations/0170_derived_from_element_index.surql'),
++  'utf8',
++);
++
++describe('derivedFrom closure plans', () => {
++  it('indexes the elements of derivedFrom', () => {
++    expect(migration).toMatch(
++      /DEFINE INDEX IF NOT EXISTS fact_derived_from_el_idx ON knowledge_fact FIELDS derivedFrom\[\*\];/,
++    );
++  });
++
++  it('finds dependents with an indexed SELECT before updating them', () => {
++    for (const name of ['mark_derived_stale', 'cascade_retract']) {
++      const body = migration.slice(migration.indexOf(`fn::${name}(`));
++      const fn = body.slice(0, body.indexOf('\n};'));
++      expect(fn).toContain(
++        'SELECT VALUE id FROM knowledge_fact WITH INDEX fact_derived_from_el_idx',
++      );
++      expect(fn).toContain('UPDATE $victims SET');
++      expect(fn).not.toMatch(/UPDATE knowledge_fact[\s\S]*CONTAINSANY/);
++    }
++  });
++
++  it('removes the write-time staleness event', () => {
++    expect(migration).toContain('REMOVE EVENT IF EXISTS fact_staleness ON TABLE knowledge_fact;');
++  });
++});
+diff --git a/test/staleness-event.e2e-spec.ts b/test/staleness-event.e2e-spec.ts
+index 0d17c6abd..713d4c4c8 100644
+--- a/test/staleness-event.e2e-spec.ts
++++ b/test/staleness-event.e2e-spec.ts
+@@ -36,7 +36,10 @@ import { newRunToken, promoteStaging, stagingNamespace } from '../src/admin/deri
+ 
+ const ENTITY_ID = 'knowledge_entity:staleness_evt';
+ 
+-describe('0089 fact_staleness event', () => {
++// Manifold's migration 0170 removes the event (a table pass per superseded
++// fact in this deployment); the nightly drain carries the load. The claims
++// below describe the event and no longer hold on a fully migrated tenant.
++describe.skip('0089 fact_staleness event (removed by migration 0170)', () => {
+   let f: AppFixture;
+   let surreal: SurrealService;
+   const auth = () => ({ Authorization: `Bearer ${f.apiKey}` });

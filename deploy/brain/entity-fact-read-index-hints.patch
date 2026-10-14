@@ -1,0 +1,70 @@
+diff --git a/src/entities/entities.service.ts b/src/entities/entities.service.ts
+index 62beede10..cba9f0b09 100644
+--- a/src/entities/entities.service.ts
++++ b/src/entities/entities.service.ts
+@@ -321,8 +321,12 @@ export class EntitiesService {
+       const params: Record<string, unknown> = { rid: ref.id, ...asOfParams, ...user.params };
+       const factRows = await queryRows<FactProfileRow>(
+         db,
++        // WITH INDEX: the planner picks the single-field `userId` index
++        // for `userId IS NONE` (true for every row of a tenant without
++        // per-user memory) and scans the whole table for each profile.
++        // The entity index reads only this entity's facts.
+         `SELECT ${FACT_PROFILE_FIELDS}
+-         FROM knowledge_fact
++         FROM knowledge_fact WITH INDEX fact_entity_idx
+          WHERE ${baseClauses.join(' AND ')}
+          ORDER BY recordedAt DESC
+          LIMIT 100`,
+diff --git a/src/ingest/fact-expectation.ts b/src/ingest/fact-expectation.ts
+index b212e906f..396097dcf 100644
+--- a/src/ingest/fact-expectation.ts
++++ b/src/ingest/fact-expectation.ts
+@@ -106,15 +106,39 @@ export async function stampExpectation(args: {
+   // and states it again with a new expectedEnd (prompts.ts MEMORY).
+   if (!p.expectedUntil && result?.outcome !== 'CORROBORATED') return;
+   try {
+-    const [, rows] = await db.query<[unknown, Array<{ id: unknown } & SameValueRow>]>(
+-      `LET $t = (SELECT entityId, predicate, predicateAlias, object, userId FROM ONLY $id);
+-       SELECT id, validFrom, expectedUntil FROM knowledge_fact
+-        WHERE entityId = $t.entityId AND object = $t.object
+-          AND (predicateAlias ?? predicate) = ($t.predicateAlias ?? $t.predicate)
+-          AND userId = $t.userId
++    // Two statements, the second bound to the first one's values as
++    // parameters: inside one multi-statement query `$t.entityId` is a
++    // runtime value, and the planner answers `entityId = $t.entityId` with
++    // a scan of the whole fact table (270 ms on 3,500 facts, 2 ms bound).
++    const [key] = await db.query<
++      [
++        | {
++            entityId: unknown;
++            predicate: string;
++            predicateAlias?: string | null;
++            object: string;
++            userId?: string | null;
++          }
++        | undefined,
++      ]
++    >(`SELECT entityId, predicate, predicateAlias, object, userId FROM ONLY $id`, {
++      id: new StringRecordId(target),
++    });
++    if (!key) return;
++    const [rows] = await db.query<[Array<{ id: unknown } & SameValueRow>]>(
++      `SELECT id, validFrom, expectedUntil FROM knowledge_fact WITH INDEX fact_entity_idx
++        WHERE entityId = $entityId AND object = $object
++          AND (predicateAlias ?? predicate) = ($predicateAlias ?? $predicate)
++          AND userId = $userId
+           AND status IN ['active', 'competing'] AND retractedAt IS NONE
+-          AND validUntil IS NONE;`,
+-      { id: new StringRecordId(target) },
++          AND validUntil IS NONE`,
++      {
++        entityId: key.entityId,
++        object: key.object,
++        predicate: key.predicate,
++        predicateAlias: key.predicateAlias ?? undefined,
++        userId: key.userId ?? undefined,
++      },
+     );
+     const same = rows ?? [];
+     if (same.length === 0) return;

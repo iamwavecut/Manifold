@@ -71,7 +71,16 @@ func (s *Service) materializeGraphDocument(ctx context.Context, doc model.Docume
 	if err := s.store.ProjectDerivedGraph(ctx, projection); err != nil {
 		return err
 	}
-	return s.retractOrphanedDerivedFacts(ctx, doc.ID)
+	return s.retractOrphanedDerivedGraph(ctx, doc.ID)
+}
+
+// retractOrphanedDerivedGraph withdraws from Brain what documentID claimed and
+// no live document claims any more: first its facts, then its relations.
+func (s *Service) retractOrphanedDerivedGraph(ctx context.Context, documentID string) error {
+	if err := s.retractOrphanedDerivedFacts(ctx, documentID); err != nil {
+		return err
+	}
+	return s.retractOrphanedDerivedRelations(ctx, documentID)
 }
 
 // derivedFactRetractionReason must differ from Brain's "superseded": Brain
@@ -126,6 +135,38 @@ func (s *Service) retractOrphanedDerivedFacts(ctx context.Context, documentID st
 			if ok {
 				queue = append(queue, orphan)
 			}
+		}
+	}
+	return nil
+}
+
+// retractOrphanedDerivedRelations retracts in Brain the derived relations that
+// documentID claimed and that no live document claims at its current revision.
+// Brain serves a live relation as a fact-shaped line in search, so a withdrawn
+// relation would keep ranking and use up candidate slots. Brain closes the
+// edge and reopens it when a later document states the same relation; the
+// route does not revive other rows, so one call per relation is enough. A
+// Brain without the edge route answers 404, which counts as done like a
+// missing fact.
+func (s *Service) retractOrphanedDerivedRelations(ctx context.Context, documentID string) error {
+	relations, err := s.store.OrphanedDerivedRelations(ctx, documentID)
+	if err != nil {
+		return err
+	}
+	for _, relation := range relations {
+		_, err := s.graph.RetractFact(ctx, relation.UpstreamID, derivedFactRetractionReason)
+		var dependency *upstream.DependencyError
+		switch {
+		case err == nil:
+		case errors.As(err, &dependency) && dependency.Status == http.StatusNotFound:
+		case errors.As(err, &dependency) && dependency.Status == http.StatusForbidden:
+			s.logger.Warn("derived relation retraction is not permitted", "document_id", documentID, "relation_id", relation.ID)
+			continue
+		default:
+			return fmt.Errorf("retract derived relation %s: %w", relation.ID, err)
+		}
+		if _, err := s.store.MarkOrphanedDerivedRelationRetracted(ctx, relation.ID); err != nil {
+			return err
 		}
 	}
 	return nil
