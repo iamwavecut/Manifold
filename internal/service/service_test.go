@@ -791,8 +791,8 @@ func (fakeGraphStore) IngestRelation(context.Context, model.Relation, model.Enti
 	return "", nil
 }
 
-func (fakeGraphStore) RetractFact(context.Context, string, string) error {
-	return nil
+func (fakeGraphStore) RetractFact(context.Context, string, string) ([]string, error) {
+	return nil, nil
 }
 
 func (fakeGraphStore) GetEntity(context.Context, string) (map[string]any, error) {

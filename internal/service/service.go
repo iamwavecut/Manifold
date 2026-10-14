@@ -352,7 +352,7 @@ func (s *Service) RetractFact(ctx context.Context, id, reason string) error {
 		return err
 	}
 	if fact.UpstreamID != "" {
-		if err := s.graph.RetractFact(ctx, fact.UpstreamID, reason); err != nil {
+		if _, err := s.graph.RetractFact(ctx, fact.UpstreamID, reason); err != nil {
 			return err
 		}
 	}
@@ -535,6 +535,12 @@ func (s *Service) deleteDocument(ctx context.Context, job model.Job) error {
 		BrainID string `json:"brain_id"`
 	}
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return err
+	}
+	// Retract first: a retry after a Brain failure then repeats only
+	// idempotent steps, and the deleted document's claims are already
+	// outside the current graph.
+	if err := s.retractOrphanedDerivedFacts(ctx, job.ResourceID); err != nil {
 		return err
 	}
 	if err := s.documents.Delete(ctx, payload.OVURI, false); err != nil {

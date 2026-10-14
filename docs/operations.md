@@ -111,8 +111,8 @@ remediation and create a fresh reviewed plan rather than assuming the old
 rolled-back plan can resume.
 
 Async Brain extraction retains normalized source chunks. Deleting a Manifold
-document withdraws it from current public retrieval but does not purge those
-private Brain chunks. Review the [retention boundary](brain-patch.md) before
+document withdraws it from current public retrieval and retracts its unshared
+Brain facts, but it does not purge those private Brain chunks. Review the [retention boundary](brain-patch.md) before
 production migration; the service key is not granted administrator scope.
 
 ## Brain liveness

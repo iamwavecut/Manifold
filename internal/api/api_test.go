@@ -600,7 +600,7 @@ func (fakeGraph) IngestFact(context.Context, model.Fact, model.Entity) (string, 
 func (fakeGraph) IngestRelation(context.Context, model.Relation, model.Entity, model.Entity) (string, error) {
 	return "brain-relation", nil
 }
-func (fakeGraph) RetractFact(context.Context, string, string) error { return nil }
+func (fakeGraph) RetractFact(context.Context, string, string) ([]string, error) { return nil, nil }
 func (fakeGraph) GetEntity(context.Context, string) (map[string]any, error) {
 	return map[string]any{}, nil
 }

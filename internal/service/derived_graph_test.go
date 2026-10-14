@@ -1,9 +1,13 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -484,5 +488,115 @@ func TestCanonicalizeHistoricalFactUsesExactRevisionAndExcludesDeletedSources(t 
 	if _, ok, err := svc.canonicalizeProjectedFactHitWithOptions(
 		t.Context(), model.SearchHit{Kind: "fact", ID: "brain-historical-fact", Revision: "r1"}, true, "history/**"); err != nil || ok {
 		t.Fatalf("deleted source remained available through includeHistory: ok=%t err=%v", ok, err)
+	}
+}
+
+type retractingGraphStore struct {
+	fakeGraphStore
+	calls    []string
+	revived  map[string][]string
+	failures map[string]error
+}
+
+func (g *retractingGraphStore) RetractFact(_ context.Context, upstreamID, reason string) ([]string, error) {
+	if reason != derivedFactRetractionReason {
+		return nil, fmt.Errorf("unexpected retraction reason %q", reason)
+	}
+	g.calls = append(g.calls, upstreamID)
+	if err := g.failures[upstreamID]; err != nil {
+		return nil, err
+	}
+	revived := g.revived[upstreamID]
+	delete(g.revived, upstreamID)
+	return revived, nil
+}
+
+func derivedFactResult(doc model.Document, factIDs ...string) upstream.GraphIngestResult {
+	result := upstream.GraphIngestResult{
+		DocumentID: "brain-" + doc.ID,
+		OriginURI:  "manifold://documents/" + doc.ID + "@" + doc.Revision,
+		Revision:   doc.Revision,
+		EntityIDs:  []string{"brain-mira"},
+		FactIDs:    factIDs,
+		Entities:   []upstream.GraphEntity{{BrainID: "brain-mira", Name: "Mira Chen", Type: "staff"}},
+	}
+	for _, id := range factIDs {
+		result.Facts = append(result.Facts, upstream.GraphFact{
+			BrainID: id, EntityBrainID: "brain-mira", Predicate: "note", Object: id, Status: "active",
+		})
+	}
+	return result
+}
+
+func TestWithdrawnDocumentFactsAreRetractedInBrain(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
+	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	doc, _, err := db.CreateDocument(t.Context(), model.Document{
+		ID: "withdrawn-source", Title: "Withdrawn source", Format: "markdown", Content: "First revision.",
+		OVURI: "viking://resources/manifold/withdrawn-source.md",
+	}, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: "withdrawn-source",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), doc, derivedFactResult(doc, "fact-old")); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.calls) != 0 {
+		t.Fatalf("current facts were retracted: %v", graph.calls)
+	}
+
+	updated, _, err := db.UpdateDocument(t.Context(), doc.ID, doc.ETag, "", "Second revision.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: doc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), updated,
+		derivedFactResult(updated, "fact-kept", "fact-admin", "fact-gone")); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(graph.calls, []string{"fact-old"}) {
+		t.Fatalf("revision retractions = %v, want the dropped fact only", graph.calls)
+	}
+
+	graph.calls = nil
+	// Retracting fact-kept makes Brain revive the superseded fact-old.
+	graph.revived["fact-kept"] = []string{"fact-old"}
+	graph.failures["fact-admin"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusForbidden}
+	graph.failures["fact-gone"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusNotFound}
+	job, err := db.MarkDocumentDeleted(t.Context(), updated.ID, updated.ETag, model.Job{
+		ID: identity.NewXID(), Kind: "document.delete", ResourceType: "document", ResourceID: updated.ID,
+		Payload: []byte(`{"ov_uri":"` + updated.OVURI + `"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.deleteDocument(t.Context(), job); err != nil {
+		t.Fatalf("delete with skipped and missing upstream facts failed: %v", err)
+	}
+	got := slices.Clone(graph.calls)
+	slices.Sort(got)
+	if want := []string{"fact-admin", "fact-gone", "fact-kept", "fact-old"}; !slices.Equal(got, want) {
+		t.Fatalf("deletion retractions = %v, want %v", got, want)
+	}
+	if graph.calls[len(graph.calls)-1] != "fact-old" {
+		t.Fatalf("revived fact was not retracted after its successor: %v", graph.calls)
+	}
+	left, err := db.OrphanedDerivedFacts(t.Context(), updated.ID)
+	if err != nil || len(left) != 1 || left[0].UpstreamID != "fact-admin" {
+		t.Fatalf("unretracted orphans = %#v, err = %v; want only the forbidden fact", left, err)
+	}
+
+	graph.calls = nil
+	graph.failures["fact-admin"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusServiceUnavailable, Retryable: true}
+	if err := svc.deleteDocument(t.Context(), job); err == nil {
+		t.Fatal("transient Brain failure did not fail the delete job")
 	}
 }

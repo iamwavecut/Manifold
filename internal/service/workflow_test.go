@@ -1276,7 +1276,9 @@ func (g *workflowGraph) IngestRelation(context.Context, model.Relation, model.En
 	return "", nil
 }
 
-func (g *workflowGraph) RetractFact(context.Context, string, string) error { return nil }
+func (g *workflowGraph) RetractFact(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
 
 func (g *workflowGraph) GetEntity(context.Context, string) (map[string]any, error) {
 	return map[string]any{}, nil
