@@ -47,6 +47,28 @@ MANIFOLD_URL=$url \
 MANIFOLD_API_KEY=$api_key \
 	go test -tags=integration -count=1 -v ./test/integration
 
+# The derived-memory test deleted the only document that stated where Mira
+# Chen works. Brain itself must stop serving those facts, not only Manifold's
+# canonicalized search.
+# shellcheck disable=SC2016 # expanded inside the Manifold container
+brain_search=$(compose exec -T manifold sh -c 'wget -qO- \
+	--header "Authorization: Bearer $BRAIN_API_KEY" --header "Content-Type: application/json" \
+	--post-data "{\"query\":\"Mira Chen works at\",\"limit\":20,\"searchMode\":\"hybrid\"}" \
+	http://brain:3000/v1/search')
+case "$brain_search" in
+	*'"results"'*) ;;
+	*)
+		echo "Brain search returned an incomplete response" >&2
+		exit 1
+		;;
+esac
+case "$brain_search" in
+	*'"object":"Meridian Labs"'* | *'"object":"Borealis Labs"'*)
+		echo "Brain still serves facts of a deleted document" >&2
+		exit 1
+		;;
+esac
+
 skill_result=$(MANIFOLD_URL=$url \
 	MANIFOLD_API_KEY=$api_key \
 	sh skills/manifold/scripts/manifold --json remember \

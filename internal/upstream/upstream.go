@@ -25,7 +25,10 @@ type GraphStore interface {
 	Search(context.Context, string, int, bool) ([]model.SearchHit, error)
 	IngestFact(context.Context, model.Fact, model.Entity) (string, string, error)
 	IngestRelation(context.Context, model.Relation, model.Entity, model.Entity) (string, error)
-	RetractFact(context.Context, string, string) error
+	// RetractFact retracts an upstream fact and returns the upstream IDs of the
+	// facts that the provider made current again because the retracted fact
+	// had superseded them.
+	RetractFact(context.Context, string, string) ([]string, error)
 	GetEntity(context.Context, string) (map[string]any, error)
 }
 

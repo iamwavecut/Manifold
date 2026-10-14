@@ -618,13 +618,19 @@ func (b *Brain) IngestRelation(ctx context.Context, relation model.Relation, fro
 	return stringValue(response, "edgeId"), err
 }
 
-func (b *Brain) RetractFact(ctx context.Context, upstreamID, reason string) error {
+func (b *Brain) RetractFact(ctx context.Context, upstreamID, reason string) ([]string, error) {
 	path := "/v1/facts/" + url.PathEscape(upstreamID) + "/retract"
 	body := map[string]any{
 		"reason":      reason,
 		"retractedBy": map[string]string{"source": "system"},
 	}
-	return b.http.do(ctx, http.MethodPost, path, body, nil)
+	var response struct {
+		RevivedFactIDs []string `json:"revivedFactIds"`
+	}
+	if err := b.http.do(ctx, http.MethodPost, path, body, &response); err != nil {
+		return nil, err
+	}
+	return response.RevivedFactIDs, nil
 }
 
 func (b *Brain) GetEntity(ctx context.Context, upstreamID string) (map[string]any, error) {
