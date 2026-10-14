@@ -123,6 +123,18 @@ in [CI](../.github/workflows/ci.yml):
   their source. Manifold never reads derived summaries. Restore the event with
   0089's definition to get write-time marking back at the cost of one table
   pass per superseded fact. The patch also skips the event's e2e spec.
+- [`edge-retraction.patch`](../deploy/brain/edge-retraction.patch) lets
+  `POST /v1/facts/:id/retract` take a `knowledge_edge:` id. Brain `main` serves
+  every live edge of a matched entity as a fact-shaped line in search (the
+  relation leg), and v2.3 had no way to withdraw an edge, so the relation of a
+  deleted document kept ranking. The route closes the edge on both time axes
+  (`validUntil` unless it already ended, `invalidatedAt`) and records the
+  retraction and the earlier end in `source.retraction`, with the same
+  ownership fence as a fact and idempotent repeats. When a later document
+  states the same triple, `createEdgeBetween` finds the closed edge through
+  the unique index and reopens it from that record; an edge closed by
+  supersession or by a stated end has no record and stays closed. There is no
+  migration.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
@@ -168,11 +180,12 @@ retracted as superseded. When retracting a successor revives a predecessor
 that is also unclaimed, Manifold retracts the predecessor again. Brain answers
 404 for a fact that no longer exists, which counts as done, and 403 for the
 predicates it reserves for `brain:admin`; Manifold logs and skips those. A
-transient failure fails the job, which retries. Brain v2.3 has no retraction
-route for edges, so withdrawn relations remain in Brain; Manifold does not map
-relations from Brain search, and its public projection already hides them.
-Facts of documents deleted before this behavior existed stay active in Brain
-until they are retracted separately.
+transient failure fails the job, which retries. Relations follow the same
+rule through the same route with `edge-retraction.patch`: after the facts, the
+job retracts the relations that no live document claims, and a relation that a
+later document states again is reopened in Brain. Facts and relations of
+documents deleted before this behavior existed stay active in Brain until they
+are retracted separately.
 
 Brain has no published host port. Manifold and SurrealDB communicate with it
 over the private Compose network; Brain also joins the provider network for
@@ -189,7 +202,7 @@ git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-se
 git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
 git -C "$brain_src" checkout -q FETCH_HEAD
 test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade; do
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction; do
     git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
     git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
 done

@@ -22,6 +22,7 @@ COPY deploy/brain/entity-fact-read-index-hints.patch /tmp/entity-fact-read-index
 COPY deploy/brain/resolve-fact-entity-index.patch /tmp/resolve-fact-entity-index.patch
 COPY deploy/brain/selective-entity-fact-indexes.patch /tmp/selective-entity-fact-indexes.patch
 COPY deploy/brain/derived-stale-cascade.patch /tmp/derived-stale-cascade.patch
+COPY deploy/brain/edge-retraction.patch /tmp/edge-retraction.patch
 RUN cd /source \
     && git apply --check /tmp/openai-api-key-format.patch \
     && git apply /tmp/openai-api-key-format.patch \
@@ -46,7 +47,9 @@ RUN cd /source \
     && git apply --check /tmp/selective-entity-fact-indexes.patch \
     && git apply /tmp/selective-entity-fact-indexes.patch \
     && git apply --check /tmp/derived-stale-cascade.patch \
-    && git apply /tmp/derived-stale-cascade.patch
+    && git apply /tmp/derived-stale-cascade.patch \
+    && git apply --check /tmp/edge-retraction.patch \
+    && git apply /tmp/edge-retraction.patch
 
 # Node 22 LTS (22.23.3); upstream main builds on the same major line.
 FROM node:22.23.3-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS builder

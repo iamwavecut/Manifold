@@ -559,7 +559,7 @@ func (s *Service) deleteDocument(ctx context.Context, job model.Job) error {
 	// Retract first: a retry after a Brain failure then repeats only
 	// idempotent steps, and the deleted document's claims are already
 	// outside the current graph.
-	if err := s.retractOrphanedDerivedFacts(ctx, job.ResourceID); err != nil {
+	if err := s.retractOrphanedDerivedGraph(ctx, job.ResourceID); err != nil {
 		return err
 	}
 	if err := s.documents.Delete(ctx, payload.OVURI, false); err != nil {
