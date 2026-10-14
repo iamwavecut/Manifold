@@ -467,6 +467,81 @@ func insertDerivedGraphClaim(
 	return resultChanged(result), nil
 }
 
+// OrphanedDerivedFact is a derived fact that a document claimed at some
+// revision and that no live document claims at its current revision.
+type OrphanedDerivedFact struct {
+	ID         string
+	UpstreamID string
+}
+
+// OrphanedDerivedFacts lists the derived facts that documentID once claimed
+// and that lost every current claim, through deletion of that document or a
+// later revision that no longer contains them. Facts that another live
+// document still claims stay out of the list.
+func (s *Store) OrphanedDerivedFacts(ctx context.Context, documentID string) ([]OrphanedDerivedFact, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT f.id, f.upstream_id FROM facts f
+		WHERE f.origin = ? AND f.status <> 'retracted' AND f.upstream_id <> ''
+			AND EXISTS (
+				SELECT 1 FROM derived_graph_claims c
+				WHERE c.object_kind = 'fact' AND c.object_id = f.id AND c.document_id = ?
+			)
+			AND NOT `+currentDerivedGraphClaim("f", "fact")+`
+		ORDER BY f.id`, derivedGraphOrigin, documentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var facts []OrphanedDerivedFact
+	for rows.Next() {
+		var fact OrphanedDerivedFact
+		if err := rows.Scan(&fact.ID, &fact.UpstreamID); err != nil {
+			return nil, err
+		}
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
+}
+
+// OrphanedDerivedFactByUpstreamID finds the derived fact projected from the
+// upstream fact when no live document claims it at its current revision. It
+// ignores the local status, so a fact that the provider made current again
+// after a retraction is found as well.
+func (s *Store) OrphanedDerivedFactByUpstreamID(ctx context.Context, upstreamID string) (OrphanedDerivedFact, bool, error) {
+	var fact OrphanedDerivedFact
+	err := s.db.QueryRowContext(ctx, `
+		SELECT f.id, f.upstream_id FROM facts f
+		WHERE f.origin = ? AND f.upstream_id = ?
+			AND EXISTS (SELECT 1 FROM derived_graph_claims c WHERE c.object_kind = 'fact' AND c.object_id = f.id)
+			AND NOT `+currentDerivedGraphClaim("f", "fact")+`
+		LIMIT 1`, derivedGraphOrigin, upstreamID).Scan(&fact.ID, &fact.UpstreamID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return OrphanedDerivedFact{}, false, nil
+	}
+	return fact, err == nil, err
+}
+
+// MarkOrphanedDerivedFactRetracted records that the upstream fact was
+// retracted. It changes nothing when a live document claims the fact again,
+// and reports whether the fact changed.
+func (s *Store) MarkOrphanedDerivedFactRetracted(ctx context.Context, id string) (bool, error) {
+	changed := false
+	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE facts SET status = 'retracted'
+			WHERE id = ? AND origin = ? AND status <> 'retracted'
+				AND NOT `+currentDerivedGraphClaim("facts", "fact"), id, derivedGraphOrigin)
+		if err != nil {
+			return err
+		}
+		if changed = resultChanged(result); !changed {
+			return nil
+		}
+		return bumpVersion(ctx, tx)
+	})
+	return changed, err
+}
+
 func currentDerivedGraphClaim(objectAlias, kind string) string {
 	return fmt.Sprintf(`EXISTS (
 		SELECT 1 FROM derived_graph_claims c

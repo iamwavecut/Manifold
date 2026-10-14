@@ -101,11 +101,26 @@ Async indexing requires stored source text. Manifold therefore sends
 `storeContent: true`, which retains normalized source chunks in Brain after
 extraction. Manifold's service key has read/write access, not `brain:admin`;
 Brain's `DELETE /v1/documents/:id/content` purge route requires the admin
-scope. Manifold document deletion currently removes its OpenViking source and
-withdraws the public graph projection, but it does not purge Brain's retained
-chunks. The Brain document header, content hash, and candidate audit rows can
-remain after a Brain content purge as well. Treat this as a known retention
-boundary when reviewing deletion or retention policy.
+scope. Manifold document deletion removes its OpenViking source and withdraws
+the public graph projection, but it does not purge Brain's retained chunks.
+The Brain document header, content hash, and candidate audit rows can remain
+after a Brain content purge as well. Treat this as a known retention boundary
+when reviewing deletion or retention policy.
+
+Deletion and every new revision retract, through `POST /v1/facts/:id/retract`,
+the Brain facts that the document claimed and that no live document claims at
+its current revision any more. Facts that another live document corroborates
+stay active. The retraction reason is `manifold_source_withdrawn`, never
+`superseded`: Brain revives a predecessor only when that predecessor was
+retracted as superseded. When retracting a successor revives a predecessor
+that is also unclaimed, Manifold retracts the predecessor again. Brain answers
+404 for a fact that no longer exists, which counts as done, and 403 for the
+predicates it reserves for `brain:admin`; Manifold logs and skips those. A
+transient failure fails the job, which retries. Brain v2.3 has no retraction
+route for edges, so withdrawn relations remain in Brain; Manifold does not map
+relations from Brain search, and its public projection already hides them.
+Facts of documents deleted before this behavior existed stay active in Brain
+until they are retracted separately.
 
 Brain has no published host port. Manifold and SurrealDB communicate with it
 over the private Compose network; Brain also joins the provider network for

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/iamwavecut/Manifold/internal/model"
@@ -67,7 +68,67 @@ func (s *Service) materializeGraphDocument(ctx context.Context, doc model.Docume
 			Confidence:          relation.Confidence,
 		})
 	}
-	return s.store.ProjectDerivedGraph(ctx, projection)
+	if err := s.store.ProjectDerivedGraph(ctx, projection); err != nil {
+		return err
+	}
+	return s.retractOrphanedDerivedFacts(ctx, doc.ID)
+}
+
+// derivedFactRetractionReason must differ from Brain's "superseded": Brain
+// revives a predecessor fact only when its retraction reason is "superseded".
+const derivedFactRetractionReason = "manifold_source_withdrawn"
+
+// maxDerivedFactRetractions bounds the Brain calls per fact. A fact that a
+// later fact superseded needs a second call after Brain revives it.
+const maxDerivedFactRetractions = 3
+
+// retractOrphanedDerivedFacts retracts in Brain the derived facts that the
+// document claimed and that no live document claims at its current revision,
+// so deleted or replaced document content stops reaching Brain search. Brain
+// can make a superseded predecessor current again when it retracts its
+// successor; such a predecessor is retracted as well unless a live document
+// claims it.
+func (s *Service) retractOrphanedDerivedFacts(ctx context.Context, documentID string) error {
+	queue, err := s.store.OrphanedDerivedFacts(ctx, documentID)
+	if err != nil {
+		return err
+	}
+	calls := map[string]int{}
+	for len(queue) > 0 {
+		fact := queue[0]
+		queue = queue[1:]
+		if calls[fact.UpstreamID] >= maxDerivedFactRetractions {
+			s.logger.Warn("derived fact retraction limit reached", "document_id", documentID, "fact_id", fact.ID)
+			continue
+		}
+		calls[fact.UpstreamID]++
+		revived, err := s.graph.RetractFact(ctx, fact.UpstreamID, derivedFactRetractionReason)
+		var dependency *upstream.DependencyError
+		switch {
+		case err == nil:
+		case errors.As(err, &dependency) && dependency.Status == http.StatusNotFound:
+		case errors.As(err, &dependency) && dependency.Status == http.StatusForbidden:
+			// Brain reserves some predicates for brain:admin. The public
+			// projection already hides the fact; keep the job moving.
+			s.logger.Warn("derived fact retraction is not permitted", "document_id", documentID, "fact_id", fact.ID)
+			continue
+		default:
+			return fmt.Errorf("retract derived fact %s: %w", fact.ID, err)
+		}
+		if _, err := s.store.MarkOrphanedDerivedFactRetracted(ctx, fact.ID); err != nil {
+			return err
+		}
+		for _, upstreamID := range revived {
+			orphan, ok, err := s.store.OrphanedDerivedFactByUpstreamID(ctx, upstreamID)
+			if err != nil {
+				return err
+			}
+			if ok {
+				queue = append(queue, orphan)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Service) canonicalizeProjectedFactHit(ctx context.Context, hit model.SearchHit) (model.SearchHit, bool, error) {

@@ -509,3 +509,92 @@ func TestCreateEntityHonorsSlugReservedForRollback(t *testing.T) {
 		t.Fatalf("rollback did not restore the reserved entity: %#v, err=%v", entity, err)
 	}
 }
+
+func TestOrphanedDerivedFactsFollowDeletionAndRevisionButKeepSharedFacts(t *testing.T) {
+	s := openTestStore(t)
+	first := createTestDocument(t, s, "orphan-source-a", "markdown", "Mira works at Meridian. Mira lives in Lisbon.")
+	second := createTestDocument(t, s, "orphan-source-b", "markdown", "Mira works at Meridian.")
+	entities := []DerivedGraphEntity{{CommitRef: "orphan-mira", Name: "Mira Chen", Kind: "staff"}}
+	shared := DerivedGraphFact{
+		CommitRef: "orphan-shared", EntityCommitRef: "orphan-mira", Predicate: "works_at", Object: "Meridian Labs",
+	}
+	own := DerivedGraphFact{
+		CommitRef: "orphan-own", EntityCommitRef: "orphan-mira", Predicate: "lives_in", Object: "Lisbon",
+	}
+	if err := s.ProjectDerivedGraph(t.Context(), DerivedGraphProjection{
+		DocumentID: first.ID, Revision: first.Revision, Entities: entities, Facts: []DerivedGraphFact{shared, own},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ProjectDerivedGraph(t.Context(), DerivedGraphProjection{
+		DocumentID: second.ID, Revision: second.Revision, Entities: entities, Facts: []DerivedGraphFact{shared},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if orphans, err := s.OrphanedDerivedFacts(t.Context(), first.ID); err != nil || len(orphans) != 0 {
+		t.Fatalf("live document has orphaned facts: %#v, err = %v", orphans, err)
+	}
+
+	if _, err := s.MarkDocumentDeleted(t.Context(), first.ID, first.ETag, model.Job{
+		ID: identity.NewXID(), Kind: "document.delete", ResourceType: "document", ResourceID: first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err := s.OrphanedDerivedFacts(t.Context(), first.ID)
+	if err != nil || len(orphans) != 1 || orphans[0].UpstreamID != "orphan-own" {
+		t.Fatalf("deleted document orphans = %#v, err = %v; want only its unshared fact", orphans, err)
+	}
+	if changed, err := s.MarkOrphanedDerivedFactRetracted(t.Context(), orphans[0].ID); err != nil || !changed {
+		t.Fatalf("mark retracted changed = %v, err = %v", changed, err)
+	}
+	if again, err := s.OrphanedDerivedFacts(t.Context(), first.ID); err != nil || len(again) != 0 {
+		t.Fatalf("retracted fact is still listed: %#v, err = %v", again, err)
+	}
+	revived, ok, err := s.OrphanedDerivedFactByUpstreamID(t.Context(), "orphan-own")
+	if err != nil || !ok || revived.ID != orphans[0].ID {
+		t.Fatalf("retracted orphan lookup = %#v, %v, err = %v", revived, ok, err)
+	}
+	if _, ok, err := s.OrphanedDerivedFactByUpstreamID(t.Context(), "orphan-shared"); err != nil || ok {
+		t.Fatalf("shared fact claimed by a live document was found as an orphan: %v, err = %v", ok, err)
+	}
+
+	updated, _, err := s.UpdateDocument(t.Context(), second.ID, second.ETag, "", "Mira works at Borealis.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: second.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ProjectDerivedGraph(t.Context(), DerivedGraphProjection{
+		DocumentID: updated.ID, Revision: updated.Revision, Entities: entities,
+		Facts: []DerivedGraphFact{{
+			CommitRef: "orphan-new", EntityCommitRef: "orphan-mira", Predicate: "works_at", Object: "Borealis Labs",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err = s.OrphanedDerivedFacts(t.Context(), second.ID)
+	if err != nil || len(orphans) != 1 || orphans[0].UpstreamID != "orphan-shared" {
+		t.Fatalf("replaced revision orphans = %#v, err = %v; want the dropped shared fact", orphans, err)
+	}
+}
+
+func TestOrphanedDerivedFactIsNotMarkedRetractedWhileClaimed(t *testing.T) {
+	s := openTestStore(t)
+	doc := createTestDocument(t, s, "claimed-source", "markdown", "Mira works at Meridian.")
+	if err := s.ProjectDerivedGraph(t.Context(), DerivedGraphProjection{
+		DocumentID: doc.ID, Revision: doc.Revision,
+		Entities: []DerivedGraphEntity{{CommitRef: "claimed-mira", Name: "Mira Chen", Kind: "staff"}},
+		Facts: []DerivedGraphFact{{
+			CommitRef: "claimed-fact", EntityCommitRef: "claimed-mira", Predicate: "works_at", Object: "Meridian Labs",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := s.db.QueryRowContext(t.Context(), `SELECT id FROM facts WHERE upstream_id = 'claimed-fact'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := s.MarkOrphanedDerivedFactRetracted(t.Context(), id); err != nil || changed {
+		t.Fatalf("claimed fact was marked retracted: changed = %v, err = %v", changed, err)
+	}
+}

@@ -340,14 +340,18 @@ func TestBrainRetractIncludesRequiredSystemActor(t *testing.T) {
 		if body["reason"] != "superseded" || retractedBy["source"] != "system" {
 			t.Errorf("retraction body = %#v", body)
 		}
-		_, _ = w.Write([]byte(`{"factId":"knowledge_fact:fact-1"}`))
+		_, _ = w.Write([]byte(`{"factId":"knowledge_fact:fact-1","revivedFactIds":["knowledge_fact:fact-0"]}`))
 	}))
 	defer server.Close()
 
-	if err := NewBrain(server.URL, "brain-secret", server.Client(), server.Client()).RetractFact(
+	revived, err := NewBrain(server.URL, "brain-secret", server.Client(), server.Client()).RetractFact(
 		t.Context(), "knowledge_fact:fact-1", "superseded",
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(revived) != 1 || revived[0] != "knowledge_fact:fact-0" {
+		t.Fatalf("revived facts = %#v", revived)
 	}
 }
 
