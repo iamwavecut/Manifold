@@ -1,8 +1,8 @@
 diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
-index 708e7ab..15030d6 100644
+index 0b38fd659..69bad0705 100644
 --- a/src/ai/openai-client.ts
 +++ b/src/ai/openai-client.ts
-@@ -38,10 +38,48 @@ export function chatModel(config: ConfigService): string {
+@@ -39,12 +39,50 @@ export function chatModel(config: ConfigService): string {
    return config.get<string>('OPENAI_CHAT_MODEL', DEFAULT_CHAT_MODEL);
  }
  
@@ -43,16 +43,18 @@ index 708e7ab..15030d6 100644
 +}
 +
  function buildClient(config: ConfigService, apiKey: string): OpenAI {
+   const timeout = parseInt(config.get<string>('OPENAI_TIMEOUT_MS', '30000'), 10);
+   const baseURL = config.get<string>('OPENAI_BASE_URL') || undefined;
 +  const extra = chatExtraBody(config.get<string>('OPENAI_CHAT_EXTRA_BODY'));
-   return new OpenAI({
+   const primary = new OpenAI({
      apiKey,
-     baseURL: config.get<string>('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+     timeout,
 +    ...(extra ? { fetch: withChatExtraBody(extra) } : {}),
-     timeout: parseInt(config.get<string>('OPENAI_TIMEOUT_MS', '30000'), 10),
      maxRetries: parseInt(config.get<string>('OPENAI_MAX_RETRIES', '3'), 10),
+     ...(baseURL ? { baseURL } : {}),
    });
 diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
-index acf722c..3928fab 100644
+index acf722c30..3928fab49 100644
 --- a/src/common/env-validation.ts
 +++ b/src/common/env-validation.ts
 @@ -4,6 +4,7 @@ import {
@@ -77,7 +79,7 @@ index acf722c..3928fab 100644
    // BRAIN_API_KEYS is required, but [] is acceptable in dev (no callers).
 diff --git a/test/openai-chat-extra-body.unit-spec.ts b/test/openai-chat-extra-body.unit-spec.ts
 new file mode 100644
-index 0000000..454adae
+index 000000000..454adae3b
 --- /dev/null
 +++ b/test/openai-chat-extra-body.unit-spec.ts
 @@ -0,0 +1,82 @@

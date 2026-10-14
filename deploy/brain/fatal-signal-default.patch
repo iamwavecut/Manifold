@@ -1,8 +1,8 @@
 diff --git a/src/main.ts b/src/main.ts
-index 43d4dd5..89f7aa5 100644
+index 3ded6db84..7ddb02097 100644
 --- a/src/main.ts
 +++ b/src/main.ts
-@@ -88,7 +88,13 @@ async function bootstrap() {
+@@ -101,7 +101,13 @@ async function bootstrap() {
    // drain, the hard-stop deadline and the OTel flush inside that
    // lifecycle — a second SIGTERM listener here ran app.close()
    // concurrently with Nest's own run of the same hooks.
@@ -18,7 +18,7 @@ index 43d4dd5..89f7aa5 100644
    const bootLog = new Logger('Bootstrap');
  
 diff --git a/test/graceful-shutdown.unit-spec.ts b/test/graceful-shutdown.unit-spec.ts
-index 69db6cc..4798d6f 100644
+index 69db6ccc1..4798d6fb2 100644
 --- a/test/graceful-shutdown.unit-spec.ts
 +++ b/test/graceful-shutdown.unit-spec.ts
 @@ -95,7 +95,9 @@ describe('GracefulShutdownService', () => {

@@ -1,17 +1,5 @@
-diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
-index 14c0070..708e7ab 100644
---- a/src/ai/openai-client.ts
-+++ b/src/ai/openai-client.ts
-@@ -41,6 +41,7 @@ export function chatModel(config: ConfigService): string {
- function buildClient(config: ConfigService, apiKey: string): OpenAI {
-   return new OpenAI({
-     apiKey,
-+    baseURL: config.get<string>('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
-     timeout: parseInt(config.get<string>('OPENAI_TIMEOUT_MS', '30000'), 10),
-     maxRetries: parseInt(config.get<string>('OPENAI_MAX_RETRIES', '3'), 10),
-   });
 diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
-index f524c16..acf722c 100644
+index f524c16b3..acf722c30 100644
 --- a/src/common/env-validation.ts
 +++ b/src/common/env-validation.ts
 @@ -32,7 +32,7 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {

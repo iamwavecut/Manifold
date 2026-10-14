@@ -1,0 +1,125 @@
+diff --git a/src/db/migrations/0169_selective_entity_fact_indexes.surql b/src/db/migrations/0169_selective_entity_fact_indexes.surql
+new file mode 100644
+index 000000000..45f289f95
+--- /dev/null
++++ b/src/db/migrations/0169_selective_entity_fact_indexes.surql
+@@ -0,0 +1,20 @@
++-- Manifold: drop the non-selective userId indexes, index array elements.
++--
++-- 1. fact_user_idx / entity_user_idx (0055) serve per-user memory. Where no
++--    row has a userId, `userId IS NONE` matches every row, yet SurrealDB 3.3
++--    chooses these indexes for queries that also filter on entityId,
++--    reading the whole table through them (an entity profile took 270 ms on
++--    3,500 facts, 2 ms through fact_entity_idx). A deployment that stores
++--    per-user memory should keep them: re-create with
++--    `DEFINE INDEX fact_user_idx ON knowledge_fact FIELDS userId;` and
++--    `DEFINE INDEX entity_user_idx ON knowledge_entity FIELDS userId;`.
++--
++-- 2. SurrealDB 3 indexes an array field as one value; `aliases CONTAINS $x`
++--    and `nameKeys CONTAINS $x` need an element index (`field[*]`) to avoid
++--    a table scan. entity_aliases_idx and entity_name_keys_idx (whole-array)
++--    stay for compatibility; the planner picks the element indexes.
++
++REMOVE INDEX IF EXISTS fact_user_idx ON knowledge_fact;
++REMOVE INDEX IF EXISTS entity_user_idx ON knowledge_entity;
++DEFINE INDEX IF NOT EXISTS entity_aliases_el_idx ON knowledge_entity FIELDS aliases[*];
++DEFINE INDEX IF NOT EXISTS entity_name_keys_el_idx ON knowledge_entity FIELDS nameKeys[*];
+diff --git a/test/entity-fact-index-plans.unit-spec.ts b/test/entity-fact-index-plans.unit-spec.ts
+new file mode 100644
+index 000000000..a8a541a18
+--- /dev/null
++++ b/test/entity-fact-index-plans.unit-spec.ts
+@@ -0,0 +1,93 @@
++/**
++ * Plan guards for the entity/fact reads a document commit and its hydration
++ * depend on. SurrealDB 3.3 plans `userId IS NONE` (true for every row of a
++ * tenant without per-user memory) and `entityId = $entity_id` inside a
++ * function body as whole-table scans unless the entity index is named or the
++ * non-selective indexes are gone. These checks read the source, not a
++ * database: they fail when a rebase drops a hint or a migration.
++ */
++import { readFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { stampExpectation } from '../src/ingest/fact-expectation';
++
++const root = join(__dirname, '..');
++const read = (path: string) => readFileSync(join(root, path), 'utf8');
++
++describe('entity and fact index plans', () => {
++  it('reads an entity profile through fact_entity_idx', () => {
++    const service = read('src/entities/entities.service.ts');
++    const profile = service.slice(service.indexOf('async getProfile('));
++    expect(profile.slice(0, profile.indexOf('async getProfileByExternalRef('))).toContain(
++      'FROM knowledge_fact WITH INDEX fact_entity_idx',
++    );
++  });
++
++  it('stamps an expectation with the fact key bound as parameters', async () => {
++    const calls: Array<{ sql: string; params: Record<string, unknown> | undefined }> = [];
++    const db = {
++      query: (sql: string, params?: Record<string, unknown>) => {
++        calls.push({ sql, params });
++        return Promise.resolve(
++          calls.length === 1
++            ? [
++                {
++                  entityId: 'knowledge_entity:e1',
++                  predicate: 'status',
++                  predicateAlias: null,
++                  object: 'blocked',
++                  userId: null,
++                },
++              ]
++            : [[]],
++        );
++      },
++    };
++    await stampExpectation({
++      db: db as never,
++      p: { validFrom: new Date('2026-09-01T00:00:00Z'), expectedUntil: new Date('2026-12-01') },
++      result: { outcome: 'INSERTED', factId: 'knowledge_fact:f1' } as never,
++      logger: { warn: jest.fn() },
++    });
++    expect(calls).toHaveLength(2);
++    expect(calls[1]!.sql).toContain('FROM knowledge_fact WITH INDEX fact_entity_idx');
++    expect(calls[1]!.sql).not.toContain('$t.');
++    expect(calls[1]!.params).toMatchObject({
++      entityId: 'knowledge_entity:e1',
++      object: 'blocked',
++      predicate: 'status',
++    });
++  });
++
++  it('stamps an expectation through fact_entity_idx', () => {
++    expect(read('src/ingest/fact-expectation.ts')).toContain(
++      'FROM knowledge_fact WITH INDEX fact_entity_idx',
++    );
++  });
++
++  it('resolve_fact reads its candidate facts through fact_entity_idx', () => {
++    const migration = read('src/db/migrations/0168_resolve_fact_entity_index.surql');
++    const candidates = migration.slice(migration.indexOf('LET $candidates = SELECT'));
++    expect(candidates.slice(0, candidates.indexOf('WHERE entityId = $entity_id'))).toContain(
++      'FROM knowledge_fact WITH INDEX fact_entity_idx',
++    );
++  });
++
++  it('resolve_fact updates competing rows by record, not by a table-wide WHERE', () => {
++    const migration = read('src/db/migrations/0168_resolve_fact_entity_index.surql');
++    expect(migration).not.toMatch(/UPDATE knowledge_fact SET [^;]*WHERE id IN/);
++    expect(migration).toContain("UPDATE $day_peers.id SET status = 'competing';");
++    expect(migration).toContain("UPDATE $loser_ids SET status = 'competing';");
++  });
++
++  it('drops the userId indexes and indexes the elements of alias and name-key arrays', () => {
++    const migration = read('src/db/migrations/0169_selective_entity_fact_indexes.surql');
++    expect(migration).toContain('REMOVE INDEX IF EXISTS fact_user_idx ON knowledge_fact;');
++    expect(migration).toContain('REMOVE INDEX IF EXISTS entity_user_idx ON knowledge_entity;');
++    expect(migration).toMatch(
++      /DEFINE INDEX IF NOT EXISTS \w+ ON knowledge_entity FIELDS aliases\[\*\];/,
++    );
++    expect(migration).toMatch(
++      /DEFINE INDEX IF NOT EXISTS \w+ ON knowledge_entity FIELDS nameKeys\[\*\];/,
++    );
++  });
++});
