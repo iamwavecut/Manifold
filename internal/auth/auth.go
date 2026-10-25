@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 
@@ -66,12 +68,27 @@ func (p Principal) Has(required ...string) bool {
 	return true
 }
 
+// maxVerifiedSecrets bounds the verified-secret cache; it is cleared when full.
+const maxVerifiedSecrets = 1024
+
 type Manager struct {
-	store *store.Store
+	store  *store.Store
+	verify func(secret, encoded string) bool
+
+	mu sync.Mutex
+	// verified maps the SHA-256 digest of a secret that passed argon2id to
+	// the key record it matched. argon2id costs about 100 ms per call, and
+	// every authenticated request used to pay it.
+	verified map[[sha256.Size]byte]verifiedKey
+}
+
+type verifiedKey struct {
+	id         string
+	secretHash string
 }
 
 func NewManager(s *store.Store) *Manager {
-	return &Manager{store: s}
+	return &Manager{store: s, verify: VerifySecret, verified: map[[sha256.Size]byte]verifiedKey{}}
 }
 
 func (m *Manager) Bootstrap(ctx context.Context, secret string) error {
@@ -97,19 +114,43 @@ func (m *Manager) Authenticate(ctx context.Context, secret string) (Principal, e
 	if secret == "" {
 		return Principal{}, store.ErrNotFound
 	}
+	// Keys are read on every request, so a revoked or replaced key stops
+	// authenticating at once; only the argon2id check is skipped for a
+	// secret that already matched the same stored hash.
 	keys, err := m.store.FindAPIKeys(ctx)
 	if err != nil {
 		return Principal{}, err
 	}
+	digest := sha256.Sum256([]byte(secret))
+	m.mu.Lock()
+	cached, ok := m.verified[digest]
+	m.mu.Unlock()
+	if ok {
+		for _, key := range keys {
+			if key.ID == cached.id && key.SecretHash == cached.secretHash {
+				return principalFor(key), nil
+			}
+		}
+	}
 	for _, key := range keys {
-		if VerifySecret(secret, key.SecretHash) {
-			return Principal{
-				KeyID:        key.ID,
-				Capabilities: capabilitySet(key.Capabilities),
-			}, nil
+		if m.verify(secret, key.SecretHash) {
+			m.mu.Lock()
+			if len(m.verified) >= maxVerifiedSecrets {
+				clear(m.verified)
+			}
+			m.verified[digest] = verifiedKey{id: key.ID, secretHash: key.SecretHash}
+			m.mu.Unlock()
+			return principalFor(key), nil
 		}
 	}
 	return Principal{}, store.ErrNotFound
+}
+
+func principalFor(key store.APIKeyRecord) Principal {
+	return Principal{
+		KeyID:        key.ID,
+		Capabilities: capabilitySet(key.Capabilities),
+	}
 }
 
 func HashSecret(secret string) (string, error) {

@@ -13,7 +13,11 @@ Do not include real API keys, session cookies, CSRF tokens, provider payloads, d
 ## Security model
 
 - Only Manifold is published by the default Compose stack.
-- API keys are bearer secrets stored as Argon2id hashes.
+- API keys are bearer secrets stored as Argon2id hashes. After a secret
+  verifies, the process keeps its SHA-256 digest with the matched key ID and
+  hash, so later requests skip Argon2id; keys are still read on every request,
+  so revocation applies at once. Rejected secrets are always checked with
+  Argon2id.
 - Browser sessions are HttpOnly, SameSite=Strict, time-limited, and paired with CSRF tokens.
 - Capabilities are checked per operation.
 - Idempotency records are scoped to the authenticated API-key record.
