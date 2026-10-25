@@ -106,6 +106,9 @@ services:
       EXTRACTOR_SC_PASSES: ${BRAIN_EXTRACTOR_SC_PASSES:-3}
       THROTTLE_LIMIT: ${BRAIN_THROTTLE_LIMIT:-600}
       THROTTLE_EXPENSIVE_LIMIT: ${BRAIN_THROTTLE_EXPENSIVE_LIMIT:-600}
+      # Upstream hardcodes 10 searches per minute on /v1/search, and every
+      # Manifold search and context request is one Brain search on one key.
+      THROTTLE_SEARCH_LIMIT: ${BRAIN_THROTTLE_SEARCH_LIMIT:-600}
       BRAIN_HEALTH_RESTART_FAILURES: ${BRAIN_HEALTH_RESTART_FAILURES:-20}
       DOCUMENT_INGEST_ENABLED: "1"
       DOCUMENT_MULTI_INDEXER_ENABLED: "1"
@@ -122,6 +125,14 @@ services:
       # new job waited up to six seconds for a worker.
       WORKER_LOOP_POLL_MS: ${BRAIN_WORKER_LOOP_POLL_MS:-250}
       WORKER_LOOP_EMPTY_BACKOFF_MS: ${BRAIN_WORKER_LOOP_EMPTY_BACKOFF_MS:-750}
+      # The search vector leg reads Brain's HNSW index (approximate KNN)
+      # instead of every fact row with its embedding, which took 5-6 s per
+      # search at 13k facts. Brain builds the indexes itself (CONCURRENTLY)
+      # when it first opens a tenant after start and serves the exact scan
+      # until they are ready. Provisioning follows the search flag unless
+      # BRAIN_HNSW_PROVISION_ENABLED is set, e.g. to build ahead of a flip.
+      SEARCH_HNSW_ENABLED: ${BRAIN_SEARCH_HNSW_ENABLED:-1}
+      HNSW_PROVISION_ENABLED: ${BRAIN_HNSW_PROVISION_ENABLED:-${BRAIN_SEARCH_HNSW_ENABLED:-1}}
     volumes:
       - brain-cache:/app/.cache
     depends_on:
@@ -149,6 +160,12 @@ services:
       - --pass=${SURREALDB_PASSWORD:?set SURREALDB_PASSWORD}
       - --bind=0.0.0.0:8000
       - rocksdb:/data/db
+    environment:
+      # Log statements slower than this, without parameter values: the
+      # allow list names no parameter Brain binds, so document text and
+      # embeddings stay out of the log.
+      SURREAL_SLOW_QUERY_LOG_THRESHOLD: ${SURREALDB_SLOW_QUERY_LOG_THRESHOLD:-250ms}
+      SURREAL_SLOW_QUERY_LOG_PARAM_ALLOW: manifold_log_no_parameters
     volumes:
       - surrealdb-data:/data/db
     networks:

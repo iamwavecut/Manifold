@@ -1,0 +1,78 @@
+diff --git a/src/admin/hnsw-provision.service.ts b/src/admin/hnsw-provision.service.ts
+index d0c1611..ec8d739 100644
+--- a/src/admin/hnsw-provision.service.ts
++++ b/src/admin/hnsw-provision.service.ts
+@@ -225,6 +225,11 @@ export class HnswProvisionService implements OnModuleInit {
+    */
+   onModuleInit(): void {
+     this.surreal.onTenantSchemaReady((companyId) => this.noteTenant(companyId));
++    // CalibrationService reads the host tenant in its own onModuleInit, and
++    // its module initialises before this one, so that tenant's schema-ready
++    // notice fired with no listener and its index was never built. Note the
++    // tenants this process already opened.
++    for (const companyId of this.surreal.readyTenantIds()) this.noteTenant(companyId);
+   }
+ 
+   /**
+diff --git a/src/db/surreal.service.ts b/src/db/surreal.service.ts
+index 2739843..80d2104 100644
+--- a/src/db/surreal.service.ts
++++ b/src/db/surreal.service.ts
+@@ -776,6 +776,18 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     this.schemaReadyListeners.add(listener);
+   }
+ 
++  /**
++   * Tenants whose schema this process has already migrated or verified. A
++   * listener that registers late reads it to catch up: a module initialised
++   * earlier may have opened a tenant before the listener existed, and that
++   * notice is not repeated.
++   */
++  readyTenantIds(): string[] {
++    return [...this.knownDatabases]
++      .filter((database) => database.startsWith('co_'))
++      .map((database) => database.slice('co_'.length));
++  }
++
+   /**
+    * Fire the listener for a TENANT database only — `system` is the
+    * platform's own DB and has no companyId. Never throws: a listener fault
+diff --git a/test/hnsw-provisioning.unit-spec.ts b/test/hnsw-provisioning.unit-spec.ts
+index 9f4b553..b0b624e 100644
+--- a/test/hnsw-provisioning.unit-spec.ts
++++ b/test/hnsw-provisioning.unit-spec.ts
+@@ -173,9 +173,14 @@ function provision(opts: {
+     setHnswIndexTenants: (s: string, n: number) => void;
+   };
+   guard?: { run: (key: string, fn: () => Promise<unknown>, ttl?: number) => Promise<unknown> };
++  /** Tenants migrated before onModuleInit, e.g. the host tenant calibration reads. */
++  ready?: string[];
+ }) {
+   const listeners: Array<(c: string) => void> = [];
+-  const surreal = { onTenantSchemaReady: (l: (c: string) => void) => listeners.push(l) };
++  const surreal = {
++    onTenantSchemaReady: (l: (c: string) => void) => listeners.push(l),
++    readyTenantIds: () => opts.ready ?? [],
++  };
+   const apply =
+     opts.apply ??
+     jest.fn(async (companyId: string, action: string) => ({
+@@ -239,6 +244,18 @@ describe('HnswProvisionService — the hook', () => {
+     expect(apply).toHaveBeenCalledWith('co-new', 'ensure');
+   });
+ 
++  it('provisions a tenant that was migrated before the hook was taken', async () => {
++    const { svc, listeners, apply } = provision({ ready: ['host'] });
++    svc.onModuleInit();
++    await new Promise((r) => setImmediate(r));
++    await new Promise((r) => setImmediate(r));
++    expect(apply).toHaveBeenCalledWith('host', 'ensure');
++    // The late notice for the same tenant is not a second build.
++    listeners[0]!('host');
++    await new Promise((r) => setImmediate(r));
++    expect(apply).toHaveBeenCalledTimes(1);
++  });
++
+   it('the hook is allocation-only: it never throws into the schema queue', () => {
+     const apply = jest.fn(async () => {
+       throw new Error('surreal is down');

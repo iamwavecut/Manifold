@@ -1,0 +1,89 @@
+diff --git a/src/admin/config-catalog.data.ts b/src/admin/config-catalog.data.ts
+index e4303d2..f3cb188 100644
+--- a/src/admin/config-catalog.data.ts
++++ b/src/admin/config-catalog.data.ts
+@@ -1257,6 +1257,13 @@ export const CONFIG_CATALOG: ConfigCatalogSpec[] = [
+     runtimeMutable: false,
+     isBooleanFlag: false,
+   },
++  {
++    key: 'THROTTLE_SEARCH_LIMIT',
++    category: 'throttle',
++    defaultValue: '10',
++    runtimeMutable: false,
++    isBooleanFlag: false,
++  },
+   // ── Jobs / trace persistence ────────────────────────
+   {
+     key: 'JOB_RUN_PERSIST',
+diff --git a/src/search/search.controller.ts b/src/search/search.controller.ts
+index 342f3fa..b919433 100644
+--- a/src/search/search.controller.ts
++++ b/src/search/search.controller.ts
+@@ -6,6 +6,16 @@ import { SearchService } from './search.service';
+ import { SearchDto } from './dto/search.dto';
+ import { AuthenticatedRequest } from '../auth/api-key.types';
+ 
++/**
++ * Searches per credential and minute. A deployment whose one credential
++ * serves every agent raises it with THROTTLE_SEARCH_LIMIT; anything but a
++ * positive integer keeps the upstream 10.
++ */
++function searchLimit(): number {
++  const raw = Number.parseInt(process.env.THROTTLE_SEARCH_LIMIT ?? '', 10);
++  return Number.isInteger(raw) && raw > 0 ? raw : 10;
++}
++
+ @Controller('v1/search')
+ @UseGuards(ApiKeyGuard)
+ export class SearchController {
+@@ -16,7 +26,7 @@ export class SearchController {
+   // per-credential `expensive` bucket like synthesize/multi-hop so one
+   // compromised tenant can't drain the token budget at the 120/min
+   // default rate. See app.module.ts throttler config.
+-  @Throttle({ expensive: { limit: 10, ttl: 60_000 } })
++  @Throttle({ expensive: { limit: searchLimit, ttl: 60_000 } })
+   @Post()
+   @RequireScopes('brain:read')
+   @PolicyAction('search_knowledge')
+diff --git a/test/search-throttle-limit.unit-spec.ts b/test/search-throttle-limit.unit-spec.ts
+new file mode 100644
+index 0000000..8bd024e
+--- /dev/null
++++ b/test/search-throttle-limit.unit-spec.ts
+@@ -0,0 +1,35 @@
++/**
++ * The search route's per-credential limit. Upstream hardcodes 10 searches a
++ * minute; a deployment whose one credential serves every agent (Manifold)
++ * raises it with THROTTLE_SEARCH_LIMIT, which the guard resolves on every
++ * request.
++ */
++import { THROTTLER_LIMIT } from '@nestjs/throttler/dist/throttler.constants';
++import { SearchController } from '../src/search/search.controller';
++
++function searchLimit(): number {
++  const limit = Reflect.getMetadata(
++    `${THROTTLER_LIMIT}expensive`,
++    SearchController.prototype.run,
++  ) as () => number;
++  return limit();
++}
++
++describe('search throttle limit', () => {
++  afterEach(() => {
++    delete process.env.THROTTLE_SEARCH_LIMIT;
++  });
++
++  it('keeps the upstream 10 when unset or not a positive integer', () => {
++    expect(searchLimit()).toBe(10);
++    for (const value of ['', '0', '-5', 'many']) {
++      process.env.THROTTLE_SEARCH_LIMIT = value;
++      expect(searchLimit()).toBe(10);
++    }
++  });
++
++  it('reads THROTTLE_SEARCH_LIMIT when a request is checked', () => {
++    process.env.THROTTLE_SEARCH_LIMIT = '600';
++    expect(searchLimit()).toBe(600);
++  });
++});

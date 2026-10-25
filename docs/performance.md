@@ -78,17 +78,53 @@ Ideas that were not applied:
   stage, 8.6 s on average on production, behind the extraction call, but changes
   the failure semantics of the job).
 - Cache or materialize the predicate statistics.
-- Verify an API key once per process instead of running argon2id (64 MiB) on
-  every request; each authenticated call costs 150-540 ms on production and a
-  5 Hz poll keeps half a core busy.
 - Make the Manifold worker wake on enqueue instead of ticking every second.
 - A smaller or faster extraction model, or one sample instead of three if
   quality allows; the wall time is the slowest sample.
 
+## Search and retraction (2026-10-25)
+
+Production grew from 3,572 to 13,054 Brain facts after 2026-10-14, and the
+median `POST /api/v1/search` grew from 3.3 s to 6.8 s (`context` from 4.7 s to
+7.6 s, with one call at the client's 30 s limit). Three causes, measured on
+production and on a copy of its graph in an isolated SurrealDB 3.3.0 container
+limited to three cores:
+
+| Cause | Before | After |
+| --- | --- | --- |
+| Search vector leg read every fact row with its embedding (no HNSW index) | exact scan 5.1-5.3 s on production, 2.26 s on the copy | KNN 0.47 s on the copy, recall@100 0.998 against the exact scan |
+| Fact retraction revived predecessors with a table-wide `UPDATE ... WHERE` | 980 ms per fact on production (78 ms per edge) | 53 ms with nothing to revive, 105-117 ms with a revival (copy) |
+| Manifold verified the API key with argon2id on every request | 110-150 ms per authenticated request | one argon2id per secret and process |
+
+Enabling the index needed two more Brain patches. Brain opens the `manifold`
+tenant during startup, before its provisioning listener exists, so it never
+built the index (`hnsw-provision-early-tenants.patch`). Without the index,
+SurrealDB 3.3 answers a KNN query with no rows, so the vector leg returned
+nothing instead of falling back to the exact scan
+(`knn-empty-result-fallback.patch`). Separately, Brain allowed 10 calls of
+`POST /v1/search` a minute per key, and the eleventh Manifold search or context
+request in a minute came back degraded (`search-throttle-limit.patch`).
+
+Reading a fact row is the expensive part, not the cosine: on production
+`count()` took 0.16 s, `count() WHERE embedding != NONE` 4.3 s. Only 5,350 of
+the 13,054 facts were active. Of the 0.47 s KNN, about 50 ms is the index walk
+and about 300 ms the search filters, which read each of the 400 candidates
+(`SEARCH_HNSW_OVERFETCH=4` × 100) in full; 8× gave the same recall. A hybrid
+search can run the retrieval pass up to three times (language backoff, entity
+expansion).
+
+In a 155 s update job before the changes, the extraction call took 20 s, the
+candidate commit 41 s, the graph read-back 7 s, and 74 fact plus 39 edge
+retractions 77 s. Entity resolution scans `knowledge_entity` by type (1.1 s for
+the 1,874 `asset` entities); the slow-query log below attributes the rest of the
+commit.
+
 ## Measuring again
 
-- `SURREAL_SLOW_QUERY_LOG_THRESHOLD=20ms` on the SurrealDB container logs every
-  statement above 20 ms with its text and parameters.
+- Compose sets `SURREAL_SLOW_QUERY_LOG_THRESHOLD` to 250 ms
+  (`SURREALDB_SLOW_QUERY_LOG_THRESHOLD`) and hides parameter values; see
+  [operations](operations.md#brain-vector-index-and-slow-query-log). Without
+  the allow list SurrealDB logs every parameter value, including document text.
 - `EXPLAIN FULL` after a query shows the operators; `IndexScan[fact_user_idx]`
   with `rows` equal to the table size is the scan described above.
 - Brain records the stages: `source_document.createdAt`, the

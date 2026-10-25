@@ -69,6 +69,35 @@ case "$brain_search" in
 		;;
 esac
 
+# Brain builds its HNSW index when it first opens the tenant, and the
+# vector leg must then answer from it: on SurrealDB 3.3 a KNN query that
+# finds no usable index returns no rows instead of failing.
+surreal_pass=$(sed -n 's/^SURREALDB_PASSWORD=//p' .env.example)
+attempt=0
+until printf '%s\n' 'INFO FOR INDEX fact_embedding_hnsw ON knowledge_fact;' |
+	compose exec -T surrealdb /surreal sql --endpoint http://127.0.0.1:8000 \
+		--user root --pass "$surreal_pass" --ns manifold --db co_manifold --hide-welcome --json 2>/dev/null |
+	grep -q '"status":"ready"'; do
+	attempt=$((attempt + 1))
+	if [ "$attempt" -ge 60 ]; then
+		echo "Brain did not build a ready fact_embedding_hnsw index" >&2
+		exit 1
+	fi
+	sleep 1
+done
+# shellcheck disable=SC2016 # expanded inside the Manifold container
+vector_search=$(compose exec -T manifold sh -c 'wget -qO- \
+	--header "Authorization: Bearer $BRAIN_API_KEY" --header "Content-Type: application/json" \
+	--post-data "{\"query\":\"integration note\",\"limit\":5,\"searchMode\":\"vector\"}" \
+	http://brain:3000/v1/search')
+case "$vector_search" in
+	*'"results":[{'*) ;;
+	*)
+		echo "Brain vector search returned no results with a ready HNSW index" >&2
+		exit 1
+		;;
+esac
+
 skill_result=$(MANIFOLD_URL=$url \
 	MANIFOLD_API_KEY=$api_key \
 	sh skills/manifold/scripts/manifold --json remember \
