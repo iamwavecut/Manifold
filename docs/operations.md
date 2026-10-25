@@ -131,6 +131,27 @@ watchdog reacts to a wedged process rather than to a dependency outage. The
 log of the restarted container contains the watchdog line, and its restart
 count increases; investigate both instead of treating the restart as recovery.
 
+## Brain vector index and slow-query log
+
+Compose sets `SEARCH_HNSW_ENABLED=1` for Brain (`BRAIN_SEARCH_HNSW_ENABLED`).
+The search vector leg then reads `fact_embedding_hnsw` instead of every
+`knowledge_fact` row with its 1,536-value embedding; on 2026-10-25 that read
+took 5-6 s per search at 13,054 facts. Brain builds `fact_embedding_hnsw` and
+`segment_embedding_hnsw` itself, `CONCURRENTLY`, after the first request for
+the tenant following a start (13,400 facts: 6 s on a copy of the production
+graph), and again in its nightly reconciliation if one is missing. Until an
+index reports `ready`, the leg serves the exact scan. Provisioning follows the
+search flag; set `BRAIN_HNSW_PROVISION_ENABLED=1` with
+`BRAIN_SEARCH_HNSW_ENABLED=0` to build the indexes before the leg uses them.
+To return to the exact scan, set `BRAIN_SEARCH_HNSW_ENABLED=0` and recreate
+the Brain container; the indexes stay and cost one update per embedded write.
+
+SurrealDB logs every statement slower than
+`SURREALDB_SLOW_QUERY_LOG_THRESHOLD` (250 ms by default) at `WARN` with its
+text and duration. The parameter allow list names no parameter, so bound
+values such as document text and embeddings are not logged. Read it with
+`docker compose logs surrealdb | grep slowlog`.
+
 ## Data version 4 migration
 
 This release moves INITE Brain from v2.3.0 to upstream commit `a567f69`

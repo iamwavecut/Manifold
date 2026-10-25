@@ -135,6 +135,28 @@ in [CI](../.github/workflows/ci.yml):
   the unique index and reopens it from that record; an edge closed by
   supersession or by a stated end has no record and stays closed. There is no
   migration.
+- [`revive-superseded-index.patch`](../deploy/brain/revive-superseded-index.patch)
+  rewrites the predecessor revival of `POST /v1/facts/:id/retract`. SurrealDB
+  3.3 evaluates the `WHERE` of `UPDATE knowledge_fact SET ... WHERE
+  supersededBy = ...` against every row although `fact_superseded_by_idx`
+  exists; the same predicate in a `SELECT` is an index scan. The patch reads
+  the predecessors with `SELECT VALUE id ... WITH INDEX fact_superseded_by_idx`
+  and updates only those records, repeating the status conditions. On a copy
+  of the production graph (13,367 facts) a retraction with nothing to revive
+  took 549 ms before and 53 ms after, one that revives a predecessor 590-660 ms
+  and 105-117 ms. On production a fact retraction took 980 ms (median) against
+  78 ms for an edge, and a document update can retract more than a hundred.
+- [`knn-empty-result-fallback.patch`](../deploy/brain/knn-empty-result-fallback.patch)
+  makes the search vector leg fall back to the exact scan when SurrealDB 3.3
+  answers a KNN statement with no rows and the HNSW index is absent, building,
+  or failed. SurrealDB 3.2.4, which upstream measured, returns unranked rows
+  with a null distance in that state, and Brain detects only that shape; 3.3.0
+  plans a table scan with a KNN filter and returns nothing, so the vector leg
+  silently returned nothing for an unindexed tenant. With a ready index an
+  empty result still means the filters removed every candidate, and the leg
+  stays empty as upstream intends. The patch adjusts the HNSW unit and e2e
+  specs to both engine versions; the e2e spec now also checks a vector-only
+  search on a tenant without the index.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
@@ -187,6 +209,11 @@ later document states again is reopened in Brain. Facts and relations of
 documents deleted before this behavior existed stay active in Brain until they
 are retracted separately.
 
+Compose enables Brain's HNSW vector index (`SEARCH_HNSW_ENABLED`); see
+[operations](operations.md#brain-vector-index-and-slow-query-log). The two
+patches above and the HNSW e2e specs pass on SurrealDB 3.3.0 (23 tests across
+the HNSW, retraction, and supersession specs).
+
 Brain has no published host port. Manifold and SurrealDB communicate with it
 over the private Compose network; Brain also joins the provider network for
 outbound model requests. The Compose service enables
@@ -202,7 +229,7 @@ git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-se
 git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
 git -C "$brain_src" checkout -q FETCH_HEAD
 test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction; do
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback; do
     git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
     git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
 done

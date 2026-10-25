@@ -1,0 +1,143 @@
+diff --git a/src/db/knn-index.ts b/src/db/knn-index.ts
+index 074a036..53895f3 100644
+--- a/src/db/knn-index.ts
++++ b/src/db/knn-index.ts
+@@ -240,7 +240,7 @@ export function knnDroppedMessage(spec: HnswIndexSpec, state: HnswIndexState): s
+           : `index '${spec.index}' state could not be determined`;
+   return (
+     `hnsw KNN operator was DROPPED on ${spec.table} (every row came back with a null ` +
+-    `distance, i.e. unranked table-order rows): ${why}. Falling back to the exact scan` +
++    `distance, i.e. unranked table-order rows, or no row at all): ${why}. Falling back to the exact scan` +
+     ` (skipping KNN on this tenant for the next ${KNN_INDEX_MEMO_TTL_MS / 1000}s).`
+   );
+ }
+diff --git a/src/search/internals/legs.ts b/src/search/internals/legs.ts
+index a1fc1b3..864c0c1 100644
+--- a/src/search/internals/legs.ts
++++ b/src/search/internals/legs.ts
+@@ -4,6 +4,7 @@ import type { FactRow } from './types';
+ import type { SearchTuning } from '../retrieval-profile';
+ import { buildEdgeFence, type EdgeFence } from './edge-fence';
+ import {
++  hnswIndexState,
+   knnIndexKnownUnusable,
+   knnOperatorDropped,
+   noteKnnOperatorDropped,
+@@ -84,15 +85,20 @@ export async function runVectorLeg({
+   //   - the statement throws → the legacy catch below;
+   //   - the statement SUCCEEDS with the KNN operator silently dropped from
+   //     the plan, because the tenant has no (or a still-building) index —
+-  //     unranked table-order rows with a NULL distance (src/db/knn-index.ts).
++  //     unranked table-order rows with a NULL distance on SurrealDB 3.2.4
++  //     (src/db/knn-index.ts), and NO rows at all on 3.3.0.
+   //
+   // Both fall back to the exact scan below, byte-identical to what the
+-  // tenant is served with the flag off. A tenant observed un-indexed within
+-  // the memo TTL skips the KNN attempt outright — one scan, no diagnostics.
++  // tenant is served with the flag off. Because 3.3.0 reports a missing
++  // index as an empty result, an empty result is gate starvation (kept
++  // empty) only while the index is ready. A tenant observed un-indexed
++  // within the memo TTL skips the KNN attempt outright — one scan, no
++  // diagnostics.
+   if (tuning.hnswEnabled && !knnIndexKnownUnusable(db, FACT_HNSW)) {
+     try {
+       const knnRows = await runVectorLegKnn({ db, queryEmbedding, k, baseWhere, tuning });
+-      if (knnRows !== null) return knnRows;
++      if (knnRows !== null && knnRows.length > 0) return knnRows;
++      if (knnRows !== null && (await hnswIndexState(db, FACT_HNSW)) === 'ready') return knnRows;
+       await noteKnnOperatorDropped(db, FACT_HNSW, { logger });
+     } catch (e) {
+       logger?.warn(`hnsw vector leg fell back to full scan: ${(e as Error).message}`);
+diff --git a/test/hnsw.e2e-spec.ts b/test/hnsw.e2e-spec.ts
+index 914c8c4..6075052 100644
+--- a/test/hnsw.e2e-spec.ts
++++ b/test/hnsw.e2e-spec.ts
+@@ -21,8 +21,11 @@ describe('HNSW vector leg (real SurrealDB)', () => {
+     if (f) await f.close();
+   });
+ 
+-  const search = async (query: string) => {
+-    const r = await f.http.post('/v1/search').set(auth()).send({ query, limit: 5 });
++  const search = async (query: string, searchMode?: 'vector') => {
++    const r = await f.http
++      .post('/v1/search')
++      .set(auth())
++      .send({ query, limit: 5, ...(searchMode ? { searchMode } : {}) });
+     expect(r.status).toBe(201);
+     return r.body.results as Array<{ canonicalName: string }>;
+   };
+@@ -43,8 +46,11 @@ describe('HNSW vector leg (real SurrealDB)', () => {
+ 
+     process.env.SEARCH_HNSW_ENABLED = '1';
+     const results = await search('HNSW Probe Tenant');
++    // The vector leg alone, so a lexical hit cannot hide an empty KNN leg.
++    const vectorResults = await search('HNSW Probe Tenant', 'vector');
+     delete process.env.SEARCH_HNSW_ENABLED;
+     expect(results.length).toBeGreaterThan(0);
++    expect(vectorResults[0]?.canonicalName).toBe('HNSW Probe Tenant');
+     // Named by its `name` fact (entity-name.ts) — 'HNSW Probe Tenant' — the
+     // reference id stays among the aliases.
+     expect(results[0]!.canonicalName).toBe('HNSW Probe Tenant');
+@@ -74,9 +80,9 @@ describe('HNSW vector leg (real SurrealDB)', () => {
+           LIMIT 8`,
+         { q: new Array(1536).fill(0.01) },
+       );
+-      // Not an error, not empty — rows with NO similarity information.
++      // Not an error — rows with NO similarity information (3.2.4), or no
++      // rows at all (3.3.0, which the deployment pins).
+       expect(Array.isArray(rows)).toBe(true);
+-      expect((rows ?? []).length).toBeGreaterThan(0);
+       for (const r of rows ?? []) expect(typeof r.knnDist).not.toBe('number');
+ 
+       // EXPLAIN confirms the operator left the plan entirely.
+diff --git a/test/knn-missing-index.unit-spec.ts b/test/knn-missing-index.unit-spec.ts
+index 2e2755d..a9d4706 100644
+--- a/test/knn-missing-index.unit-spec.ts
++++ b/test/knn-missing-index.unit-spec.ts
+@@ -263,14 +263,40 @@ describe('search vector leg — a dropped KNN operator falls back to the exact s
+     expect(db.calls[0]).toContain('<|');
+   });
+ 
+-  it('leaves an empty KNN result empty — that is not a missing index', async () => {
+-    const db = fakeDb([[[]]]);
++  it('leaves an empty KNN result empty while the index is ready — gate starvation', async () => {
++    const db = fakeDb([
++      [[]],
++      INFO_TABLE_WITH_INDEX,
++      [{ building: { initial: 3000, pending: 0, status: 'ready', updated: 0 } }],
++    ]);
+     const rows = await runVectorLeg(legArgs(db));
+     expect(rows).toEqual([]);
+-    // No probe, no scan: an empty tenant must not trigger a full-table
+-    // cosine walk (a brute scan over 20k × 1024-d OOM-killed the server at
+-    // 6 GB and 8 GB — roadmap §3 S11).
+-    expect(db.calls).toHaveLength(1);
++    // One probe, no scan: an empty pool on a ready index must not trigger
++    // a full-table cosine walk (a brute scan over 20k × 1024-d OOM-killed
++    // the server at 6 GB and 8 GB — roadmap §3 S11).
++    expect(db.calls).toHaveLength(3);
++    expect(db.calls.join('\n')).not.toContain('vector::similarity::cosine');
++  });
++
++  it('falls back when SurrealDB 3.3 answers an un-indexed KNN with no rows', async () => {
++    // Measured on surrealdb/surrealdb:v3.3.0: with no index, `<|K,EF|>`
++    // plans a TableScan + Filter and returns an empty result instead of
++    // the 3.2.4 null-distance rows.
++    const db = fakeDb([
++      [[]],
++      INFO_TABLE_NO_INDEX,
++      INFO_TABLE_NO_INDEX,
++      [[{ id: 'f9', simScore: 0.91 }]],
++    ]);
++    const errors: string[] = [];
++    const rows = await runVectorLeg(
++      legArgs(db, { warn: () => {}, error: (m: string) => errors.push(m) }),
++    );
++    expect(rows).toEqual([{ id: 'f9', simScore: 0.91 }]);
++    expect(db.calls).toHaveLength(4);
++    expect(db.calls[3]).toContain('vector::similarity::cosine(embedding, $q) AS simScore');
++    expect(errors).toHaveLength(1);
++    expect(errors[0]).toContain('does not exist');
+   });
+ 
+   it('is inert when the HNSW flag is off (byte-identical legacy scan)', async () => {

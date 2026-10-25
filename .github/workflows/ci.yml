@@ -93,6 +93,10 @@ jobs:
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/derived-stale-cascade.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/edge-retraction.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/edge-retraction.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/revive-superseded-index.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/revive-superseded-index.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/knn-empty-result-fallback.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/knn-empty-result-fallback.patch"
       - run: git -C /tmp/brain diff --check
 
   integration:

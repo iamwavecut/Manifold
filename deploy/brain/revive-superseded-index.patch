@@ -1,0 +1,53 @@
+diff --git a/src/facts/facts.service.ts b/src/facts/facts.service.ts
+index 43d5321..5380513 100644
+--- a/src/facts/facts.service.ts
++++ b/src/facts/facts.service.ts
+@@ -963,16 +963,28 @@ export class FactsService {
+    */
+   private async reviveSupersededBy(db: Surreal, retractedFactId: string): Promise<string[]> {
+     const rid = this.normalizeFactId(retractedFactId).id;
+-    // One set-based UPDATE instead of SELECT + one UPDATE per row.
++    // Find the predecessors through fact_superseded_by_idx, then update
++    // only those records. SurrealDB 3.3 evaluates the WHERE of a table-wide
++    // `UPDATE knowledge_fact ... WHERE supersededBy = ...` against every
++    // row (about 1 s per retract on a 13k-fact tenant), while the same
++    // predicate in a SELECT is an index probe. The UPDATE repeats the
++    // conditions so a row that changed in between is left alone.
+     // `validUntil = priorValidUntil` reads each row's OWN field; SET
+     // assignments apply left-to-right, so clearing priorValidUntil after
+-    // the copy is safe (same in-order semantics the per-row form relied
+-    // on). Explicit `= NONE` — MERGE with JSON null does not unset an
+-    // option<datetime> field. With fact_superseded_by_idx (0059) the
+-    // WHERE is an index probe, not a table scan.
++    // the copy is safe. Explicit `= NONE` — MERGE with JSON null does not
++    // unset an option<datetime> field.
++    const predecessors = await queryRows<unknown>(
++      db,
++      `SELECT VALUE id FROM knowledge_fact WITH INDEX fact_superseded_by_idx
++        WHERE supersededBy = type::record('knowledge_fact', $rid)
++          AND status = 'superseded'
++          AND retractionReason = 'superseded'`,
++      { rid },
++    );
++    if (predecessors.length === 0) return [];
+     const rows = await queryRows<{ id: unknown }>(
+       db,
+-      `UPDATE knowledge_fact SET
++      `UPDATE $ids SET
+           status = 'active',
+           retractedAt = NONE,
+           retractedBy = NONE,
+@@ -980,11 +992,10 @@ export class FactsService {
+           supersededBy = NONE,
+           validUntil = priorValidUntil,
+           priorValidUntil = NONE
+-        WHERE supersededBy = type::record('knowledge_fact', $rid)
+-          AND status = 'superseded'
++        WHERE status = 'superseded'
+           AND retractionReason = 'superseded'
+         RETURN id`,
+-      { rid },
++      { ids: predecessors },
+     );
+     return rows.map((r) => String(r.id));
+   }
