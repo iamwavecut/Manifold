@@ -96,6 +96,15 @@ limited to three cores:
 | Fact retraction revived predecessors with a table-wide `UPDATE ... WHERE` | 980 ms per fact on production (78 ms per edge) | 53 ms with nothing to revive, 105-117 ms with a revival (copy) |
 | Manifold verified the API key with argon2id on every request | 110-150 ms per authenticated request | one argon2id per secret and process |
 
+Enabling the index needed two more Brain patches. Brain opens the `manifold`
+tenant during startup, before its provisioning listener exists, so it never
+built the index (`hnsw-provision-early-tenants.patch`). Without the index,
+SurrealDB 3.3 answers a KNN query with no rows, so the vector leg returned
+nothing instead of falling back to the exact scan
+(`knn-empty-result-fallback.patch`). Separately, Brain allowed 10 calls of
+`POST /v1/search` a minute per key, and the eleventh Manifold search or context
+request in a minute came back degraded (`search-throttle-limit.patch`).
+
 Reading a fact row is the expensive part, not the cosine: on production
 `count()` took 0.16 s, `count() WHERE embedding != NONE` 4.3 s. Only 5,350 of
 the 13,054 facts were active. Of the 0.47 s KNN, about 50 ms is the index walk

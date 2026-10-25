@@ -82,7 +82,7 @@ git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-serv
 git -C /tmp/brain fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
 git -C /tmp/brain checkout -q FETCH_HEAD
 test "$(git -C /tmp/brain rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback; do
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit; do
     git -C /tmp/brain apply --check "$PWD/deploy/brain/$patch.patch"
     git -C /tmp/brain apply "$PWD/deploy/brain/$patch.patch"
 done

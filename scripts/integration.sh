@@ -69,7 +69,7 @@ case "$brain_search" in
 		;;
 esac
 
-# Brain builds its HNSW index after the tenant's first request, and the
+# Brain builds its HNSW index when it first opens the tenant, and the
 # vector leg must then answer from it: on SurrealDB 3.3 a KNN query that
 # finds no usable index returns no rows instead of failing.
 surreal_pass=$(sed -n 's/^SURREALDB_PASSWORD=//p' .env.example)

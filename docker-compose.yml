@@ -106,6 +106,9 @@ services:
       EXTRACTOR_SC_PASSES: ${BRAIN_EXTRACTOR_SC_PASSES:-3}
       THROTTLE_LIMIT: ${BRAIN_THROTTLE_LIMIT:-600}
       THROTTLE_EXPENSIVE_LIMIT: ${BRAIN_THROTTLE_EXPENSIVE_LIMIT:-600}
+      # Upstream hardcodes 10 searches per minute on /v1/search, and every
+      # Manifold search and context request is one Brain search on one key.
+      THROTTLE_SEARCH_LIMIT: ${BRAIN_THROTTLE_SEARCH_LIMIT:-600}
       BRAIN_HEALTH_RESTART_FAILURES: ${BRAIN_HEALTH_RESTART_FAILURES:-20}
       DOCUMENT_INGEST_ENABLED: "1"
       DOCUMENT_MULTI_INDEXER_ENABLED: "1"
@@ -125,7 +128,7 @@ services:
       # The search vector leg reads Brain's HNSW index (approximate KNN)
       # instead of every fact row with its embedding, which took 5-6 s per
       # search at 13k facts. Brain builds the indexes itself (CONCURRENTLY)
-      # on a tenant's first request after start and serves the exact scan
+      # when it first opens a tenant after start and serves the exact scan
       # until they are ready. Provisioning follows the search flag unless
       # BRAIN_HNSW_PROVISION_ENABLED is set, e.g. to build ahead of a flip.
       SEARCH_HNSW_ENABLED: ${BRAIN_SEARCH_HNSW_ENABLED:-1}

@@ -87,7 +87,12 @@ Document extraction uses `BRAIN_EXTRACTOR_MAX_COMPLETION_TOKENS=16384`
 is successful only after a valid completed extraction. Private Brain request
 buckets default to 600 requests per minute (`BRAIN_THROTTLE_LIMIT` and
 `BRAIN_THROTTLE_EXPENSIVE_LIMIT`) so per-candidate hydration fits the extraction
-deadline. Authentication, tenant checks, and endpoint-specific limits remain.
+deadline. Brain's search route has its own limit, 600 searches per minute by
+default (`BRAIN_THROTTLE_SEARCH_LIMIT`; upstream hardcodes 10). Every Manifold
+search and context request makes one Brain search with the same key; above the
+limit Brain answers `429` and Manifold returns Brain in
+`degraded_dependencies`. Authentication, tenant checks, and other
+endpoint-specific limits remain.
 
 ```bash
 curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
@@ -137,9 +142,10 @@ Compose sets `SEARCH_HNSW_ENABLED=1` for Brain (`BRAIN_SEARCH_HNSW_ENABLED`).
 The search vector leg then reads `fact_embedding_hnsw` instead of every
 `knowledge_fact` row with its 1,536-value embedding; on 2026-10-25 that read
 took 5-6 s per search at 13,054 facts. Brain builds `fact_embedding_hnsw` and
-`segment_embedding_hnsw` itself, `CONCURRENTLY`, after the first request for
-the tenant following a start (13,400 facts: 6 s on a copy of the production
-graph), and again in its nightly reconciliation if one is missing. Until an
+`segment_embedding_hnsw` itself, `CONCURRENTLY`, when it first opens the
+tenant after a start, which for the `manifold` tenant happens during startup
+(13,400 facts: 6 s on a copy of the production graph), and again in its
+nightly reconciliation if one is missing. Until an
 index reports `ready`, the leg serves the exact scan. Provisioning follows the
 search flag; set `BRAIN_HNSW_PROVISION_ENABLED=1` with
 `BRAIN_SEARCH_HNSW_ENABLED=0` to build the indexes before the leg uses them.
