@@ -341,29 +341,38 @@ out of integration overrides.
 commit, API major, protocol revision, and advertised feature names. Use it to
 compare a remote deployment with its skill before authentication or mutation.
 
-The `Deploy production` workflow runs only after a successful push CI run on
-`main` (or an explicit manual dispatch). It checks out the event's immutable
-SHA and invokes `scripts/deploy-production.sh` on the host. The script requires
-a clean `/home/wavecut/Manifold` checkout on `main`, `.env` mode `0600`, and a
-target commit reachable from `origin/main`. It uses `docker compose up` without
-`down`, preserves every named volume, and verifies:
+The `Deploy production` workflow runs after successful push CI on `main` (or
+an explicit manual dispatch). It builds Manifold and patched Brain for the exact
+immutable commit **on the GitHub runner**, publishes their digests to the existing
+public GHCR package, and submits them to the host's restricted deployment broker.
+No host script is uploaded or executed, and the CI user has no shell, sudo, or
+Docker socket access. The old `scripts/deploy-production.sh` is a legacy operator
+procedure, not the production CI entrypoint.
 
-- health and readiness through the public URL;
-- exact version/commit/protocol metadata;
-- authenticated status with every component ready;
-- scoped semantic search, context, and tree without degraded dependencies;
-- the running binary's build identity.
+The host independently verifies the short-lived GitHub Actions OIDC identity
+(audience `geta-deploy`, repository ID, main workflow ref, production environment)
+and successful main-push CI for the target commit. Its operator-owned runtime
+profile fixes image repositories, service names, mounts, networks, and settings.
+Only the two image digests change. The broker uses Compose without `down`,
+without builds and without recreating dependencies, and preserves named volumes.
+It checks container health, public readiness/build identity, authenticated
+component status, and scoped semantic retrieval without degraded dependencies.
 
-If deep smoke fails after source activation, the script restores the recorded
-clean source SHA, rebuilds that stack, verifies health, and returns failure to
-GitHub. A green CI run, published GHCR image, GitHub release, and live
-deployment are distinct states; report their SHAs separately.
+A failed rollout restores the previously recorded pinned images and returns a
+failure to GitHub. Manual dispatch with `operation: rollback` restores the previous
+compatible release. Data-version changes require a coordinated operator migration;
+changes to the Compose/OpenViking runtime-profile fingerprint require explicit
+operator review and profile update. Neither is silently accepted from CI.
+A green CI run, published GHCR image, GitHub release, and live deployment remain
+distinct states; report their SHAs separately.
 
-The GitHub `production` environment holds only deployment transport material:
-`MANIFOLD_DEPLOY_SSH_KEY` and pinned `MANIFOLD_DEPLOY_KNOWN_HOSTS` secrets,
-plus `MANIFOLD_DEPLOY_HOST`, `MANIFOLD_DEPLOY_USER`, and
-`MANIFOLD_PUBLIC_URL` variables. The Manifold API key remains only in the
-host's protected `.env`; it is never copied into GitHub Actions.
+The GitHub `production` environment holds `MANIFOLD_DEPLOY_SSH_KEY` and pinned
+`MANIFOLD_DEPLOY_KNOWN_HOSTS` secrets, plus `MANIFOLD_DEPLOY_HOST`,
+`MANIFOLD_DEPLOY_USER=deploy`, and `MANIFOLD_PUBLIC_URL` variables. OIDC is minted
+only for the request and passed over SSH stdin, never printed or placed in an
+SSH command argument. Production API credentials remain in root-only host
+configuration, never in GitHub Actions. Privileged broker source/configuration
+updates use a separate, administrator-reviewed private infrastructure repository.
 
 ## Key rotation
 

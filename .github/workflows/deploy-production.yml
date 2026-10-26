@@ -7,12 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Full commit SHA from main; defaults to the selected ref
+        description: Full green main commit SHA; defaults to the selected ref
         required: false
         type: string
+      operation:
+        description: Deploy a release or restore the broker's previous compatible release
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
 
 permissions:
   contents: read
+  packages: write
+  id-token: write
 
 concurrency:
   group: manifold-production
@@ -31,39 +39,95 @@ jobs:
     environment: production
     env:
       DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}
+      DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
       DEPLOY_HOST: ${{ vars.MANIFOLD_DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.MANIFOLD_DEPLOY_USER }}
       MANIFOLD_PUBLIC_URL: ${{ vars.MANIFOLD_PUBLIC_URL }}
     steps:
+      - name: Validate deployment inputs
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_USER" == deploy ]]
+          [[ "$DEPLOY_OPERATION" == deploy || "$DEPLOY_OPERATION" == rollback ]]
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+        if: env.DEPLOY_OPERATION == 'deploy'
+      - uses: docker/login-action@v4
+        if: env.DEPLOY_OPERATION == 'deploy'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Read release metadata
+        if: env.DEPLOY_OPERATION == 'deploy'
+        run: |
+          echo "DATA_VERSION=$(tr -d '[:space:]' < DATA_VERSION)" >> "$GITHUB_ENV"
+      - name: Build and publish Manifold
+        if: env.DEPLOY_OPERATION == 'deploy'
+        id: manifold
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/iamwavecut/manifold:deploy-${{ env.DEPLOY_SHA }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.DEPLOY_SHA }}
+            io.geta-deploy.data-version=${{ env.DATA_VERSION }}
+          build-args: |
+            COMMIT=${{ env.DEPLOY_SHA }}
+          cache-from: type=gha,scope=manifold-production
+          cache-to: type=gha,scope=manifold-production,mode=max
+      - name: Build and publish patched Brain
+        if: env.DEPLOY_OPERATION == 'deploy'
+        id: brain
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/brain/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # Reuse the existing public package; no registry credentials on the host.
+          tags: ghcr.io/iamwavecut/manifold:brain-${{ env.DEPLOY_SHA }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.DEPLOY_SHA }}
+            io.geta-deploy.data-version=${{ env.DATA_VERSION }}
+          cache-from: type=gha,scope=manifold-brain-production
+          cache-to: type=gha,scope=manifold-brain-production,mode=max
       - name: Configure pinned SSH identity
         env:
           SSH_PRIVATE_KEY: ${{ secrets.MANIFOLD_DEPLOY_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.MANIFOLD_DEPLOY_KNOWN_HOSTS }}
           GETA_SSH_PORT: ${{ vars.MANIFOLD_DEPLOY_PORT || '22022' }}
         run: |
+          set -euo pipefail
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/manifold_deploy
           chmod 600 ~/.ssh/manifold_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          printf 'Host geta.moe 207.244.239.212 2605:a140:2260:6080::1\n  Port %s\n' "$GETA_SSH_PORT" > ~/.ssh/config
+          printf 'Host geta.moe 207.244.239.212 2605:a140:2260:6080::1\n  Port %s\n  IdentitiesOnly yes\n  BatchMode yes\n  StrictHostKeyChecking yes\n' "$GETA_SSH_PORT" > ~/.ssh/config
           chmod 600 ~/.ssh/config
-      - name: Deploy exact green SHA
+      - name: Request restricted deployment with GitHub identity
+        env:
+          MANIFOLD_IMAGE_DIGEST: ${{ steps.manifold.outputs.digest }}
+          BRAIN_IMAGE_DIGEST: ${{ steps.brain.outputs.digest }}
         run: |
-          test -n "$DEPLOY_HOST"
-          test -n "$DEPLOY_USER"
-          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
-          scp -i ~/.ssh/manifold_deploy scripts/deploy-production.sh \
-            "$DEPLOY_USER@$DEPLOY_HOST:/tmp/manifold-deploy-$DEPLOY_SHA.sh"
-          ssh -i ~/.ssh/manifold_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
-            "bash /tmp/manifold-deploy-$DEPLOY_SHA.sh '$DEPLOY_SHA'; deploy_exit_code=\$?; rm -f /tmp/manifold-deploy-$DEPLOY_SHA.sh; exit \$deploy_exit_code"
+          set -euo pipefail
+          if [[ "$DEPLOY_OPERATION" == deploy ]]; then
+            command="deploy $DEPLOY_SHA"
+          else
+            command=rollback
+          fi
+          python3 scripts/geta-release-request.py |
+            ssh -T -i ~/.ssh/manifold_deploy "$DEPLOY_USER@$DEPLOY_HOST" "$command"
       - name: Verify public build identity
+        if: env.DEPLOY_OPERATION == 'deploy'
         run: |
-          meta=$(curl --fail --silent --show-error "$MANIFOLD_PUBLIC_URL/api/v1/meta")
-          case "$meta" in
-            *'"commit":"'"$DEPLOY_SHA"'"'*) ;;
-            *) echo "public metadata commit does not match $DEPLOY_SHA" >&2; exit 1 ;;
-          esac
+          set -euo pipefail
+          curl --fail --silent --show-error "$MANIFOLD_PUBLIC_URL/api/v1/meta" |
+            jq -e --arg sha "$DEPLOY_SHA" '.commit == $sha'

@@ -62,6 +62,7 @@ jobs:
         with:
           python-version: "3.14.8"
       - run: python3 scripts/test-deploy-production.py
+      - run: python3 scripts/test-geta-release-request.py
       - run: git init -q /tmp/brain
       - run: git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
       - run: git -C /tmp/brain fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
