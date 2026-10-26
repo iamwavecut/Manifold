@@ -25,6 +25,7 @@ type Config struct {
 	BrainPollInterval      time.Duration
 	OpenVikingWriteTimeout time.Duration
 	WorkerInterval         time.Duration
+	WorkerConcurrency      int
 }
 
 func Load() (Config, error) {
@@ -68,6 +69,13 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	workerConcurrency, err := envInt64("MANIFOLD_WORKER_CONCURRENCY", 2)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerConcurrency < 1 || workerConcurrency > 16 {
+		return Config{}, fmt.Errorf("MANIFOLD_WORKER_CONCURRENCY must be between 1 and 16")
+	}
 	cfg := Config{
 		Addr:                   env("MANIFOLD_ADDR", ":8080"),
 		DBPath:                 env("MANIFOLD_DB_PATH", "manifold.db"),
@@ -85,6 +93,7 @@ func Load() (Config, error) {
 		BrainPollInterval:      pollInterval,
 		OpenVikingWriteTimeout: writeTimeout,
 		WorkerInterval:         workerInterval,
+		WorkerConcurrency:      int(workerConcurrency),
 	}
 	if cfg.MaxBodyBytes < 1024 {
 		return Config{}, fmt.Errorf("MANIFOLD_MAX_BODY_BYTES must be at least 1024")

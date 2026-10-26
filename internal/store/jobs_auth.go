@@ -144,12 +144,27 @@ func (s *Store) NextJob(ctx context.Context) (model.Job, error) {
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
 		var errorJSON, started, finished sql.NullString
 		var payload string
+		// Workers run jobs concurrently, but one resource's jobs run one at a
+		// time in the order they were created. A rename runs alone, and jobs
+		// created after a waiting rename wait for it. The rowid gives the
+		// creation order: created_at drops trailing zeros of its fraction, so
+		// two timestamps within one second can compare in the wrong order.
 		err := tx.QueryRowContext(ctx, `
-			SELECT id, kind, resource_type, resource_id, status, attempts, error_json, payload_json,
-				created_at, updated_at, started_at, finished_at
-			FROM jobs
-			WHERE status = 'accepted' AND (lease_until IS NULL OR lease_until < ?)
-			ORDER BY created_at LIMIT 1`, now()).Scan(
+			SELECT j.id, j.kind, j.resource_type, j.resource_id, j.status, j.attempts, j.error_json, j.payload_json,
+				j.created_at, j.updated_at, j.started_at, j.finished_at
+			FROM jobs j
+			WHERE j.status = 'accepted' AND (j.lease_until IS NULL OR j.lease_until < ?)
+				AND NOT EXISTS (
+					SELECT 1 FROM jobs other
+					WHERE other.id <> j.id AND (
+						(other.status IN ('indexing', 'extracting') AND (
+							other.kind = 'rename.apply' OR j.kind = 'rename.apply' OR
+							(other.resource_type = j.resource_type AND other.resource_id = j.resource_id)))
+						OR (other.status = 'accepted' AND
+							other.rowid < j.rowid AND
+							(other.kind = 'rename.apply' OR
+								(other.resource_type = j.resource_type AND other.resource_id = j.resource_id)))))
+			ORDER BY j.rowid LIMIT 1`, now()).Scan(
 			&job.ID, &job.Kind, &job.ResourceType, &job.ResourceID, &job.Status, &job.Attempts,
 			&errorJSON, &payload, new(string), new(string), &started, &finished)
 		if errors.Is(err, sql.ErrNoRows) {

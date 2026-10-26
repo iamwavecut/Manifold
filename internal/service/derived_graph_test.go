@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestMaterializeGraphDocumentProjectsTypedBrainResultWithExactSource(t *test
 			Predicate: "works_at", Status: "active", Confidence: 0.91,
 		}},
 	}
-	if err := svc.materializeGraphDocument(t.Context(), doc, result); err != nil {
+	if err := svc.materializeGraphDocument(t.Context(), doc, result, nil); err != nil {
 		t.Fatal(err)
 	}
 	mira, err := db.GetEntity(t.Context(), "mira-chen")
@@ -73,17 +74,17 @@ func TestMaterializeGraphDocumentProjectsTypedBrainResultWithExactSource(t *test
 
 	stale := result
 	stale.Revision = "r2"
-	if err := svc.materializeGraphDocument(t.Context(), doc, stale); !errors.Is(err, store.ErrDocumentSyncSuperseded) {
+	if err := svc.materializeGraphDocument(t.Context(), doc, stale, nil); !errors.Is(err, store.ErrDocumentSyncSuperseded) {
 		t.Fatalf("stale result error = %v, want ErrDocumentSyncSuperseded", err)
 	}
 	wrongOrigin := result
 	wrongOrigin.OriginURI = "manifold://documents/other-document@r1"
-	if err := svc.materializeGraphDocument(t.Context(), doc, wrongOrigin); !errors.Is(err, ErrDerivedGraphSourceMismatch) {
+	if err := svc.materializeGraphDocument(t.Context(), doc, wrongOrigin, nil); !errors.Is(err, ErrDerivedGraphSourceMismatch) {
 		t.Fatalf("wrong origin error = %v, want ErrDerivedGraphSourceMismatch", err)
 	}
 	incomplete := result
 	incomplete.Facts = nil
-	if err := svc.materializeGraphDocument(t.Context(), doc, incomplete); !errors.Is(err, ErrDerivedGraphIncomplete) {
+	if err := svc.materializeGraphDocument(t.Context(), doc, incomplete, nil); !errors.Is(err, ErrDerivedGraphIncomplete) {
 		t.Fatalf("incomplete result error = %v, want ErrDerivedGraphIncomplete", err)
 	}
 	facts, err = db.ListFacts(t.Context(), mira.ID, 100)
@@ -139,7 +140,7 @@ func TestMaterializeGraphDocumentMatchesEveryDeclaredCommitID(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result := result
 			test.change(&result)
-			if err := svc.materializeGraphDocument(t.Context(), doc, result); !errors.Is(err, ErrDerivedGraphIncomplete) {
+			if err := svc.materializeGraphDocument(t.Context(), doc, result, nil); !errors.Is(err, ErrDerivedGraphIncomplete) {
 				t.Fatalf("mismatched committed ID error = %v, want ErrDerivedGraphIncomplete", err)
 			}
 		})
@@ -158,7 +159,7 @@ func TestMaterializeGraphDocumentMatchesEveryDeclaredCommitID(t *testing.T) {
 	noIDs.OriginURI = "manifold://documents/derived-no-ids@r1"
 	noIDs.Revision = "r1"
 	noIDs.EntityIDs, noIDs.FactIDs, noIDs.EdgeIDs = nil, nil, nil
-	if err := svc.materializeGraphDocument(t.Context(), noIDDoc, noIDs); err != nil {
+	if err := svc.materializeGraphDocument(t.Context(), noIDDoc, noIDs, nil); err != nil {
 		t.Fatalf("details without legacy committed ID arrays were rejected: %v", err)
 	}
 }
@@ -188,7 +189,7 @@ func TestCanonicalizeProjectedFactHitRequiresCurrentLocalMapping(t *testing.T) {
 		Facts: []upstream.GraphFact{{
 			BrainID: "brain-fact", EntityBrainID: "brain-mira", Predicate: "works_at", Object: "Meridian Labs", Status: "active",
 		}},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -263,7 +264,7 @@ func TestCanonicalizeSharedFactUsesRemainingLiveDocumentClaim(t *testing.T) {
 		}
 	}
 	for _, doc := range []model.Document{first, second} {
-		if err := svc.materializeGraphDocument(t.Context(), doc, resultFor(doc)); err != nil {
+		if err := svc.materializeGraphDocument(t.Context(), doc, resultFor(doc), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -319,7 +320,7 @@ func TestCanonicalizeProjectedFactChoosesScopeMatchingLiveClaim(t *testing.T) {
 		}
 	}
 	for _, doc := range []model.Document{outside, inside} {
-		if err := svc.materializeGraphDocument(t.Context(), doc, resultFor(doc)); err != nil {
+		if err := svc.materializeGraphDocument(t.Context(), doc, resultFor(doc), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -368,7 +369,7 @@ func TestCanonicalizeCurrentSharedFactMatchesHitSnippetWithoutScope(t *testing.T
 		doc    model.Document
 		object string
 	}{{first, "Meridian Labs"}, {second, "Borealis Labs"}} {
-		if err := svc.materializeGraphDocument(t.Context(), item.doc, resultFor(item.doc, item.object)); err != nil {
+		if err := svc.materializeGraphDocument(t.Context(), item.doc, resultFor(item.doc, item.object), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -413,7 +414,7 @@ func TestCanonicalizeHistoricalFactUsesExactRevisionAndExcludesDeletedSources(t 
 			Object: "Meridian Labs", Status: "active",
 		}},
 	}
-	if err := svc.materializeGraphDocument(t.Context(), doc, first); err != nil {
+	if err := svc.materializeGraphDocument(t.Context(), doc, first, nil); err != nil {
 		t.Fatal(err)
 	}
 	updated, _, err := db.UpdateDocument(t.Context(), doc.ID, doc.ETag, "", "Mira works at Borealis.", nil, nil, model.Job{
@@ -435,7 +436,7 @@ func TestCanonicalizeHistoricalFactUsesExactRevisionAndExcludesDeletedSources(t 
 			Object: "Borealis Labs", Status: "active",
 		}},
 	}
-	if err := svc.materializeGraphDocument(t.Context(), updated, second); err != nil {
+	if err := svc.materializeGraphDocument(t.Context(), updated, second, nil); err != nil {
 		t.Fatal(err)
 	}
 	current, ok, err := svc.canonicalizeProjectedFactHitWithOptions(
@@ -493,6 +494,7 @@ func TestCanonicalizeHistoricalFactUsesExactRevisionAndExcludesDeletedSources(t 
 
 type retractingGraphStore struct {
 	fakeGraphStore
+	mu       sync.Mutex
 	calls    []string
 	revived  map[string][]string
 	failures map[string]error
@@ -502,6 +504,8 @@ func (g *retractingGraphStore) RetractFact(_ context.Context, upstreamID, reason
 	if reason != derivedFactRetractionReason {
 		return nil, fmt.Errorf("unexpected retraction reason %q", reason)
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.calls = append(g.calls, upstreamID)
 	if err := g.failures[upstreamID]; err != nil {
 		return nil, err
@@ -545,7 +549,7 @@ func TestWithdrawnDocumentFactsAreRetractedInBrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.materializeGraphDocument(t.Context(), doc, derivedFactResult(doc, "fact-old")); err != nil {
+	if err := svc.materializeGraphDocument(t.Context(), doc, derivedFactResult(doc, "fact-old"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(graph.calls) != 0 {
@@ -559,7 +563,7 @@ func TestWithdrawnDocumentFactsAreRetractedInBrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.materializeGraphDocument(t.Context(), updated,
-		derivedFactResult(updated, "fact-kept", "fact-admin", "fact-gone")); err != nil {
+		derivedFactResult(updated, "fact-kept", "fact-admin", "fact-gone"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(graph.calls, []string{"fact-old"}) {
@@ -643,11 +647,11 @@ func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
 	}
 	doc := create("withdrawn-relations")
 	live := create("live-relations")
-	if err := svc.materializeGraphDocument(t.Context(), live, derivedRelationResult(live, "edge-shared")); err != nil {
+	if err := svc.materializeGraphDocument(t.Context(), live, derivedRelationResult(live, "edge-shared"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.materializeGraphDocument(t.Context(), doc,
-		derivedRelationResult(doc, "edge-old", "edge-shared")); err != nil {
+		derivedRelationResult(doc, "edge-old", "edge-shared"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(graph.calls) != 0 {
@@ -661,7 +665,7 @@ func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.materializeGraphDocument(t.Context(), updated,
-		derivedRelationResult(updated, "edge-kept", "edge-admin", "edge-gone", "edge-shared")); err != nil {
+		derivedRelationResult(updated, "edge-kept", "edge-admin", "edge-gone", "edge-shared"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(graph.calls, []string{"edge-old"}) {
@@ -695,5 +699,134 @@ func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
 	graph.failures["edge-admin"] = &upstream.DependencyError{Dependency: "brain", Status: http.StatusServiceUnavailable, Retryable: true}
 	if err := svc.deleteDocument(t.Context(), job); err == nil {
 		t.Fatal("transient Brain failure did not fail the delete job")
+	}
+}
+
+type slowRetractingGraphStore struct {
+	fakeGraphStore
+	mu           sync.Mutex
+	inFlight     int
+	maxInFlight  int
+	calls        map[string]int
+	conflictOnce map[string]bool
+}
+
+func (g *slowRetractingGraphStore) RetractFact(_ context.Context, upstreamID, _ string) ([]string, error) {
+	g.mu.Lock()
+	g.inFlight++
+	g.maxInFlight = max(g.maxInFlight, g.inFlight)
+	g.calls[upstreamID]++
+	conflict := g.conflictOnce[upstreamID]
+	delete(g.conflictOnce, upstreamID)
+	g.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	g.mu.Lock()
+	g.inFlight--
+	g.mu.Unlock()
+	if conflict {
+		// Brain answers a SurrealDB transaction conflict with a 500.
+		return nil, &upstream.DependencyError{Dependency: "brain", Status: http.StatusInternalServerError, Retryable: true}
+	}
+	return nil, nil
+}
+
+func TestDerivedFactRetractionsRunConcurrentlyAndRepeatConflicts(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	graph := &slowRetractingGraphStore{calls: map[string]int{}, conflictOnce: map[string]bool{"fact-3": true}}
+	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	doc, _, err := db.CreateDocument(t.Context(), model.Document{
+		ID: "replaced-facts", Title: "Replaced facts", Format: "markdown", Content: "First revision.",
+		OVURI: "viking://resources/manifold/replaced-facts.md",
+	}, model.Job{ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: "replaced-facts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 8)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("fact-%d", i)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), doc, derivedFactResult(doc, ids...), nil); err != nil {
+		t.Fatal(err)
+	}
+	updated, _, err := db.UpdateDocument(t.Context(), doc.ID, doc.ETag, "", "Second revision.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: doc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), updated, derivedFactResult(updated), nil); err != nil {
+		t.Fatalf("a conflict that cleared on the next call failed the sync: %v", err)
+	}
+	if graph.maxInFlight < 2 || graph.maxInFlight > derivedRetractionConcurrency {
+		t.Fatalf("retractions in flight = %d, want 2..%d", graph.maxInFlight, derivedRetractionConcurrency)
+	}
+	for _, id := range ids {
+		want := 1
+		if id == "fact-3" {
+			want = 2
+		}
+		if graph.calls[id] != want {
+			t.Fatalf("calls for %s = %d, want %d (all calls: %v)", id, graph.calls[id], want, graph.calls)
+		}
+	}
+	if left, err := db.OrphanedDerivedFacts(t.Context(), updated.ID); err != nil || len(left) != 0 {
+		t.Fatalf("unretracted orphans = %#v, err = %v", left, err)
+	}
+}
+
+func TestRetractionWaitsForGraphWorkInFlight(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
+	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	create := func(id string) model.Document {
+		t.Helper()
+		doc, _, err := db.CreateDocument(t.Context(), model.Document{
+			ID: id, Title: id, Format: "markdown", Content: "First revision.",
+			OVURI: "viking://resources/manifold/" + id + ".md",
+		}, model.Job{ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	stating := create("stating-document")
+	dropping := create("dropping-document")
+	if err := svc.materializeGraphDocument(t.Context(), dropping, derivedFactResult(dropping, "fact-shared"), nil); err != nil {
+		t.Fatal(err)
+	}
+	updated, _, err := db.UpdateDocument(t.Context(), dropping.ID, dropping.ETag, "", "Second revision.", nil, nil,
+		model.Job{ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: dropping.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The stating document's sync is past its Brain submission: Brain may
+	// already have committed fact-shared for it.
+	hold := svc.holdGraphPhase()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.materializeGraphDocument(t.Context(), updated, derivedFactResult(updated, "fact-new"), nil)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("retraction ran while another sync's Brain commit was in flight: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := svc.materializeGraphDocument(t.Context(), stating, derivedFactResult(stating, "fact-shared"), hold); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(graph.calls, "fact-shared") {
+		t.Fatalf("retracted a fact that another document claims: %v", graph.calls)
 	}
 }

@@ -119,6 +119,37 @@ retractions 77 s. Entity resolution scans `knowledge_entity` by type (1.1 s for
 the 1,874 `asset` entities); the slow-query log below attributes the rest of the
 commit.
 
+## SQLite lookups and job concurrency (2026-10-26)
+
+After the Brain answer, production Manifold spent 0.96 s more on a search and
+1.48 s more on a context request. Search canonicalization, graph projection,
+and retraction look records up by their Brain ID, and the tables had no index
+on `upstream_id` or on the entity references; on a copy of the production
+database (31.6 MB) the fact lookups of one search alone took 711 ms:
+
+| Lookup | Before | After |
+| --- | --- | --- |
+| 40 fact snapshots by Brain ID (one search) | 711 ms | 1.1 ms, same 22 rows |
+| Sync lookups of one job | 43 ms | 0.4 ms |
+| Facts of one entity | 120 ms | 0.45 ms |
+
+The indexes took 73 ms to build and add 1.34 MB. Even with the indexes, the
+SQLite planner started the fact snapshot query from `derived_graph_claims`,
+whose `object_kind` index matches nearly every claim; `CROSS JOIN` fixes
+`facts` as the outer table. `TestBrainIDLookupsUseIndexes` checks the plans.
+
+In the 155 s update job above, 74 fact and 39 edge retractions ran one at a
+time. A retraction now sends up to four Brain calls at a time. Manifold runs
+two workers, so the OpenViking stage and the extraction of a second document
+run while another extraction is in flight; retractions still wait for the
+extractions in flight. The ordering rules are in
+[operations](operations.md#job-concurrency).
+
+Disk activity on the production host was dominated by other workloads; of the
+Manifold stack, SurrealDB wrote 162 KB/s at 41 write operations per second
+while idle. Manifold's containers wrote 0.3-1.5 MB of logs a day to unbounded
+`json-file` logs; Compose now caps each container at three 10 MB files.
+
 ## Measuring again
 
 - Compose sets `SURREAL_SLOW_QUERY_LOG_THRESHOLD` to 250 ms

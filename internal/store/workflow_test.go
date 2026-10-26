@@ -346,3 +346,69 @@ func assertPayloadString(t *testing.T, payload json.RawMessage, key, want string
 		t.Fatalf("payload field %q = %q in %s, want %q", key, got, payload, want)
 	}
 }
+
+func TestNextJobRunsOneJobPerResourceAndRenamesAlone(t *testing.T) {
+	s := openTestStore(t)
+	enqueue := func(kind, resourceType, resourceID string) string {
+		t.Helper()
+		job, err := s.EnqueueJob(t.Context(), model.Job{
+			ID: identity.NewXID(), Kind: kind, ResourceType: resourceType, ResourceID: resourceID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job.ID
+	}
+	claim := func() string {
+		t.Helper()
+		job, err := s.NextJob(t.Context())
+		if errors.Is(err, ErrNotFound) {
+			return ""
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job.ID
+	}
+	finish := func(id string) {
+		t.Helper()
+		if err := s.SetJobStatus(t.Context(), id, model.JobReady, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	firstA := enqueue("document.sync", "document", "doc-a")
+	onlyB := enqueue("document.sync", "document", "doc-b")
+	secondA := enqueue("document.delete", "document", "doc-a")
+	if got := claim(); got != firstA {
+		t.Fatalf("first claim = %q, want the oldest job %q", got, firstA)
+	}
+	if got := claim(); got != onlyB {
+		t.Fatalf("second claim = %q, want the other document's job %q", got, onlyB)
+	}
+	if got := claim(); got != "" {
+		t.Fatalf("claimed %q while an older job of the same document ran", got)
+	}
+	finish(firstA)
+	if got := claim(); got != secondA {
+		t.Fatalf("claim after the first job = %q, want %q", got, secondA)
+	}
+
+	rename := enqueue("rename.apply", "rename_plan", "plan-1")
+	afterRename := enqueue("document.sync", "document", "doc-c")
+	if got := claim(); got != "" {
+		t.Fatalf("claimed %q while a rename waited for running jobs", got)
+	}
+	finish(onlyB)
+	finish(secondA)
+	if got := claim(); got != rename {
+		t.Fatalf("claim = %q, want the rename %q once nothing else runs", got, rename)
+	}
+	if got := claim(); got != "" {
+		t.Fatalf("job %q started beside a rename; want none until it finishes (%s)", got, afterRename)
+	}
+	finish(rename)
+	if got := claim(); got != afterRename {
+		t.Fatalf("claim after the rename = %q, want %q", got, afterRename)
+	}
+}
