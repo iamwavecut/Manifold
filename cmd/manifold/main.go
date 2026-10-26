@@ -90,10 +90,14 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 
+	// Workers claim different jobs; the store runs one resource's jobs in
+	// order and a rename alone.
 	var workers sync.WaitGroup
-	workers.Go(func() {
-		svc.RunWorker(ctx)
-	})
+	for range cfg.WorkerConcurrency {
+		workers.Go(func() {
+			svc.RunWorker(ctx)
+		})
+	}
 	serverError := make(chan error, 1)
 	go func() {
 		logger.Info("manifold listening", "address", cfg.Addr, "public_url", cfg.PublicURL, "version", version)

@@ -1,5 +1,13 @@
 name: manifold
 
+# Docker keeps json-file logs without a size limit. The local driver stores
+# them compressed and keeps at most three 10 MB files per container.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   manifold:
     build:
@@ -8,6 +16,7 @@ services:
         VERSION: ${MANIFOLD_BUILD_VERSION:-}
         COMMIT: ${MANIFOLD_BUILD_COMMIT:-unknown}
     restart: unless-stopped
+    logging: *logging
     init: true
     environment:
       MANIFOLD_ADDR: :8080
@@ -21,6 +30,7 @@ services:
       MANIFOLD_BRAIN_INGEST_TIMEOUT: ${MANIFOLD_BRAIN_INGEST_TIMEOUT:-2m}
       MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: ${MANIFOLD_BRAIN_EXTRACTION_TIMEOUT:-30m}
       MANIFOLD_BRAIN_POLL_INTERVAL: ${MANIFOLD_BRAIN_POLL_INTERVAL:-2s}
+      MANIFOLD_WORKER_CONCURRENCY: ${MANIFOLD_WORKER_CONCURRENCY:-2}
       OPENVIKING_URL: http://openviking:1933
       OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
       BRAIN_URL: http://brain:3000
@@ -47,6 +57,7 @@ services:
   openviking:
     image: ghcr.io/volcengine/openviking:v0.5.0@sha256:c60a83cd79cfce80db5266acb8bdd0908eee8abe8ff559a5f786aa504c251ccf
     restart: unless-stopped
+    logging: *logging
     init: true
     environment:
       OPENVIKING_CONFIG_FILE: /app/.openviking/ov.conf
@@ -81,6 +92,7 @@ services:
       args:
         BRAIN_REF: a567f6960c031b916549699fec7b89423c650d1e
     restart: unless-stopped
+    logging: *logging
     init: true
     stop_grace_period: 30s
     environment:
@@ -153,6 +165,7 @@ services:
   surrealdb:
     image: surrealdb/surrealdb:v3.3.0@sha256:681c6c22c287421b5c7d99e0fde79b6e0d32c36c1ddeaab2762a1661cb04cd20
     restart: unless-stopped
+    logging: *logging
     user: root
     command:
       - start

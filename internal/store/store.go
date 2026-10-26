@@ -190,6 +190,15 @@ CREATE TABLE IF NOT EXISTS relations (
 	created_at TEXT NOT NULL
 );
 
+-- Search canonicalization and graph projection look records up by their
+-- Brain ID, and cascades and graph reads follow entity references.
+CREATE INDEX IF NOT EXISTS entities_upstream_idx ON entities(upstream_id);
+CREATE INDEX IF NOT EXISTS facts_upstream_idx ON facts(upstream_id, origin);
+CREATE INDEX IF NOT EXISTS facts_entity_idx ON facts(entity_id);
+CREATE INDEX IF NOT EXISTS relations_upstream_idx ON relations(upstream_id, origin);
+CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_entity_id);
+CREATE INDEX IF NOT EXISTS relations_to_idx ON relations(to_entity_id);
+
 CREATE TABLE IF NOT EXISTS derived_graph_claims (
 	object_kind TEXT NOT NULL CHECK (object_kind IN ('entity', 'fact', 'relation')),
 	object_id TEXT NOT NULL,

@@ -122,6 +122,27 @@ document withdraws it from current public retrieval and retracts its unshared
 Brain facts and relations, but it does not purge those private Brain chunks. Review the [retention boundary](brain-patch.md) before
 production migration; the service key is not granted administrator scope.
 
+## Job concurrency
+
+Manifold runs `MANIFOLD_WORKER_CONCURRENCY` workers (2 by default, 1–16) in one
+process. Jobs of different documents run in parallel. Jobs of one resource run
+one at a time, in the order they were created. A `rename.apply` job runs only
+when no other job runs, and jobs created after it wait until it finishes. Set
+the value to 1 to run every job in sequence.
+
+A document sync holds the derived-graph phase shared from its Brain submission
+until its graph projection is stored. The retraction of facts and relations
+that a document no longer states holds the phase exclusively. A retraction
+therefore sees the claims of every Brain commit in flight and does not withdraw
+a fact that another document is about to claim. The cost: a retraction waits
+for the extractions in flight, and a sync that reaches its Brain submission
+while a retraction waits also waits.
+
+A retraction sends up to four Brain calls at a time. A retryable Brain failure
+(`429`, `5xx`, a network error) is repeated up to three attempts, with the
+delay that Brain's `Retry-After` asks for. Facts that a retraction revives join
+the next round.
+
 ## Brain liveness
 
 Compose reports an unhealthy container but never restarts it. Brain's
@@ -157,6 +178,14 @@ SurrealDB logs every statement slower than
 text and duration. The parameter allow list names no parameter, so bound
 values such as document text and embeddings are not logged. Read it with
 `docker compose logs surrealdb | grep slowlog`.
+
+## Container logs
+
+Compose writes every service's log with the `local` driver: compressed, at
+most three 10 MB files per container. Docker's default `json-file` driver keeps
+logs without a limit. `docker compose logs` reads both. A container keeps its
+log only while it exists; recreating it, as every deployment does, starts an
+empty log.
 
 ## Data version 4 migration
 

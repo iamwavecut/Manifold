@@ -250,14 +250,16 @@ func (s *Service) syncDocument(ctx context.Context, job model.Job) error {
 	}
 	extractionCtx, cancel := context.WithTimeout(ctx, s.brainExtractionTimeout)
 	defer cancel()
+	hold := s.holdGraphPhase()
+	defer hold.release()
 	if async, ok := s.graph.(upstream.AsyncGraphStore); ok {
-		return s.syncAsyncDocument(extractionCtx, async, job, doc, revisionName, snapshot, graphDocument, payload)
+		return s.syncAsyncDocument(extractionCtx, async, job, doc, revisionName, snapshot, graphDocument, payload, hold)
 	}
 	ingest, err := s.graph.IngestDocument(extractionCtx, graphDocument)
 	if err != nil {
 		return err
 	}
-	if err := s.materializeGraphDocument(extractionCtx, doc, ingest); err != nil {
+	if err := s.materializeGraphDocument(extractionCtx, doc, ingest, hold); err != nil {
 		return err
 	}
 	return s.store.SetDocumentSyncForRevision(ctx, doc.ID, revisionName, model.JobReady, ingest.DocumentID, snapshot)
@@ -272,6 +274,7 @@ func (s *Service) syncAsyncDocument(
 	snapshot string,
 	graphDocument upstream.GraphDocument,
 	payload documentSyncPayload,
+	hold *graphPhaseHold,
 ) error {
 	brainDocumentID := payload.BrainDocumentID
 	if brainDocumentID == "" {
@@ -338,12 +341,12 @@ func (s *Service) syncAsyncDocument(
 	}
 	switch state.Status {
 	case upstream.GraphDocumentReady:
-		if err := s.materializeGraphDocument(ctx, doc, result); err != nil {
+		if err := s.materializeGraphDocument(ctx, doc, result, hold); err != nil {
 			return err
 		}
 		return s.store.SetDocumentSyncForRevision(ctx, doc.ID, revision, model.JobReady, result.DocumentID, snapshot)
 	case upstream.GraphDocumentPartial:
-		if err := s.materializeGraphDocument(ctx, doc, result); err != nil {
+		if err := s.materializeGraphDocument(ctx, doc, result, hold); err != nil {
 			return err
 		}
 		if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, revision, model.JobPartiallyReady, result.DocumentID, snapshot); err != nil {

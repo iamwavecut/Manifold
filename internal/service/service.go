@@ -32,6 +32,13 @@ type Service struct {
 	brainExtractionTimeout time.Duration
 	brainPollInterval      time.Duration
 	build                  buildinfo.Info
+
+	// graphPhase orders the derived-graph work of concurrent jobs. A document
+	// sync holds it shared from its Brain submission until its projection is
+	// stored, and a retraction holds it exclusively. A retraction then sees the
+	// claims of every Brain commit in flight, and does not withdraw a fact that
+	// another document is about to claim.
+	graphPhase sync.RWMutex
 }
 
 const defaultBrainExtractionTimeout = 15 * time.Minute
@@ -781,7 +788,7 @@ func (s *Service) syncRenamedDocuments(
 			}
 			switch state.Status {
 			case upstream.GraphDocumentReady:
-				if err := s.materializeGraphDocument(graphCtx, doc, ingest); err != nil {
+				if err := s.materializeGraphDocument(graphCtx, doc, ingest, nil); err != nil {
 					cancel()
 					return err
 				}
@@ -790,7 +797,7 @@ func (s *Service) syncRenamedDocuments(
 					return err
 				}
 			case upstream.GraphDocumentPartial:
-				if err := s.materializeGraphDocument(graphCtx, doc, ingest); err != nil {
+				if err := s.materializeGraphDocument(graphCtx, doc, ingest, nil); err != nil {
 					cancel()
 					return err
 				}
@@ -819,7 +826,7 @@ func (s *Service) syncRenamedDocuments(
 		if graphErr != nil {
 			return graphErr
 		}
-		if err := s.materializeGraphDocument(ctx, doc, ingest); err != nil {
+		if err := s.materializeGraphDocument(ctx, doc, ingest, nil); err != nil {
 			return err
 		}
 		if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobReady, ingest.DocumentID, snapshot); err != nil {
@@ -971,7 +978,7 @@ func (s *Service) compensateRenameUpstreams(
 			s.logger.Error("rename graph compensation failed", "plan_id", planID, "document_id", original.ID)
 			continue
 		}
-		if err := s.materializeGraphDocument(ctx, original, ingest); err != nil {
+		if err := s.materializeGraphDocument(ctx, original, ingest, nil); err != nil {
 			s.logger.Error("rename graph projection compensation failed", "plan_id", planID, "document_id", original.ID)
 		}
 	}
