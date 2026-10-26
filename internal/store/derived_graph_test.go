@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -596,5 +597,40 @@ func TestOrphanedDerivedFactIsNotMarkedRetractedWhileClaimed(t *testing.T) {
 	}
 	if changed, err := s.MarkOrphanedDerivedFactRetracted(t.Context(), id); err != nil || changed {
 		t.Fatalf("claimed fact was marked retracted: changed = %v, err = %v", changed, err)
+	}
+}
+
+func TestBrainIDLookupsUseIndexes(t *testing.T) {
+	s := openTestStore(t)
+	plans := []struct {
+		name, query, index string
+	}{
+		{"fact snapshots", derivedFactSnapshotsQuery(false), "facts_upstream_idx"},
+		{"fact snapshots with history", derivedFactSnapshotsQuery(true), "facts_upstream_idx"},
+		{"projected fact", `SELECT id FROM facts WHERE upstream_id = ? AND origin = 'derived' LIMIT 1`, "facts_upstream_idx"},
+		{"projected entity", `SELECT id FROM entities WHERE upstream_id = ? LIMIT 1`, "entities_upstream_idx"},
+		{"projected relation", `SELECT id FROM relations WHERE upstream_id = ? AND origin = 'derived' LIMIT 1`, "relations_upstream_idx"},
+	}
+	for _, plan := range plans {
+		rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+plan.query, "brain-id")
+		if err != nil {
+			t.Fatalf("%s: %v", plan.name, err)
+		}
+		var steps []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			steps = append(steps, detail)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		// The first step is the outer loop; it must be the Brain ID lookup.
+		if len(steps) == 0 || !strings.Contains(steps[0], "USING INDEX "+plan.index) {
+			t.Errorf("%s plan = %q, want it to start with %s", plan.name, steps, plan.index)
+		}
 	}
 }

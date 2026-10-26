@@ -211,13 +211,11 @@ type DerivedFactSnapshot struct {
 	EntityName string
 }
 
-// ListDerivedFactSnapshotsByUpstreamID returns one exact local fact snapshot for each live source revision.
-// Historical claims are available only when includeHistory is true and their document is not deleted.
-func (s *Store) ListDerivedFactSnapshotsByUpstreamID(
-	ctx context.Context,
-	upstreamID string,
-	includeHistory bool,
-) ([]DerivedFactSnapshot, error) {
+// derivedFactSnapshotsQuery reads the derived fact with one Brain ID and its
+// claims. CROSS JOIN fixes facts as the outer table: SQLite otherwise starts
+// from derived_graph_claims, whose object_kind index matches nearly every
+// claim, and reads all fact claims to find the few of one fact.
+func derivedFactSnapshotsQuery(includeHistory bool) string {
 	query := `
 		SELECT f.id, COALESCE(snapshot.entity_id, f.entity_id),
 			CASE WHEN snapshot.object_id IS NULL THEN f.predicate ELSE snapshot.predicate END,
@@ -230,7 +228,7 @@ func (s *Store) ListDerivedFactSnapshotsByUpstreamID(
 			CASE WHEN snapshot.object_id IS NULL THEN f.valid_until ELSE snapshot.valid_until END,
 			f.created_at
 		FROM facts f
-		JOIN derived_graph_claims c ON c.object_kind = 'fact' AND c.object_id = f.id
+		CROSS JOIN derived_graph_claims c ON c.object_kind = 'fact' AND c.object_id = f.id
 		JOIN documents source ON source.id = c.document_id AND source.deleted = 0
 		JOIN revisions rev ON rev.document_id = c.document_id AND rev.revision = c.revision
 		LEFT JOIN derived_graph_fact_snapshots snapshot ON snapshot.object_id = c.object_id
@@ -241,9 +239,18 @@ func (s *Store) ListDerivedFactSnapshotsByUpstreamID(
 	if !includeHistory {
 		query += ` AND c.active = 1 AND source.revision = c.revision`
 	}
-	query += ` ORDER BY CASE WHEN c.active = 1 AND source.revision = c.revision THEN 0 ELSE 1 END,
+	return query + ` ORDER BY CASE WHEN c.active = 1 AND source.revision = c.revision THEN 0 ELSE 1 END,
 		c.document_id, c.revision, c.source_key, c.origin_key`
-	rows, err := s.db.QueryContext(ctx, query, upstreamID)
+}
+
+// ListDerivedFactSnapshotsByUpstreamID returns one exact local fact snapshot for each live source revision.
+// Historical claims are available only when includeHistory is true and their document is not deleted.
+func (s *Store) ListDerivedFactSnapshotsByUpstreamID(
+	ctx context.Context,
+	upstreamID string,
+	includeHistory bool,
+) ([]DerivedFactSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, derivedFactSnapshotsQuery(includeHistory), upstreamID)
 	if err != nil {
 		return nil, err
 	}
