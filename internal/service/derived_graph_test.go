@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"sync"
@@ -540,6 +541,7 @@ func TestWithdrawnDocumentFactsAreRetractedInBrain(t *testing.T) {
 	defer db.Close()
 	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
 	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	svc.SetBrainPollInterval(time.Millisecond)
 	doc, _, err := db.CreateDocument(t.Context(), model.Document{
 		ID: "withdrawn-source", Title: "Withdrawn source", Format: "markdown", Content: "First revision.",
 		OVURI: "viking://resources/manifold/withdrawn-source.md",
@@ -634,6 +636,7 @@ func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
 	defer db.Close()
 	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
 	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	svc.SetBrainPollInterval(time.Millisecond)
 	create := func(id string) model.Document {
 		t.Helper()
 		doc, _, err := db.CreateDocument(t.Context(), model.Document{
@@ -704,11 +707,11 @@ func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
 
 type slowRetractingGraphStore struct {
 	fakeGraphStore
-	mu           sync.Mutex
-	inFlight     int
-	maxInFlight  int
-	calls        map[string]int
-	conflictOnce map[string]bool
+	mu          sync.Mutex
+	inFlight    int
+	maxInFlight int
+	calls       map[string]int
+	conflicts   map[string]int
 }
 
 func (g *slowRetractingGraphStore) RetractFact(_ context.Context, upstreamID, _ string) ([]string, error) {
@@ -716,8 +719,10 @@ func (g *slowRetractingGraphStore) RetractFact(_ context.Context, upstreamID, _ 
 	g.inFlight++
 	g.maxInFlight = max(g.maxInFlight, g.inFlight)
 	g.calls[upstreamID]++
-	conflict := g.conflictOnce[upstreamID]
-	delete(g.conflictOnce, upstreamID)
+	conflict := g.conflicts[upstreamID] > 0
+	if conflict {
+		g.conflicts[upstreamID]--
+	}
 	g.mu.Unlock()
 	time.Sleep(20 * time.Millisecond)
 	g.mu.Lock()
@@ -736,7 +741,7 @@ func TestDerivedFactRetractionsRunConcurrentlyAndRepeatConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	graph := &slowRetractingGraphStore{calls: map[string]int{}, conflictOnce: map[string]bool{"fact-3": true}}
+	graph := &slowRetractingGraphStore{calls: map[string]int{}, conflicts: map[string]int{"fact-3": 1}}
 	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
 	doc, _, err := db.CreateDocument(t.Context(), model.Document{
 		ID: "replaced-facts", Title: "Replaced facts", Format: "markdown", Content: "First revision.",
@@ -775,6 +780,65 @@ func TestDerivedFactRetractionsRunConcurrentlyAndRepeatConflicts(t *testing.T) {
 	}
 	if left, err := db.OrphanedDerivedFacts(t.Context(), updated.ID); err != nil || len(left) != 0 {
 		t.Fatalf("unretracted orphans = %#v, err = %v", left, err)
+	}
+}
+
+func TestDerivedFactRetractionOutlastsRepeatedConflicts(t *testing.T) {
+	// In production one retraction met a SurrealDB transaction conflict on
+	// three consecutive calls while three other retractions were in flight.
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	graph := &slowRetractingGraphStore{calls: map[string]int{}, conflicts: map[string]int{"fact-1": 4, "fact-2": 3}}
+	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	svc.SetBrainPollInterval(time.Millisecond)
+	doc, _, err := db.CreateDocument(t.Context(), model.Document{
+		ID: "conflicting-facts", Title: "Conflicting facts", Format: "markdown", Content: "First revision.",
+		OVURI: "viking://resources/manifold/conflicting-facts.md",
+	}, model.Job{ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: "conflicting-facts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), doc, derivedFactResult(doc, "fact-0", "fact-1", "fact-2"), nil); err != nil {
+		t.Fatal(err)
+	}
+	updated, _, err := db.UpdateDocument(t.Context(), doc.ID, doc.ETag, "", "Second revision.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: doc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), updated, derivedFactResult(updated), nil); err != nil {
+		t.Fatalf("conflicts that cleared on the fifth call failed the sync: %v", err)
+	}
+	if want := map[string]int{"fact-0": 1, "fact-1": 5, "fact-2": 4}; !maps.Equal(graph.calls, want) {
+		t.Fatalf("calls = %v, want %v", graph.calls, want)
+	}
+
+	graph.calls = map[string]int{}
+	graph.conflicts = map[string]int{"fact-9": 100}
+	again, _, err := db.UpdateDocument(t.Context(), updated.ID, updated.ETag, "", "Third revision.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: updated.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), again, derivedFactResult(again, "fact-9"), nil); err != nil {
+		t.Fatal(err)
+	}
+	final, _, err := db.UpdateDocument(t.Context(), again.ID, again.ETag, "", "Fourth revision.", nil, nil, model.Job{
+		ID: identity.NewXID(), Kind: "document.sync", ResourceType: "document", ResourceID: again.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.materializeGraphDocument(t.Context(), final, derivedFactResult(final), nil); err == nil {
+		t.Fatal("a conflict that never cleared did not fail the sync")
+	}
+	if graph.calls["fact-9"] != maxRetractionAttempts {
+		t.Fatalf("calls for a lasting conflict = %d, want %d", graph.calls["fact-9"], maxRetractionAttempts)
 	}
 }
 

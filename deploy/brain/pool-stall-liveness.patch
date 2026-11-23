@@ -1,0 +1,292 @@
+diff --git a/src/common/health.controller.ts b/src/common/health.controller.ts
+index 3efa73b..d8762e3 100644
+--- a/src/common/health.controller.ts
++++ b/src/common/health.controller.ts
+@@ -38,6 +38,23 @@ export class HealthController {
+   @Get('health')
+   async health() {
+     const { dbOk } = await this.healthService.liveness();
++    const stalledPools = this.healthService.stalledPools();
++    if (stalledPools.length > 0) {
++      // Every lease of the pool is held by a query that will never answer
++      // (e.g. it was in flight when SurrealDB restarted). The process cannot
++      // release them, so it is not live: the container healthcheck counts
++      // this and replaces the process.
++      throw new ServiceUnavailableException({
++        status: 'pool_stalled',
++        service: 'inite-brain-service',
++        version: SERVICE_VERSION,
++        timestamp: new Date().toISOString(),
++        checks: {
++          surrealdb: dbOk ? 'ok' : 'unreachable',
++          ...Object.fromEntries(stalledPools.map((pool) => [`${pool}Pool`, 'stalled'])),
++        },
++      });
++    }
+     if (this.healthService.isShuttingDown()) {
+       // The balancer health-checks THIS path (traefik loadbalancer
+       // healthcheck.path=/health, deliberately not /ready), so a leaving
+diff --git a/src/common/health.service.ts b/src/common/health.service.ts
+index f9f63d3..31fe538 100644
+--- a/src/common/health.service.ts
++++ b/src/common/health.service.ts
+@@ -130,6 +130,15 @@ export class HealthService {
+     return { dbOk, dbLatencyMs: Date.now() - started };
+   }
+ 
++  /**
++   * Connection pools whose leases never come back (see
++   * SurrealService.stalledPools). The process cannot recover them, so
++   * /health fails and the container watchdog replaces the process.
++   */
++  stalledPools(): Array<'root' | 'scoped'> {
++    return this.surreal.stalledPools();
++  }
++
+   /**
+    * Readiness — request-path dependencies warm enough for production
+    * traffic: DB reachable, the CALLER-FACING read path still authorized,
+diff --git a/src/db/surreal.service.ts b/src/db/surreal.service.ts
+index 80d2104..f7d9df3 100644
+--- a/src/db/surreal.service.ts
++++ b/src/db/surreal.service.ts
+@@ -39,6 +39,12 @@ const SESSION_PROBE_TIMEOUT_MS = 3000;
+  * lock arbitrates on.
+  */
+ const ADMIN_DATABASE = 'system';
++/**
++ * Default for SURREALDB_POOL_STALL_MS: how long every acquire of a pool may
++ * time out, with no acquire succeeding in between, before liveness reports
++ * the pool stalled (see `stalledPools`).
++ */
++const POOL_STALL_MS = 120_000;
+ 
+ type PoolRole = 'root' | 'scoped';
+ 
+@@ -98,6 +104,16 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+   private poolSize!: number;
+   private scopedPoolSize!: number;
+   private acquireTimeoutMs!: number;
++  private poolStallMs = POOL_STALL_MS;
++  /**
++   * Per pool: when the first acquire timed out after the last successful
++   * acquire, or 0 while acquires succeed. surrealdb-js does not reject a
++   * query that was in flight when its socket dropped, so a SurrealDB restart
++   * can leave every leased connection awaiting a reply that never comes; the
++   * lease is never released and each later acquire times out. Nothing inside
++   * the process recovers that, so liveness reports it (see `stalledPools`).
++   */
++  private readonly failingSince: Record<PoolRole, number> = { root: 0, scoped: 0 };
+   private scopedEnabled = false;
+   // Track whether we've already overwritten brain_caller's password
+   // this process boot for an existing-tenant case. Migrations only
+@@ -259,6 +275,13 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     if (!Number.isFinite(this.acquireTimeoutMs) || this.acquireTimeoutMs < 100) {
+       throw new Error('SURREALDB_ACQUIRE_TIMEOUT_MS must be >= 100ms');
+     }
++    this.poolStallMs = parseInt(
++      this.configService.get<string>('SURREALDB_POOL_STALL_MS', String(POOL_STALL_MS)),
++      10,
++    );
++    if (!Number.isFinite(this.poolStallMs) || this.poolStallMs < this.acquireTimeoutMs) {
++      throw new Error('SURREALDB_POOL_STALL_MS must be >= SURREALDB_ACQUIRE_TIMEOUT_MS');
++    }
+ 
+     // Cache for re-signin / rebuild on ws drops (see ensureSession).
+     this.rootCreds = { username, password };
+@@ -584,6 +607,24 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     };
+   }
+ 
++  /**
++   * Pools that have no idle connection and whose acquires have all timed
++   * out, without one success, for at least SURREALDB_POOL_STALL_MS. A busy
++   * pool hands released connections to its waiters, which resets the clock;
++   * a pool whose leases leaked never does. Liveness fails on a stalled pool
++   * so the container watchdog replaces the process — see `failingSince`.
++   */
++  stalledPools(now = Date.now()): Array<'root' | 'scoped'> {
++    const pools: Array<[PoolRole, Surreal[]]> = [['root', this.rootIdle]];
++    if (this.scopedEnabled) pools.push(['scoped', this.scopedIdle]);
++    return pools
++      .filter(([role, idle]) => {
++        const since = this.failingSince[role];
++        return idle.length === 0 && since > 0 && now - since >= this.poolStallMs;
++      })
++      .map(([role]) => role);
++  }
++
+   private acquireRoot(): Promise<Surreal> {
+     return this.acquireWithTimeout(this.rootIdle, this.rootWaiters, 'root');
+   }
+@@ -643,16 +684,21 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     label: 'root' | 'scoped',
+   ): Promise<Surreal> {
+     const free = idle.shift();
+-    if (free) return Promise.resolve(free);
++    if (free) {
++      this.failingSince[label] = 0;
++      return Promise.resolve(free);
++    }
+     return new Promise<Surreal>((resolve, reject) => {
+       const ms = this.acquireTimeoutMs;
+       const enqueued: (c: Surreal) => void = (c) => {
+         clearTimeout(t);
++        this.failingSince[label] = 0;
+         resolve(c);
+       };
+       const t = setTimeout(() => {
+         const i = waiters.indexOf(enqueued);
+         if (i >= 0) waiters.splice(i, 1);
++        if (this.failingSince[label] === 0) this.failingSince[label] = Date.now();
+         reject(
+           new Error(
+             `Surreal ${label} pool acquire timed out after ${ms}ms (pool=${this.poolSize}, waiters=${waiters.length}). Likely a connection leak — check long-running requests in /admin/now.`,
+diff --git a/test/health-ready.unit-spec.ts b/test/health-ready.unit-spec.ts
+index 3e5a90e..27fe400 100644
+--- a/test/health-ready.unit-spec.ts
++++ b/test/health-ready.unit-spec.ts
+@@ -21,11 +21,17 @@ function shuttingDownService(controller: HealthController): HealthService {
+ }
+ 
+ describe('HealthController', () => {
+-  function mk(opts: { db: boolean; embedderReady: boolean; scoped?: boolean }) {
++  function mk(opts: {
++    db: boolean;
++    embedderReady: boolean;
++    scoped?: boolean;
++    stalled?: Array<'root' | 'scoped'>;
++  }) {
+     const surreal = {
+       ping: async () => opts.db,
+       pingScoped: async () => opts.scoped ?? true,
+       scopedPoolEnabled: () => true,
++      stalledPools: () => opts.stalled ?? [],
+     } as any;
+     const embedder = {
+       isReady: () => opts.embedderReady,
+@@ -60,6 +66,23 @@ describe('HealthController', () => {
+      * healthcheck.path=/health, deliberately not /ready), so a leaving
+      * replica has to fail THIS path to be drained.
+      */
++    /**
++     * Manifold 2026-11-21: SurrealDB was OOM-killed with eight root queries
++     * in flight. surrealdb-js never rejected them, the root pool stayed
++     * leased for two days, and /health kept answering ok, so the container
++     * watchdog never replaced the process.
++     */
++    it('answers 503 with status pool_stalled naming each stalled pool', async () => {
++      const err = await mk({ db: true, embedderReady: true, stalled: ['root', 'scoped'] })
++        .health()
++        .catch((e: ServiceUnavailableException) => e);
++      expect(err).toBeInstanceOf(ServiceUnavailableException);
++      expect((err as ServiceUnavailableException).getResponse()).toMatchObject({
++        status: 'pool_stalled',
++        checks: { surrealdb: 'ok', rootPool: 'stalled', scopedPool: 'stalled' },
++      });
++    });
++
+     it('answers 503 with status shutting_down once shutdown begins', async () => {
+       const controller = mk({ db: true, embedderReady: true });
+       await expect(controller.health()).resolves.toMatchObject({ status: 'ok' });
+diff --git a/test/surreal-pool-stall.unit-spec.ts b/test/surreal-pool-stall.unit-spec.ts
+new file mode 100644
+index 0000000..ddeea15
+--- /dev/null
++++ b/test/surreal-pool-stall.unit-spec.ts
+@@ -0,0 +1,95 @@
++/**
++ * Manifold 2026-11-21: SurrealDB was OOM-killed while every root-pool
++ * connection carried a query. surrealdb-js reconnected the sockets but never
++ * rejected those queries, so `withCompany` never reached its `finally` and
++ * the leases never came back. Each later acquire timed out for two days
++ * while /health answered ok. `stalledPools` is the signal liveness uses.
++ */
++import { ConfigService } from '@nestjs/config';
++import { SurrealService } from '../src/db/surreal.service';
++
++describe('SurrealService pool stall detection', () => {
++  const STALL_MS = 120_000;
++
++  function setup(poolSize = 2) {
++    const svc = new SurrealService(new ConfigService());
++    const state = svc as any;
++    state.acquireTimeoutMs = 10_000;
++    state.poolStallMs = STALL_MS;
++    state.scopedEnabled = true;
++    const conns = Array.from({ length: poolSize }, (_, i) => ({ id: i }));
++    state.rootIdle.push(...conns);
++    state.scopedIdle.push({ id: 'scoped' });
++    return { svc, state, conns };
++  }
++
++  /** Lease every idle root connection and never release it. */
++  async function leaseAll(state: any, count: number) {
++    for (let i = 0; i < count; i++) await state.acquireRoot();
++  }
++
++  /** One acquire that waits the full timeout and fails. */
++  async function timedOutAcquire(state: any) {
++    const pending = state.acquireRoot().catch((e: Error) => e);
++    await jest.advanceTimersByTimeAsync(10_000);
++    const err = await pending;
++    expect(err).toBeInstanceOf(Error);
++    expect((err as Error).message).toMatch(/root pool acquire timed out/);
++  }
++
++  beforeEach(() => jest.useFakeTimers());
++  afterEach(() => jest.useRealTimers());
++
++  it('reports nothing while acquires succeed', async () => {
++    const { svc, state } = setup();
++    const conn = await state.acquireRoot();
++    state.releaseRoot(conn);
++    await jest.advanceTimersByTimeAsync(STALL_MS * 2);
++    expect(svc.stalledPools()).toEqual([]);
++  });
++
++  it('reports the root pool once its leases have leaked for the stall window', async () => {
++    const { svc, state } = setup();
++    await leaseAll(state, 2);
++    await timedOutAcquire(state);
++    expect(svc.stalledPools()).toEqual([]);
++    await jest.advanceTimersByTimeAsync(STALL_MS - 10_000);
++    await timedOutAcquire(state);
++    expect(svc.stalledPools()).toEqual(['root']);
++  });
++
++  it('clears the stall when a released connection reaches a waiter', async () => {
++    const { svc, state, conns } = setup();
++    await leaseAll(state, 2);
++    await timedOutAcquire(state);
++    await jest.advanceTimersByTimeAsync(STALL_MS);
++    expect(svc.stalledPools()).toEqual(['root']);
++    const waiter = state.acquireRoot();
++    state.releaseRoot(conns[0]);
++    await expect(waiter).resolves.toBe(conns[0]);
++    expect(svc.stalledPools()).toEqual([]);
++  });
++
++  it('does not report a saturated pool that later returns its connections', async () => {
++    const { svc, state, conns } = setup();
++    await leaseAll(state, 2);
++    await timedOutAcquire(state);
++    // The burst ends: both leases come back, nobody acquires for a while.
++    state.releaseRoot(conns[0]);
++    state.releaseRoot(conns[1]);
++    await jest.advanceTimersByTimeAsync(STALL_MS * 2);
++    expect(svc.stalledPools()).toEqual([]);
++  });
++
++  it('tracks the scoped pool separately', async () => {
++    const { svc, state } = setup();
++    await state.acquireWithTimeout(state.scopedIdle, state.scopedWaiters, 'scoped');
++    const pending = state
++      .acquireWithTimeout(state.scopedIdle, state.scopedWaiters, 'scoped')
++      .catch((e: Error) => e);
++    await jest.advanceTimersByTimeAsync(10_000);
++    await pending;
++    await jest.advanceTimersByTimeAsync(STALL_MS);
++    expect(svc.stalledPools()).toEqual(['scoped']);
++  });
++});

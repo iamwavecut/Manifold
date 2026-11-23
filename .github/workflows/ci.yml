@@ -102,6 +102,8 @@ jobs:
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/hnsw-provision-early-tenants.patch"
       - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/search-throttle-limit.patch"
       - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/search-throttle-limit.patch"
+      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/pool-stall-liveness.patch"
+      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/pool-stall-liveness.patch"
       - run: git -C /tmp/brain diff --check
 
   integration:

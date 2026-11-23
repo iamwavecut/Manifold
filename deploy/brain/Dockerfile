@@ -27,6 +27,7 @@ COPY deploy/brain/revive-superseded-index.patch /tmp/revive-superseded-index.pat
 COPY deploy/brain/knn-empty-result-fallback.patch /tmp/knn-empty-result-fallback.patch
 COPY deploy/brain/hnsw-provision-early-tenants.patch /tmp/hnsw-provision-early-tenants.patch
 COPY deploy/brain/search-throttle-limit.patch /tmp/search-throttle-limit.patch
+COPY deploy/brain/pool-stall-liveness.patch /tmp/pool-stall-liveness.patch
 RUN cd /source \
     && git apply --check /tmp/openai-api-key-format.patch \
     && git apply /tmp/openai-api-key-format.patch \
@@ -61,7 +62,9 @@ RUN cd /source \
     && git apply --check /tmp/hnsw-provision-early-tenants.patch \
     && git apply /tmp/hnsw-provision-early-tenants.patch \
     && git apply --check /tmp/search-throttle-limit.patch \
-    && git apply /tmp/search-throttle-limit.patch
+    && git apply /tmp/search-throttle-limit.patch \
+    && git apply --check /tmp/pool-stall-liveness.patch \
+    && git apply /tmp/pool-stall-liveness.patch
 
 # Node 22 LTS (22.23.3); upstream main builds on the same major line.
 FROM node:22.23.3-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS builder
