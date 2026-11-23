@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -129,9 +130,10 @@ const maxDerivedFactRetractions = 3
 const derivedRetractionConcurrency = 4
 
 // maxRetractionAttempts bounds the calls for one retraction. Concurrent
-// retractions can abort in Brain with a SurrealDB transaction conflict, and a
+// retractions abort in Brain with a SurrealDB transaction conflict (HTTP 500)
+// on about one call in ten, sometimes several times in a row, and a
 // retraction is idempotent, so a failed or throttled call is repeated.
-const maxRetractionAttempts = 3
+const maxRetractionAttempts = 6
 
 // retractOrphanedDerivedFacts retracts in Brain the derived facts that the
 // document claimed and that no live document claims at its current revision,
@@ -232,10 +234,19 @@ func (s *Service) retractUpstream(ctx context.Context, upstreamID string) ([]str
 		if err == nil || attempt == maxRetractionAttempts || !retryableUpstreamError(err) {
 			return revived, err
 		}
-		if waitErr := waitForContext(ctx, brainRetryDelay(err, time.Duration(attempt)*initialBrainPollInterval)); waitErr != nil {
+		if waitErr := waitForContext(ctx, brainRetryDelay(err, s.retractionRetryDelay(attempt))); waitErr != nil {
 			return nil, err
 		}
 	}
+}
+
+// retractionRetryDelay is the wait after the given failed attempt: the Brain
+// poll delay, which doubles from initialBrainPollInterval up to the poll
+// interval, randomized over its upper half. Retractions that conflicted with
+// each other would conflict again after equal waits.
+func (s *Service) retractionRetryDelay(attempt int) time.Duration {
+	delay := s.brainPollDelay(attempt - 1)
+	return delay - rand.N(delay/2+1)
 }
 
 // retractOrphanedDerivedRelations retracts in Brain the derived relations that

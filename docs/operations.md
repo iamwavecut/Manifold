@@ -139,9 +139,14 @@ for the extractions in flight, and a sync that reaches its Brain submission
 while a retraction waits also waits.
 
 A retraction sends up to four Brain calls at a time. A retryable Brain failure
-(`429`, `5xx`, a network error) is repeated up to three attempts, with the
-delay that Brain's `Retry-After` asks for. Facts that a retraction revives join
-the next round.
+(`429`, `5xx`, a network error) is repeated up to six attempts, with the delay
+that Brain's `Retry-After` asks for or else a random delay from the upper half
+of the poll backoff (250 ms doubling to `MANIFOLD_BRAIN_POLL_INTERVAL`).
+Concurrent retractions make SurrealDB abort about one Brain call in ten with
+`Transaction conflict: Resource busy` (HTTP 500), sometimes several times in a
+row; with three attempts and equal delays this failed eight document syncs
+between 2026-11-11 and 2026-11-23. Facts that a retraction revives join the
+next round.
 
 ## Brain liveness
 
