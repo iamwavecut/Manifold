@@ -174,6 +174,21 @@ in [CI](../.github/workflows/ci.yml):
   `429`, and Manifold reported Brain as a degraded dependency of that search
   or context request. A value that is not a positive integer keeps 10. A unit
   spec reads the route's throttle metadata.
+- [`pool-stall-liveness.patch`](../deploy/brain/pool-stall-liveness.patch)
+  makes `GET /health` answer `503` with `status: "pool_stalled"` when a
+  SurrealDB connection pool has no idle connection and every acquire has timed
+  out, without one success, for `SURREALDB_POOL_STALL_MS` (2 minutes by
+  default; it must not be shorter than `SURREALDB_ACQUIRE_TIMEOUT_MS`).
+  surrealdb-js 2.0.8 does not reject a query that is in flight when its socket
+  drops. On 2026-11-21 SurrealDB was OOM-killed while every root-pool
+  connection carried a query; the sockets reconnected, but the queries never
+  settled, `withCompany` never released the leases, and every later acquire
+  timed out for two days while `/health` answered `ok`. Brain cannot release
+  such a lease itself, so the failing liveness probe lets the
+  [container watchdog](operations.md#brain-liveness) replace the process.
+  A pool that hands released connections to its waiters is busy, not stalled,
+  and keeps `/health` green. Unit specs cover the stall, its reset, a
+  saturated pool that recovers, the scoped pool, and the `503` body.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
@@ -247,7 +262,7 @@ git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-se
 git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
 git -C "$brain_src" checkout -q FETCH_HEAD
 test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit; do
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit pool-stall-liveness; do
     git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
     git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
 done

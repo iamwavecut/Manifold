@@ -157,6 +157,59 @@ watchdog reacts to a wedged process rather than to a dependency outage. The
 log of the restarted container contains the watchdog line, and its restart
 count increases; investigate both instead of treating the restart as recovery.
 
+A wedged process includes one whose SurrealDB connection pool leaked. When
+SurrealDB restarts, surrealdb-js reconnects its sockets but never settles the
+queries that were in flight, so their pool leases are never released.
+`pool-stall-liveness.patch` makes `/health` answer `503` with
+`status: "pool_stalled"` once a pool has had no idle connection and no
+successful acquire for `SURREALDB_POOL_STALL_MS` (2 minutes) while acquires
+time out. The watchdog replaces the process about seven minutes after the
+leak, and Manifold's `status` reports Brain as not ready meanwhile. Brain's log
+shows the leak as repeated `Surreal root pool acquire timed out` warnings.
+Before this patch the 2026-11-21 SurrealDB OOM kill left every root lease
+leaked for two days: each Manifold search and context request waited for its
+30-second Brain deadline, nightly compaction could not be enqueued, and
+`/health` answered `ok`. To recover a process without the patch, restart only
+the Brain container.
+
+Any Brain restart, by the watchdog or an operator, interrupts the extraction
+pass in flight. That document's Brain run stays `running`: the pass reads only
+`pending` runs, and Brain marks a run `failed` only in its nightly sweep at
+03:45 UTC, once the run is older than 30 minutes. The Manifold job meanwhile
+holds a worker and the shared graph phase, and document updates that retract
+facts wait behind it, until `MANIFOLD_BRAIN_EXTRACTION_TIMEOUT` (30 minutes)
+ends the job as `partially_ready`. Retry that job only after the sweep; an earlier retry waits
+on the same run for another 30 minutes. Before a planned restart of Brain or
+SurrealDB, check `manifold jobs` for `document.sync` jobs in `indexing`.
+
+## SurrealDB memory
+
+Without a container limit SurrealDB 3.3 sizes its RocksDB block cache from
+host memory: half of it minus 1 GiB, 11.5 GB of 23.5 GB on the production
+host, plus up to eight 128 MiB memtables. Between 03:05 and 03:51 UTC Brain's
+nightly jobs (recompose at 03:05, compaction at 03:17, and several sweeps) run
+statements over `knowledge_fact` that take 10-80 seconds each. On 2026-11-13
+and 2026-11-21 SurrealDB reached 17 GB during that window and the kernel's
+global OOM killer stopped it, with every other service on the host under the
+same memory pressure.
+
+Compose therefore limits the container (`SURREALDB_MEMORY_LIMIT`, `10g`), sets
+the RocksDB cache explicitly (`SURREALDB_BLOCK_CACHE_SIZE`, 3 GiB in bytes;
+SurrealDB silently ignores a value that is not a plain byte count), and sets
+`SURREAL_MEMORY_THRESHOLD` (`SURREALDB_MEMORY_THRESHOLD`, `8GiB`): above it
+SurrealDB refuses new requests instead of growing until the limit. The
+threshold counts the Rust heap and the RocksDB caches but not table readers,
+compaction buffers, or open write batches, so keep it below the container
+limit. Confirm the effective values in the startup log:
+
+```bash
+docker compose logs surrealdb | grep -E 'Memory threshold|Memory manager'
+docker inspect -f '{{.HostConfig.Memory}}' manifold-surrealdb-1
+```
+
+An OOM kill inside the limit stops only SurrealDB. Brain then loses its
+in-flight queries; see [Brain liveness](#brain-liveness).
+
 ## Brain vector index and slow-query log
 
 Compose sets `SEARCH_HNSW_ENABLED=1` for Brain (`BRAIN_SEARCH_HNSW_ENABLED`).
