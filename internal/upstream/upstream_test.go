@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -139,10 +140,14 @@ func TestBrainSearchClampsCandidateLimitToPinnedContract(t *testing.T) {
 func TestBrainDocumentIngestUsesDedicatedLongRunningClient(t *testing.T) {
 	t.Parallel()
 
+	var mu sync.Mutex
+	senders := map[string]string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		senders[r.Method+" "+r.URL.Path] = r.Header.Get("X-Test-Client")
+		mu.Unlock()
 		switch r.URL.Path {
 		case "/v1/ingest/document":
-			time.Sleep(30 * time.Millisecond)
 			_, _ = w.Write([]byte(`{"documentId":"source_document:brain-document-1"}`))
 		case "/v1/documents/source_document:brain-document-1":
 			_, _ = w.Write([]byte(`{"id":"source_document:brain-document-1","status":"committed","meta":{"manifold_id":"release-evidence","revision":"r1"},"runs":[{"packId":"_general","status":"succeeded"}]}`))
@@ -154,9 +159,18 @@ func TestBrainDocumentIngestUsesDedicatedLongRunningClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ordinaryClient := &http.Client{Timeout: 5 * time.Millisecond}
-	ingestClient := &http.Client{Timeout: 200 * time.Millisecond}
-	client := NewBrain(server.URL, "brain-secret", ordinaryClient, ingestClient)
+	// Each client marks its requests, so the test checks which client sent
+	// each call. Racing a 5 ms timeout on the ordinary client against a slow
+	// ingest handler failed the status reads under -race on loaded CI runners.
+	marked := func(name string) *http.Client {
+		transport := server.Client().Transport
+		return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			request = request.Clone(request.Context())
+			request.Header.Set("X-Test-Client", name)
+			return transport.RoundTrip(request)
+		})}
+	}
+	client := NewBrain(server.URL, "brain-secret", marked("ordinary"), marked("ingest"))
 	result, err := client.IngestDocument(t.Context(), GraphDocument{
 		ID: "release-evidence", Title: "Release evidence", Format: "markdown", Content: "verified", Revision: "r1",
 	})
@@ -165,6 +179,19 @@ func TestBrainDocumentIngestUsesDedicatedLongRunningClient(t *testing.T) {
 	}
 	if result.DocumentID != "source_document:brain-document-1" {
 		t.Fatalf("document ID = %q", result.DocumentID)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if senders["POST /v1/ingest/document"] != "ingest" {
+		t.Fatalf("document submission sent by %q client, want the ingest client (all calls: %v)", senders["POST /v1/ingest/document"], senders)
+	}
+	if senders["GET /v1/documents/source_document:brain-document-1"] == "" {
+		t.Fatalf("document status was not read (all calls: %v)", senders)
+	}
+	for call, sender := range senders {
+		if call != "POST /v1/ingest/document" && sender != "ordinary" {
+			t.Fatalf("%s sent by %q client, want the ordinary client (all calls: %v)", call, sender, senders)
+		}
 	}
 }
 
