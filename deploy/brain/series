@@ -14,3 +14,7 @@ pool-stall-liveness
 predicate-vocabulary-refresh
 unindexed-tenant-vector-spec
 provider-refusal
+settle-fact-entity-index
+selective-entity-fact-indexes
+derived-stale-cascade
+ledger-release
