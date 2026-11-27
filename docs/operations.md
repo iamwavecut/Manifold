@@ -104,7 +104,25 @@ Retry only `failed` or `partially_ready` jobs. Other states return `invalid_stat
 
 `status.state` and `status.components` describe component probes. Inspect
 `status.pipeline` for current document states; historical failed job counts are
-not a current read outage. A failed pre-snapshot write marks the current
+not a current read outage.
+
+When the model provider refuses extraction, the job stores
+`provider_credits_exhausted` (no credit) or `dependency_unavailable` (key, rate
+limit, outage), and `status.pipeline` reports `blocked_documents` and
+`blocked_reason`. `status.state` stays `ready` because the components answer.
+Every `MANIFOLD_PROVIDER_RETRY_INTERVAL` (15 minutes, `0` turns it off)
+Manifold retries the longest-blocked document as a probe. After one sync
+succeeds it retries all blocked documents. You do not need to retry them by
+hand. Search can still report `degraded_dependencies` while the provider
+refuses embedding or rerank requests.
+
+`deploy/openviking/ov.conf` caps OpenViking completions with `vlm.max_tokens`
+(32768). Without a cap, OpenRouter reserves credit for the model's largest
+possible answer and refuses requests while the balance could still pay for
+them. Lower the value for a model whose output
+limit is smaller.
+
+A failed pre-snapshot write marks the current
 document `failed`; a preserved canonical snapshot with incomplete extraction
 is `partially_ready`. Jobs for older revisions cannot mark a newer revision
 ready. Inspect the stored error and exact revision before selecting retries.
@@ -244,6 +262,21 @@ most three 10 MB files per container. Docker's default `json-file` driver keeps
 logs without a limit. `docker compose logs` reads both. A container keeps its
 log only while it exists; recreating it, as every deployment does, starts an
 empty log.
+
+## SurrealDB 3.3.5
+
+Compose moved SurrealDB from v3.3.0 to v3.3.5 on 2026-11-27. The release line
+and storage format are the same, so `DATA_VERSION` stays 4. On a copy of a
+graph with about 50,000 facts v3.3.5 opened the data with the HNSW index
+`ready`, and v3.3.0 opened the same files again afterwards. Take a cold copy
+of the volume before changing the image anyway:
+
+```bash
+docker compose stop brain surrealdb
+docker run --rm -v manifold_surrealdb-data:/data:ro -v "$PWD:/backup" \
+  alpine:3.24.2 tar -C /data -cf /backup/surrealdb-data.tar .
+docker compose up -d surrealdb brain
+```
 
 ## Data version 4 migration
 

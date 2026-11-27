@@ -28,6 +28,8 @@ COPY deploy/brain/knn-empty-result-fallback.patch /tmp/knn-empty-result-fallback
 COPY deploy/brain/hnsw-provision-early-tenants.patch /tmp/hnsw-provision-early-tenants.patch
 COPY deploy/brain/search-throttle-limit.patch /tmp/search-throttle-limit.patch
 COPY deploy/brain/pool-stall-liveness.patch /tmp/pool-stall-liveness.patch
+COPY deploy/brain/provider-refusal.patch /tmp/provider-refusal.patch
+COPY deploy/brain/predicate-vocabulary-refresh.patch /tmp/predicate-vocabulary-refresh.patch
 RUN cd /source \
     && git apply --check /tmp/openai-api-key-format.patch \
     && git apply /tmp/openai-api-key-format.patch \
@@ -64,7 +66,11 @@ RUN cd /source \
     && git apply --check /tmp/search-throttle-limit.patch \
     && git apply /tmp/search-throttle-limit.patch \
     && git apply --check /tmp/pool-stall-liveness.patch \
-    && git apply /tmp/pool-stall-liveness.patch
+    && git apply /tmp/pool-stall-liveness.patch \
+    && git apply --check /tmp/provider-refusal.patch \
+    && git apply /tmp/provider-refusal.patch \
+    && git apply --check /tmp/predicate-vocabulary-refresh.patch \
+    && git apply /tmp/predicate-vocabulary-refresh.patch
 
 # Node 22 LTS (22.23.3); upstream main builds on the same major line.
 FROM node:22.23.3-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS builder

@@ -55,6 +55,8 @@ type GraphIndexerRun struct {
 	IndexerID string
 	Status    string
 	Reason    string
+	// Refusal is why the model provider refused the run, when it did.
+	Refusal string
 }
 
 type GraphDocumentState struct {
@@ -133,4 +135,19 @@ func (e *DependencyError) Error() string {
 
 func (e *DependencyError) Unwrap() error {
 	return e.Cause
+}
+
+// ProviderRefusal reports why the model provider refused an extraction:
+// "billing", "auth", "rate_limit", "outage", or "" when it did not.
+func ProviderRefusal(state GraphDocumentState) string {
+	for _, run := range state.Runs {
+		if run.Status != "failed" {
+			continue
+		}
+		switch run.Refusal {
+		case "billing", "auth", "rate_limit", "outage":
+			return run.Refusal
+		}
+	}
+	return ""
 }

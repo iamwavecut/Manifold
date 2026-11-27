@@ -12,7 +12,7 @@ The CLI uses the response `code`, not free-form text.
 | 14 | `slug_taken`, `folder_path_conflict` | Review the suggested slug or existing canonical folder path; do not silently fork identity. |
 | 15 | `etag_mismatch`, `idempotency_key_reused`, `state_conflict`, `invalid_state_transition` | Refresh state; use a new key when the intended mutation changed. |
 | 16 | `stale_rename_plan`, `unrewritable_reference` | Create a new preview or remove all blockers. |
-| 17 | `dependency_unavailable`, `storage_unavailable`, `discovery_degraded` | Restore readiness; do not create memory from incomplete discovery. |
+| 17 | `dependency_unavailable`, `storage_unavailable`, `discovery_degraded`, `provider_credits_exhausted` | Restore readiness; do not create memory from incomplete discovery. For `provider_credits_exhausted`, ask the operator to add model provider credit; the server retries the stored document itself, so do not write it again. |
 | 18 | `job_failed` | Inspect the stored job remediation before retrying. |
 | 19 | any other semantic server error | Give the operator `request_id`; do not expose secrets or private content. |
 | 20 | `api_key_secret_not_replayable` | Use the original one-time secret or revoke the key and issue a replacement. |

@@ -40,6 +40,9 @@ neither a healthy probe nor an accepted job proves successful indexing.
 Historical failed jobs do not by themselves prove that current reads fail.
 Newer servers also expose `status.pipeline` for current document processing;
 inspect its state and counts separately from component health.
+`pipeline.blocked_documents` counts documents the model provider refused to
+extract; `pipeline.blocked_reason` is the error code. The document is stored and
+the server retries it, so tell the user the cause and do not write it again.
 
 ## Retrieve memory first
 

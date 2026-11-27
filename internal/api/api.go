@@ -101,7 +101,7 @@ func (a *API) installOpenAPIExamples() {
 			"detail":     "A safe request-specific explanation is returned here.",
 			"code":       code,
 			"request_id": "d5vqh9idc6b5u5sctq00",
-			"retryable":  code == "dependency_unavailable" || code == "storage_unavailable",
+			"retryable":  code == "dependency_unavailable" || code == "storage_unavailable" || code == "provider_credits_exhausted",
 			"remediation": map[string]any{
 				"summary": semanticErrorDocs[code].Summary,
 				"steps":   semanticErrorDocs[code].Steps,
@@ -142,6 +142,9 @@ func (a *API) installOpenAPIExamples() {
 			}}
 		case "dependency_unavailable":
 			example["retry_after"] = "30s"
+		case "provider_credits_exhausted":
+			example["retry_after"] = "15m"
+			example["job"] = "/api/v1/jobs/d5vqh9idc6b5u5sctq00"
 		case "job_failed":
 			example["job"] = "/api/v1/jobs/d5vqh9idc6b5u5sctq00"
 		}
@@ -164,7 +167,7 @@ func semanticErrorStatus(code string) int {
 		return http.StatusConflict
 	case "validation_failed":
 		return http.StatusUnprocessableEntity
-	case "dependency_unavailable", "storage_unavailable":
+	case "dependency_unavailable", "storage_unavailable", "provider_credits_exhausted":
 		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError

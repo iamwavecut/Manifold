@@ -1,5 +1,5 @@
 diff --git a/brain-landing/public/openapi.json b/brain-landing/public/openapi.json
-index 627843bd9..22220a291 100644
+index 627843bd..22220a29 100644
 --- a/brain-landing/public/openapi.json
 +++ b/brain-landing/public/openapi.json
 @@ -7121,6 +7121,63 @@
@@ -138,7 +138,7 @@ index 627843bd9..22220a291 100644
        "get": {
          "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
 diff --git a/docs/openapi.json b/docs/openapi.json
-index 627843bd9..22220a291 100644
+index 627843bd..22220a29 100644
 --- a/docs/openapi.json
 +++ b/docs/openapi.json
 @@ -7121,6 +7121,63 @@
@@ -277,7 +277,7 @@ index 627843bd9..22220a291 100644
        "get": {
          "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
 diff --git a/scripts/build-openapi.ts b/scripts/build-openapi.ts
-index 0d16568e9..5f363e13e 100644
+index 0d16568e..5f363e13 100644
 --- a/scripts/build-openapi.ts
 +++ b/scripts/build-openapi.ts
 @@ -185,6 +185,8 @@ import {
@@ -336,7 +336,7 @@ index 0d16568e9..5f363e13e 100644
        get: operation({
          operationId: 'listDocumentCandidates',
 diff --git a/src/contracts/documents/documents.schema.ts b/src/contracts/documents/documents.schema.ts
-index 5a0a8d4a0..1c0a958ab 100644
+index 5a0a8d4a..1c0a958a 100644
 --- a/src/contracts/documents/documents.schema.ts
 +++ b/src/contracts/documents/documents.schema.ts
 @@ -86,6 +86,27 @@ export const IngestDocumentRequestSchema = z.object({
@@ -368,7 +368,7 @@ index 5a0a8d4a0..1c0a958ab 100644
  export const CommitCountsSchema = z.object({
    pending: z.number().int().nonnegative(),
 diff --git a/src/documents/candidate-store.service.ts b/src/documents/candidate-store.service.ts
-index e963b1343..e7444ee6b 100644
+index e963b134..e2b8c7d2 100644
 --- a/src/documents/candidate-store.service.ts
 +++ b/src/documents/candidate-store.service.ts
 @@ -65,6 +65,12 @@ interface RunLedgerRow {
@@ -413,8 +413,37 @@ index e963b1343..e7444ee6b 100644
    /**
     * Reap non-terminal indexer_run rows past the stale window:
     *   - 'running' — a worker that crashed between createRun and finalizeRun
+@@ -591,6 +619,28 @@ export class CandidateStoreService {
+     });
+   }
+ 
++  /**
++   * An accepted retry puts the failed run back to 'pending', so a caller that
++   * polls before the worker claims the job does not take the old failure for
++   * the new outcome. `createRun` reopens a pending run; the reaper's clock
++   * restarts here.
++   */
++  async markRetryQueued(
++    companyId: string,
++    p: { docId: string; packId: string; packVersion: string },
++  ): Promise<void> {
++    return this.surreal.withCompany(companyId, async (db) => {
++      await db.query(
++        `UPDATE indexer_run SET
++           status = 'pending', createdAt = time::now(), finishedAt = NONE, error = NONE
++         WHERE docId = type::record('source_document', $doc)
++           AND packId = $pack AND packVersion = $ver AND status = 'failed'
++         RETURN NONE`,
++        { doc: idTailOf(p.docId), pack: p.packId, ver: p.packVersion },
++      );
++    });
++  }
++
+   /** One run row by id — the claim-token verification read. */
+   async getRun(companyId: string, runId: string): Promise<RunRow | null> {
+     return this.surreal.withCompany(companyId, async (db) => {
 diff --git a/src/documents/document-async.service.ts b/src/documents/document-async.service.ts
-index a613684a7..7ef389cc9 100644
+index a613684a..33e26e3f 100644
 --- a/src/documents/document-async.service.ts
 +++ b/src/documents/document-async.service.ts
 @@ -1,6 +1,6 @@
@@ -450,7 +479,7 @@ index a613684a7..7ef389cc9 100644
      const runs: DocumentAsyncResponse['runs'] = [];
      for (const spec of specs) {
        // Pre-create the run ledger row as 'pending' BEFORE enqueuing, so
-@@ -205,11 +214,88 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -205,11 +214,95 @@ export class DocumentAsyncService implements OnModuleInit {
      return runs;
    }
  
@@ -507,6 +536,13 @@ index a613684a7..7ef389cc9 100644
 +        packVersion: run.packVersion,
 +        status: created ? 'enqueued' : 'already_queued',
 +      });
++      if (created) {
++        await this.candidates.markRetryQueued(companyId, {
++          docId: doc.id,
++          packId: run.packId,
++          packVersion: run.packVersion,
++        });
++      }
 +      if (created && !statusUpdated) {
 +        statusUpdated = true;
 +        const marked = await this.store
@@ -539,7 +575,7 @@ index a613684a7..7ef389cc9 100644
      const chunks = await this.store.getChunks(ctx.companyId, docId);
      if (chunks.length === 0) return { skipped: 'no_stored_content' };
  
-@@ -220,15 +306,18 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -220,15 +313,18 @@ export class DocumentAsyncService implements OnModuleInit {
          doc,
          chunks,
          packId,
@@ -561,7 +597,7 @@ index a613684a7..7ef389cc9 100644
      }
      return { packId, status };
    }
-@@ -237,6 +326,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -237,6 +333,7 @@ export class DocumentAsyncService implements OnModuleInit {
      const docId = String(ctx.payload?.docId ?? '');
      const doc = await this.store.getById(ctx.companyId, docId);
      if (!doc) return { skipped: 'missing_document' };
@@ -569,7 +605,7 @@ index a613684a7..7ef389cc9 100644
      const result = await this.commit.commitIfRunsSettled(ctx.companyId, doc);
      if (result.deferred) return { deferred: true };
      if (result.committed) {
-@@ -251,7 +341,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -251,7 +348,7 @@ export class DocumentAsyncService implements OnModuleInit {
  
    private async enqueueCommit(
      companyId: string,
@@ -578,7 +614,7 @@ index a613684a7..7ef389cc9 100644
    ): Promise<void> {
      if (!this.claim) return;
      try {
-@@ -261,7 +351,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -261,7 +358,7 @@ export class DocumentAsyncService implements OnModuleInit {
          jobType: 'commit_document',
          companyId,
          triggeredBy: 'manual',
@@ -587,7 +623,7 @@ index a613684a7..7ef389cc9 100644
          payload: { docId: p.docId },
        });
      } catch (e) {
-@@ -274,6 +364,13 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -274,6 +371,13 @@ export class DocumentAsyncService implements OnModuleInit {
      doc: StoredDocument,
      status: string,
    ): Promise<void> {
@@ -603,7 +639,7 @@ index a613684a7..7ef389cc9 100644
    }
  }
 diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
-index c35ebd464..404774fd9 100644
+index c35ebd46..404774fd 100644
 --- a/src/documents/document-store.service.ts
 +++ b/src/documents/document-store.service.ts
 @@ -349,6 +349,23 @@ export class DocumentStoreService {
@@ -631,7 +667,7 @@ index c35ebd464..404774fd9 100644
     * Explicit erasure: delete the chunk rows, keep the header + contentHash
     * (re-ingest of the same text still dedupes; committed facts keep a
 diff --git a/src/documents/documents-ingest.controller.ts b/src/documents/documents-ingest.controller.ts
-index 20ef5dd07..822670165 100644
+index 20ef5dd0..82267016 100644
 --- a/src/documents/documents-ingest.controller.ts
 +++ b/src/documents/documents-ingest.controller.ts
 @@ -2,6 +2,8 @@ import {
@@ -696,7 +732,7 @@ index 20ef5dd07..822670165 100644
    @RequireScopes('brain:admin')
 diff --git a/src/documents/dto/retry-document.dto.ts b/src/documents/dto/retry-document.dto.ts
 new file mode 100644
-index 000000000..db24bd6c1
+index 00000000..db24bd6c
 --- /dev/null
 +++ b/src/documents/dto/retry-document.dto.ts
 @@ -0,0 +1,8 @@
@@ -709,10 +745,19 @@ index 000000000..db24bd6c1
 +  retryKey!: string;
 +}
 diff --git a/src/documents/indexer-dispatch.service.ts b/src/documents/indexer-dispatch.service.ts
-index 8a7f928ec..a6c65286d 100644
+index 8a7f928e..28b5b8c6 100644
 --- a/src/documents/indexer-dispatch.service.ts
 +++ b/src/documents/indexer-dispatch.service.ts
-@@ -84,15 +84,28 @@ export class IndexerDispatchService {
+@@ -3,7 +3,7 @@ import { envFlagEnabled } from '../common/env-validation';
+ import { IndexerRouterService } from '../indexers/indexer-router.service';
+ import { DedicatedExtractorService } from '../indexers/dedicated-extractor.service';
+ import type { IndexerBinding } from '../indexers/routing';
+-import { GENERAL_INDEXER_ID } from '../indexers/candidate.types';
++import { GENERAL_INDEXER_ID, GENERAL_INDEXER_VERSION } from '../indexers/candidate.types';
+ import { IndexerRunService, IndexerRunResult } from './indexer-run.service';
+ import { IndexerWebhookService } from './indexer-webhook.service';
+ import type { DocumentChunk } from './chunker';
+@@ -84,15 +84,31 @@ export class IndexerDispatchService {
      doc: StoredDocument;
      chunks: DocumentChunk[];
      packId: string;
@@ -720,7 +765,10 @@ index 8a7f928ec..a6c65286d 100644
      abortSignal?: AbortSignal;
    }): Promise<IndexerRunResult> {
      if (p.packId === GENERAL_INDEXER_ID) {
-+      if (p.expectedPackVersion !== undefined && p.expectedPackVersion !== '0') {
++      if (
++        p.expectedPackVersion !== undefined &&
++        p.expectedPackVersion !== GENERAL_INDEXER_VERSION
++      ) {
 +        return { runId: '', packId: p.packId, status: 'skipped' };
 +      }
        return this.runs.runGeneral(p);
@@ -742,7 +790,7 @@ index 8a7f928ec..a6c65286d 100644
        // Backfill for an external pack: don't burn LLM calls extracting
        // with its vocabulary in-process — register the work item and let
 diff --git a/src/policy/action-registry.ts b/src/policy/action-registry.ts
-index da7be5a28..17f3a24aa 100644
+index da7be5a2..17f3a24a 100644
 --- a/src/policy/action-registry.ts
 +++ b/src/policy/action-registry.ts
 @@ -106,6 +106,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
@@ -755,7 +803,7 @@ index da7be5a28..17f3a24aa 100644
      family: 'rest',
 diff --git a/test/document-async-retry.unit-spec.ts b/test/document-async-retry.unit-spec.ts
 new file mode 100644
-index 000000000..571fd36b0
+index 00000000..571fd36b
 --- /dev/null
 +++ b/test/document-async-retry.unit-spec.ts
 @@ -0,0 +1,136 @@
@@ -897,10 +945,10 @@ index 000000000..571fd36b0
 +});
 diff --git a/test/document-retry.e2e-spec.ts b/test/document-retry.e2e-spec.ts
 new file mode 100644
-index 000000000..b30d6f615
+index 00000000..e08d42e2
 --- /dev/null
 +++ b/test/document-retry.e2e-spec.ts
-@@ -0,0 +1,514 @@
+@@ -0,0 +1,520 @@
 +import { randomUUID } from 'node:crypto';
 +import { AppFixture, createApp } from './app-fixture';
 +import { CandidateStoreService } from '../src/documents/candidate-store.service';
@@ -1035,15 +1083,19 @@ index 000000000..b30d6f615
 +      { packId: GENERAL_INDEXER_ID, packVersion: GENERAL_INDEXER_VERSION, status: 'enqueued' },
 +    ]);
 +
++    // A caller that polls right after acceptance must not read the old
++    // failure as the outcome of this retry.
++    const polled = await f.http
++      .get('/v1/documents/' + encodeURIComponent(docId))
++      .set(auth(f.apiKey));
++    expect(polled.body.runs).toEqual([
++      expect.objectContaining({ packId: GENERAL_INDEXER_ID, status: 'pending' }),
++    ]);
++
++    // The replay finds nothing failed left to queue.
 +    const replay = await f.http.post(retryPath(docId)).set(auth(writeKey())).send({ retryKey });
 +    expect(replay.status).toBe(202);
-+    expect(replay.body.runs).toEqual([
-+      {
-+        packId: GENERAL_INDEXER_ID,
-+        packVersion: GENERAL_INDEXER_VERSION,
-+        status: 'already_queued',
-+      },
-+    ]);
++    expect(replay.body.runs).toEqual([]);
 +
 +    const jobs = await indexJobs(docId);
 +    expect(jobs).toHaveLength(1);
@@ -1393,7 +1445,9 @@ index 000000000..b30d6f615
 +      ),
 +    );
 +    expect(requests.map((response) => response.status)).toEqual([202, 202]);
-+    expect(await indexJobs(docId)).toHaveLength(2);
++    // The second request may already see the run as pending.
++    const queued = (await indexJobs(docId)).length;
++    expect(queued).toBeGreaterThanOrEqual(1);
 +
 +    const opened = await Promise.all(
 +      Array.from({ length: 2 }, () =>
@@ -1412,11 +1466,11 @@ index 000000000..b30d6f615
 +      .send({ retryKey: 'race-c' });
 +    expect(whileRunning.status).toBe(202);
 +    expect(whileRunning.body.runs).toEqual([]);
-+    expect(await indexJobs(docId)).toHaveLength(2);
++    expect(await indexJobs(docId)).toHaveLength(queued);
 +  });
 +});
 diff --git a/test/document-write-origin.unit-spec.ts b/test/document-write-origin.unit-spec.ts
-index ded22ed74..47346898c 100644
+index ded22ed7..47346898 100644
 --- a/test/document-write-origin.unit-spec.ts
 +++ b/test/document-write-origin.unit-spec.ts
 @@ -43,6 +43,7 @@ function makeAsync(opts: {
@@ -1429,16 +1483,17 @@ index ded22ed74..47346898c 100644
    const candidates = { ensureRunPending: async () => undefined };
 diff --git a/test/indexer-dispatch-retry-version.unit-spec.ts b/test/indexer-dispatch-retry-version.unit-spec.ts
 new file mode 100644
-index 000000000..b6149dc0b
+index 00000000..391f16c1
 --- /dev/null
 +++ b/test/indexer-dispatch-retry-version.unit-spec.ts
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,92 @@
 +import { IndexerDispatchService } from '../src/documents/indexer-dispatch.service';
 +import type { IndexerRouterService } from '../src/indexers/indexer-router.service';
 +import type { IndexerRunService } from '../src/documents/indexer-run.service';
 +import type { DedicatedExtractorService } from '../src/indexers/dedicated-extractor.service';
 +import type { IndexerWebhookService } from '../src/documents/indexer-webhook.service';
 +import type { StoredDocument } from '../src/documents/document-store.service';
++import { GENERAL_INDEXER_ID, GENERAL_INDEXER_VERSION } from '../src/indexers/candidate.types';
 +
 +describe('IndexerDispatchService retry version pinning', () => {
 +  it('skips a queued retry when the installed binding has since changed versions', async () => {
@@ -1490,9 +1545,42 @@ index 000000000..b6149dc0b
 +    expect(result.status).toBe('skipped');
 +    expect(runs.runIndexer).not.toHaveBeenCalled();
 +  });
++
++  it('runs a generalist retry queued for the current indexer version', async () => {
++    const runGeneral = jest.fn().mockResolvedValue({
++      runId: 'indexer_run:general-retry',
++      packId: GENERAL_INDEXER_ID,
++      status: 'succeeded',
++    });
++    const dispatch = new IndexerDispatchService(
++      {} as IndexerRouterService,
++      { runGeneral } as unknown as IndexerRunService,
++      {} as DedicatedExtractorService,
++      {} as IndexerWebhookService,
++    );
++    const general = {
++      companyId: 'co_retry_version',
++      doc: {} as StoredDocument,
++      chunks: [],
++      packId: GENERAL_INDEXER_ID,
++    };
++
++    const current = await dispatch.runOne({
++      ...general,
++      expectedPackVersion: GENERAL_INDEXER_VERSION,
++    });
++    const stale = await dispatch.runOne({
++      ...general,
++      expectedPackVersion: `${GENERAL_INDEXER_VERSION}-old`,
++    });
++
++    expect(current.status).toBe('succeeded');
++    expect(stale.status).toBe('skipped');
++    expect(runGeneral).toHaveBeenCalledTimes(1);
++  });
 +});
 diff --git a/test/openapi-doc.unit-spec.ts b/test/openapi-doc.unit-spec.ts
-index 6a086a445..599ca5cc5 100644
+index 6a086a44..599ca5cc 100644
 --- a/test/openapi-doc.unit-spec.ts
 +++ b/test/openapi-doc.unit-spec.ts
 @@ -79,6 +79,7 @@ const PLATFORM_OPERATIONS: Array<[string, string]> = [

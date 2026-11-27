@@ -72,6 +72,10 @@ type PipelineStatus struct {
 	FailedDocuments         int    `json:"failed_documents"`
 	PendingJobs             int    `json:"pending_jobs"`
 	FailedJobs              int    `json:"failed_jobs"`
+	// Documents the model provider refused to extract, and the error code
+	// that names the latest refusal. Manifold retries them itself.
+	BlockedDocuments int    `json:"blocked_documents"`
+	BlockedReason    string `json:"blocked_reason,omitempty"`
 }
 
 type SearchRequest struct {
@@ -188,6 +192,15 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	status.Counts = counts
 	status.Pipeline = pipelineStatus(counts)
+	blocked, err := s.store.ProviderBlockedSyncs(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	if len(blocked) > 0 {
+		status.Pipeline.State = "degraded"
+		status.Pipeline.BlockedDocuments = len(blocked)
+		status.Pipeline.BlockedReason = providerBlockedCode(blocked[len(blocked)-1].Refusal)
+	}
 	return status, nil
 }
 

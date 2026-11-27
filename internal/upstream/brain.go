@@ -162,6 +162,7 @@ func (b *Brain) DocumentResult(ctx context.Context, documentID string) (GraphDoc
 			IndexerID: run.PackID,
 			Status:    run.Status,
 			Reason:    run.Error.Message,
+			Refusal:   run.ProviderRefusal,
 		})
 		switch run.Status {
 		case "pending", "running":
@@ -766,6 +767,8 @@ type brainDocument struct {
 		Error  struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		// Set by deploy/brain/provider-refusal.patch on a refused run.
+		ProviderRefusal string `json:"providerRefusal"`
 	} `json:"runs"`
 }
 

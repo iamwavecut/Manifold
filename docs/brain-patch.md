@@ -30,7 +30,13 @@ in [CI](../.github/workflows/ci.yml):
   pack version (for the general indexer, upstream's `GENERAL_INDEXER_VERSION`;
   runs recorded under an older extraction contract report
   `skipped_version_mismatch`). The queued payload pins that version for execution-time
-  validation. The worker rechecks source availability after extraction and
+  validation. Until 2026-11-27 the execution check still compared the general
+  indexer against `0`, so after upstream moved it to `3` every accepted general
+  retry was skipped without reading the document; a unit spec now pins the
+  check to `GENERAL_INDEXER_VERSION`. An accepted retry also puts the failed
+  run back to `pending`, so a caller that polls before a worker claims the job
+  does not read the old failure as the result; a replayed `retryKey` then finds
+  nothing to queue. The worker rechecks source availability after extraction and
   before automatic commit; conditional header writes preserve `purged` during
   concurrent extraction or commit. Purge does not retract already committed
   knowledge or change manual candidate review. A commit that passed its content
@@ -189,6 +195,31 @@ in [CI](../.github/workflows/ci.yml):
   A pool that hands released connections to its waiters is busy, not stalled,
   and keeps `/health` green. Unit specs cover the stall, its reset, a
   saturated pool that recovers, the scoped pool, and the `503` body.
+- [`provider-refusal.patch`](../deploy/brain/provider-refusal.patch) keeps
+  the reason when the model provider refuses extraction. Upstream turned a
+  failed pass into an empty result, so a run failed with no cause, and treated
+  `402` as transient. A provider account without credit then received the same
+  request again and again, every document ended as a generic failed run, and
+  the batch retry passes read all failed documents again. With the patch, when
+  every pass fails and one failure is a refusal, the error reaches the run,
+  whose message names the class:
+  `model provider refused the request (provider_refusal=billing)`, or `auth`,
+  `rate_limit`, `outage`. A queued retry reads through the request path, which
+  names the same class. `GET /v1/documents/:id` returns the class as
+  `providerRefusal` on the failed run, without the error text, and Manifold
+  reports `provider_credits_exhausted` from it. A `billing` or `auth` refusal also stops the
+  batch retry passes, because no retry succeeds until an operator acts. A
+  rejected clause no longer appears in the pattern warning log; it logs a count
+  only. This backports upstream `c2fe8eaa` and `d0441212` and extends the first
+  to `402`. Unit specs cover the classes, the rethrow, and the batch stop.
+- [`predicate-vocabulary-refresh.patch`](../deploy/brain/predicate-vocabulary-refresh.patch)
+  stops each committed document from forcing the next extraction to recount the
+  predicate vocabulary. The count scans every active fact: on a graph of about
+  50,000 facts its median was 6.3 seconds and its maximum 138 seconds, inside
+  the document's extraction. Once the vocabulary holds its full 40 entries, Brain now serves
+  the cached list and refreshes it in the background at most every 10 minutes.
+  A smaller vocabulary is still recounted after each commit, so a new tenant
+  sees its predicates at once. A unit spec covers the stale read.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
@@ -262,7 +293,7 @@ git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-se
 git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
 git -C "$brain_src" checkout -q FETCH_HEAD
 test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit pool-stall-liveness; do
+for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit pool-stall-liveness provider-refusal predicate-vocabulary-refresh; do
     git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
     git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
 done

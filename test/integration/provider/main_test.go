@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -35,5 +36,33 @@ func TestProviderReturnsGroundedExtraction(t *testing.T) {
 	}
 	if extraction.Facts[0]["valueSpan"] != "Meridian Labs" {
 		t.Fatalf("ungrounded fact: %+v", extraction.Facts)
+	}
+}
+
+func TestProviderRefusesOnlyExtractionWhileSwitched(t *testing.T) {
+	t.Cleanup(func() { refusal.Store(0) })
+	call := func(schema string) int {
+		request := map[string]any{
+			"response_format": map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": schema, "schema": map[string]any{"type": "object"}}},
+		}
+		encoded, _ := json.Marshal(request)
+		response := httptest.NewRecorder()
+		chatCompletion(response, httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(encoded)))
+		return response.Code
+	}
+	switchTo := func(body string) {
+		controlRefusal(httptest.NewRecorder(), httptest.NewRequest("POST", "/control/refuse", strings.NewReader(body)))
+	}
+
+	switchTo(`{"status":402}`)
+	if got := call("extraction"); got != 402 {
+		t.Fatalf("extraction status = %d, want 402", got)
+	}
+	if got := call("summary"); got != 200 {
+		t.Fatalf("other request status = %d, want 200", got)
+	}
+	switchTo(`{"status":0}`)
+	if got := call("extraction"); got != 200 {
+		t.Fatalf("extraction status after recovery = %d, want 200", got)
 	}
 }
