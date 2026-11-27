@@ -304,8 +304,10 @@ On the first start:
   and Compose sets `DECISIONS_LANES` to an empty string.
 - Brain's nightly sweep (03:45 UTC) now also retries failed runs.
 - `docker-compose.yml` changed, so the fingerprint of the deployment runtime
-  profile changes. Review the profile, add the new Brain environment, and
-  update the fingerprint before the new commit reaches the host.
+  profile changes. Review the profile, add the new Brain environment, confirm
+  that the Brain service sets no `command` (the image command loads the frozen
+  flag defaults), and update the fingerprint before the new commit reaches the
+  host.
 
 Follow steps 1–3 of the
 [data version 2 procedure](#brain-v2--data-version-2-migration), with these
