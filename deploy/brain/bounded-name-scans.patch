@@ -1,0 +1,159 @@
+diff --git a/src/ingest/entity-candidates.service.ts b/src/ingest/entity-candidates.service.ts
+index f17cccd..ae23b42 100644
+--- a/src/ingest/entity-candidates.service.ts
++++ b/src/ingest/entity-candidates.service.ts
+@@ -4,6 +4,7 @@ import { StringRecordId, Surreal } from 'surrealdb';
+ import { EmbedderService } from '../ai/embedder.service';
+ import type { JudgeContext } from '../ai/entity-judge.service';
+ import { nameKey, nameKeyInitials, nameKeyWords } from '../common/name-key';
++import { Semaphore } from '../common/semaphore';
+ import { recordKey } from '../db/record-key';
+ 
+ /**
+@@ -22,6 +23,14 @@ import { recordKey } from '../db/record-key';
+  * every candidate goes to the fact-reading judge.
+  */
+ 
++/**
++ * Each scan statement reads every entity of a type with its embedding: about
++ * 0.3 GiB in SurrealDB on 9k entities. A commit asks about every mention at
++ * once; 37 statements ran together and SurrealDB was killed at its memory
++ * limit (2026-11-27). So they wait for a slot. The judge calls do not.
++ */
++const SCAN_SLOTS = 4;
++
+ /** A candidate for the judge, and which scan found it. */
+ export interface NameCandidate {
+   entityId: string;
+@@ -79,6 +88,7 @@ export class EntityCandidateService {
+   private readonly keyNeighbourCeiling: number;
+   private readonly cosineFloor: number;
+   private readonly candidateK: number;
++  private readonly scanSlots = new Semaphore(SCAN_SLOTS);
+ 
+   constructor(
+     config: ConfigService,
+@@ -231,9 +241,10 @@ export class EntityCandidateService {
+     const key = nameKey(name);
+     if (key === '') return null;
+     try {
+-      const [rows] = await db.query<
++      const [rows] = await this.scan<
+         [Array<{ entityId: unknown; canonicalName?: string; dist: number; matched: string }>]
+       >(
++        db,
+         `SELECT id AS entityId, canonicalName,
+                 math::min(nameKeys.map(|$k| string::distance::levenshtein($key, $k))) AS dist,
+                 nameKeys[0] AS matched
+@@ -291,9 +302,10 @@ export class EntityCandidateService {
+     const isPart = (a: string, b: string): boolean =>
+       a !== b && (a.startsWith(`${b} `) || a.endsWith(` ${b}`) || a.includes(` ${b} `));
+     try {
+-      const [rows] = await db.query<
++      const [rows] = await this.scan<
+         [Array<{ entityId: unknown; canonicalName?: string; nameKeys?: unknown }>]
+       >(
++        db,
+         `SELECT id AS entityId, canonicalName, nameKeys
+            FROM knowledge_entity
+           WHERE type = $type
+@@ -355,7 +367,8 @@ export class EntityCandidateService {
+     if (key === '') return null;
+     const initials = nameKeyInitials(key);
+     try {
+-      const [rows] = await db.query<[Array<{ entityId: unknown; canonicalName?: string }>]>(
++      const [rows] = await this.scan<[Array<{ entityId: unknown; canonicalName?: string }>]>(
++        db,
+         `SELECT id AS entityId, canonicalName
+            FROM knowledge_entity
+           WHERE type = $type
+@@ -399,7 +412,8 @@ export class EntityCandidateService {
+     const out: NameCandidate[] = [];
+     try {
+       for (const word of words) {
+-        const [rows] = await db.query<[Array<{ entityId: unknown; canonicalName?: string }>]>(
++        const [rows] = await this.scan<[Array<{ entityId: unknown; canonicalName?: string }>]>(
++          db,
+           `SELECT id AS entityId, canonicalName
+              FROM knowledge_entity
+             WHERE type = $type
+@@ -427,6 +441,11 @@ export class EntityCandidateService {
+     return out;
+   }
+ 
++  /** A whole-type read of knowledge_entity, in one of the SCAN_SLOTS. */
++  private scan<T extends unknown[]>(db: Surreal, sql: string, vars: Record<string, unknown>) {
++    return this.scanSlots.run(async () => db.query<T>(sql, vars));
++  }
++
+   /**
+    * The one identity the rows name, or undefined when they name several.
+    * Two rows already joined by an `identity_of` edge are ONE identity: the
+@@ -504,7 +523,8 @@ export class EntityCandidateService {
+     db: Surreal,
+     { q, type, excludeId }: { q: number[]; type: string; excludeId?: string | undefined },
+   ): Promise<Array<{ entityId: unknown; ename?: string; sim: number }>> {
+-    const [rows] = await db.query<[Array<{ entityId: unknown; ename?: string; sim: number }>]>(
++    const [rows] = await this.scan<[Array<{ entityId: unknown; ename?: string; sim: number }>]>(
++      db,
+       `SELECT id AS entityId, canonicalName AS ename,
+               vector::similarity::cosine(embedding, $q) AS sim
+          FROM knowledge_entity
+diff --git a/test/bounded-name-scans.unit-spec.ts b/test/bounded-name-scans.unit-spec.ts
+new file mode 100644
+index 0000000..d26eb16
+--- /dev/null
++++ b/test/bounded-name-scans.unit-spec.ts
+@@ -0,0 +1,52 @@
++/**
++ * A commit asks about every mention of a document at once, and each name
++ * scan reads all entities of a type with their embeddings. Unbounded, one
++ * commit ran 37 such statements together and SurrealDB was killed for
++ * memory (2026-11-27). The statements wait for one of four slots.
++ */
++import { EntityCandidateService } from '../src/ingest/entity-candidates.service';
++
++function makeService() {
++  const config = { get: (_k: string, d?: string) => d } as never;
++  const embedder = { embed: async () => [0.1, 0.2] } as never;
++  const state = { running: 0, peak: 0, statements: 0 };
++  const db = {
++    query: async () => {
++      state.running += 1;
++      state.statements += 1;
++      state.peak = Math.max(state.peak, state.running);
++      await new Promise((r) => setTimeout(r, 2));
++      state.running -= 1;
++      return [[]];
++    },
++  } as never;
++  return { service: new EntityCandidateService(config, embedder), db, state };
++}
++
++describe('name scans', () => {
++  it('runs at most four statements at once, whatever the number of names', async () => {
++    const { service, db, state } = makeService();
++    const names = Array.from({ length: 20 }, (_, i) => `Quillon Basalt ${i}`);
++    await Promise.all(
++      names.map(async (name) => {
++        for (const scan of service.scans(db, { name, type: 'asset' })) await scan();
++      }),
++    );
++    // Key distance, name part, initials, one per word, embedding.
++    expect(state.statements).toBeGreaterThanOrEqual(names.length * 5);
++    expect(state.peak).toBe(4);
++  });
++
++  it('frees the slot of a statement that fails', async () => {
++    const { service, db, state } = makeService();
++    const failing = { query: async () => Promise.reject(new Error('boom')) } as never;
++    // More failures than there are slots.
++    for (let i = 0; i < 2; i++) {
++      for (const scan of service.nameScans(failing, { name: 'Acme Corp', type: 'asset' })) {
++        await scan();
++      }
++    }
++    for (const scan of service.nameScans(db, { name: 'Acme Corp', type: 'asset' })) await scan();
++    expect(state.statements).toBe(5);
++  });
++});

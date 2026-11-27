@@ -235,6 +235,13 @@ docker inspect -f '{{.HostConfig.Memory}}' manifold-surrealdb-1
 An OOM kill inside the limit stops only SurrealDB. Brain then loses its
 in-flight queries; see [Brain liveness](#brain-liveness).
 
+On 2026-11-27 SurrealDB reached the 10 GiB limit three times during document
+commits: Brain ran a scan over all entities of a type for every mention at
+once, and fact resolution passes overlapped. The `bounded-name-scans` and
+`single-resolution-pass` [Brain patches](brain-patch.md) limit both. These
+statements grow with the graph, so check the restart count after a large
+import (`docker inspect -f '{{.RestartCount}}' manifold-surrealdb-1`).
+
 ## Brain vector index and slow-query log
 
 Compose sets `SEARCH_HNSW_ENABLED=1` for Brain (`BRAIN_SEARCH_HNSW_ENABLED`).
