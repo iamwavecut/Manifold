@@ -13,3 +13,4 @@ search-throttle-limit
 pool-stall-liveness
 predicate-vocabulary-refresh
 unindexed-tenant-vector-spec
+provider-refusal

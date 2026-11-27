@@ -1,193 +1,98 @@
-diff --git a/src/ai/extraction-pattern.service.ts b/src/ai/extraction-pattern.service.ts
-index 55e7e3a4..885f19c4 100644
---- a/src/ai/extraction-pattern.service.ts
-+++ b/src/ai/extraction-pattern.service.ts
-@@ -97,6 +97,8 @@ export class ExtractionPatternService {
-    */
-   async record(companyId: string, entries: ExtractionPatternEntry[]): Promise<void> {
-     if (entries.length === 0) return;
-+    let failed = 0;
-+    let lastError = '';
-     await this.surreal.withCompany(companyId, async (db) => {
-       for (const e of entries) {
-         const key = this.normalise(e.clauseText);
-@@ -119,12 +121,17 @@ export class ExtractionPatternService {
-             { key },
-           );
-         } catch (err) {
--          this.logger.warn(
--            `record(${companyId}): failed to upsert pattern for "${key.slice(0, 60)}": ${(err as Error).message}`,
--          );
-+          failed += 1;
-+          lastError = (err as Error).message;
-         }
-       }
-     });
-+    // Counts only: the clause text is the user's own words.
-+    if (failed > 0) {
-+      this.logger.warn(
-+        `record(${companyId}): ${failed}/${entries.length} pattern upsert(s) failed: ${lastError}`,
-+      );
-+    }
-     this.invalidate(companyId);
-   }
- 
 diff --git a/src/ai/extractor-runner.service.ts b/src/ai/extractor-runner.service.ts
-index dd84cfcc..8b20228a 100644
+index 9436fec4..378cdff0 100644
 --- a/src/ai/extractor-runner.service.ts
 +++ b/src/ai/extractor-runner.service.ts
-@@ -42,6 +42,8 @@ import {
-   type ConversationContext,
- } from './extractor-internals/prompts';
- 
-+import { providerSideFailure } from './openai-client';
-+
- export type { ConversationContext } from './extractor-internals/prompts';
- 
- type Snapshot = {
-@@ -277,6 +279,7 @@ export class ExtractorRunnerService implements OnApplicationBootstrap, OnApplica
-     // Even temperature spread across [0.1, 0.7].
-     const temperatures = Array.from({ length: N }, (_, i) => 0.1 + (i * 0.6) / Math.max(N - 1, 1));
- 
-+    const failures: unknown[] = [];
-     const rawJsons = await Promise.all(
-       temperatures.map((t) =>
-         this.llm
-@@ -290,6 +293,7 @@ export class ExtractorRunnerService implements OnApplicationBootstrap, OnApplica
-           })
-           .catch((e) => {
-             this.logger.warn(`sc-pass T=${t.toFixed(2)} failed: ${(e as Error).message}`);
-+            failures.push(e);
-             return null;
-           }),
-       ),
-@@ -311,9 +315,16 @@ export class ExtractorRunnerService implements OnApplicationBootstrap, OnApplica
-       ),
-     );
-     const surviving = results.filter((r): r is ExtractionResult => !!r);
--    // Every pass failed → transient LLM trouble, not an empty text. Null
--    // tells the caller to skip the cache (see run()'s contract).
--    if (surviving.length === 0) return null;
-+    if (surviving.length === 0) {
-+      // The provider refused (no credit, a revoked key, an outage): rethrow
-+      // the refusal with its status. Folded into a null it reached the batch
-+      // as a "transient failure" and every failed document was read again.
-+      const refusal = failures.find(providerSideFailure);
-+      if (refusal) throw refusal;
-+      // Every pass failed → transient LLM trouble, not an empty text. Null
-+      // tells the caller to skip the cache (see run()'s contract).
-+      return null;
-+    }
- 
-     const { clusterCount, ...union } = mergeExtractions(surviving, {
-       selfConsistency: true,
+@@ -23,6 +23,7 @@ import type { ServiceTier } from './openai-client';
+ import { resolveExtractionProfile } from './extraction-profile';
+ import { buildConversationContext, type ConversationContext } from './extractor-internals/prompts';
+ import { providerSideFailure } from './openai-client';
++import { providerRefusal } from './provider-refusal';
+ import { IntentClassifierService } from '../admin/intent-classifier.service';
+ import type { ExtractedFact } from './extractor-internals/types';
+ import {
+@@ -268,7 +269,11 @@ export class ExtractorRunnerService {
+     // to single turns — 1238 refused passes in one local run on a dry key
+     // (2026-10-29). ExtractorService keeps the request path's null contract.
+     if (surviving.length === 0) {
+-      const refusal = failures.find(providerSideFailure);
++      // A 402 (no credit) is a refusal too, though the circuit breaker and
++      // failover (providerSideFailure) do not count it.
++      const refusal = failures.find(
++        (e) => providerSideFailure(e) || providerRefusal(e) !== undefined,
++      );
+       if (refusal) throw refusal;
+     }
+     // Every pass failed → transient LLM trouble, not an empty text. Null
 diff --git a/src/ai/extractor.service.ts b/src/ai/extractor.service.ts
-index f5c1df6e..24cf3cfc 100644
+index 933d0949..18b793d4 100644
 --- a/src/ai/extractor.service.ts
 +++ b/src/ai/extractor.service.ts
-@@ -12,7 +12,8 @@ import { ExtractorRunnerService } from './extractor-runner.service';
- import type { ExtractionResult } from './extractor-internals/types';
+@@ -13,6 +13,7 @@ import type { ExtractionResult } from './extractor-internals/types';
  import type { ConversationContext } from './extractor-internals/prompts';
  import { memoryContextDigest } from './extractor-internals/memory-context';
--import { offlineServiceTier } from './openai-client';
-+import { offlineServiceTier, providerSideFailure } from './openai-client';
-+import { describeRunError } from './provider-refusal';
+ import { offlineServiceTier, providerSideFailure } from './openai-client';
++import { describeRunError, providerRefusal } from './provider-refusal';
  
  export type { ConversationContext } from './extractor-internals/prompts';
  
-@@ -144,13 +145,21 @@ export class ExtractorService {
-       registryVersionHash: snapshot.versionHash,
+@@ -191,8 +192,9 @@ export class ExtractorService {
      });
  
--    const result = await this.runner.run({
--      trimmed,
--      companyId,
--      snapshot,
--      context,
--      ...(p.background ? { overrides: { tier: offlineServiceTier() } } : {}),
--    });
-+    // A provider refusal reaches a queued reader with its status. The
-+    // request path (which queued retries use too) reports an incomplete
-+    // extraction that names the refusal, without the provider's status.
-+    const result = await this.runner
-+      .run({
-+        trimmed,
-+        companyId,
-+        snapshot,
-+        context,
-+        ...(p.background ? { overrides: { tier: offlineServiceTier() } } : {}),
-+      })
-+      .catch((err: unknown) => {
-+        if (p.background || !providerSideFailure(err)) throw err;
-+        throw new Error(`incomplete extraction: ${describeRunError(err)}`);
-+      });
+     // A provider refusal (every pass refused) reaches a background reader
+-    // with its status — the batch must not halve on it; the request path
+-    // keeps its contract and sees it as the transient failure below.
++    // with its status — the batch must not halve on it. The request path
++    // reports an incomplete extraction that names the refusal, without the
++    // provider's status.
+     const result = await this.runner
+       .run({
+         trimmed,
+@@ -202,7 +204,11 @@ export class ExtractorService {
+         ...(p.background ? { overrides: { tier: offlineServiceTier(), scPasses } } : {}),
+       })
+       .catch((err: unknown) => {
+-        if (p.background || !providerSideFailure(err)) throw err;
++        if (p.background) throw err;
++        if (providerRefusal(err) !== undefined) {
++          throw new Error(`incomplete extraction: ${describeRunError(err)}`);
++        }
++        if (!providerSideFailure(err)) throw err;
+         return null;
+       });
      if (!result && p.background) {
-       throw new Error('extraction produced no usable response (transient LLM failure)');
-     }
-diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
-index 69bad070..84bf6e3c 100644
---- a/src/ai/openai-client.ts
-+++ b/src/ai/openai-client.ts
-@@ -1,6 +1,7 @@
- import { Logger } from '@nestjs/common';
- import { ConfigService } from '@nestjs/config';
- import OpenAI from 'openai';
-+import { providerRefusal } from './provider-refusal';
- 
- /**
-  * The chat model every LLM call runs on unless OPENAI_CHAT_MODEL says
-@@ -202,14 +203,8 @@ function quotaRefusal(err: unknown): boolean {
-  * no credit, a revoked key, an outage — or a rate limit that outlived the
-  * SDK's own retries (the provider has no capacity for us right now).
-  */
--function providerSideFailure(err: unknown): boolean {
--  const status = (err as { status?: number })?.status;
--  return (
--    status === 429 ||
--    status === 401 ||
--    status === 403 ||
--    (typeof status === 'number' && status >= 500)
--  );
-+export function providerSideFailure(err: unknown): boolean {
-+  return providerRefusal(err) !== undefined;
- }
- 
- /** Test seam: forget a quota refusal. */
 diff --git a/src/ai/provider-refusal.ts b/src/ai/provider-refusal.ts
 new file mode 100644
-index 00000000..7d6b7c0f
+index 00000000..826130a2
 --- /dev/null
 +++ b/src/ai/provider-refusal.ts
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,51 @@
 +/**
 + * A refusal about the provider account or the provider itself, not about the
-+ * text of one request. Reading the same or another document again cannot
-+ * succeed until someone acts (credit, key) or the provider recovers.
++ * text of one request, in the four values Manifold reads from a failed run.
++ * Reading the same or another document again cannot succeed until someone
++ * acts (credit, key) or the provider recovers.
 + */
++import {
++  classifyProviderFailure,
++  providerStatusOf,
++  type ProviderFailureClass,
++} from './provider-failure';
++
 +export type ProviderRefusalClass = 'billing' | 'auth' | 'rate_limit' | 'outage';
 +
-+const BILLING_MARKERS = new Set(['insufficient_quota', 'credit_balance_exhausted']);
-+
-+type ProviderErrorFields = {
-+  status?: unknown;
-+  code?: unknown;
-+  type?: unknown;
-+  error?: { code?: unknown; type?: unknown };
++/** `harness` and `other` are not refusals by the provider. */
++const WIRE: Partial<Record<ProviderFailureClass, ProviderRefusalClass>> = {
++  billing: 'billing',
++  key: 'auth',
++  quota: 'rate_limit',
++  outage: 'outage',
 +};
 +
 +export function providerRefusal(err: unknown): ProviderRefusalClass | undefined {
-+  const e = (err ?? {}) as ProviderErrorFields;
-+  if (typeof e.status !== 'number') return undefined;
-+  // OpenRouter answers 402 when the account or key cannot pay.
-+  if (e.status === 402) return 'billing';
-+  if (e.status === 401 || e.status === 403) return 'auth';
-+  if (e.status === 429) {
-+    const marks = [e.code, e.type, e.error?.code, e.error?.type];
-+    return marks.some((m) => typeof m === 'string' && BILLING_MARKERS.has(m))
-+      ? 'billing'
-+      : 'rate_limit';
-+  }
-+  return e.status >= 500 ? 'outage' : undefined;
++  // Only an answer with an HTTP status. Upstream also calls a timeout an
++  // outage, but a timeout may be about the length of this text.
++  if (providerStatusOf(err) === undefined) return undefined;
++  return WIRE[classifyProviderFailure(err)];
 +}
 +
 +/** Retrying sooner cannot help: an operator has to add credit or fix the key. */
@@ -213,7 +118,7 @@ index 00000000..7d6b7c0f
 +  return found?.[1] as ProviderRefusalClass | undefined;
 +}
 diff --git a/src/documents/candidate-store.service.ts b/src/documents/candidate-store.service.ts
-index e2b8c7d2..b6ebe73e 100644
+index 8f5bae08..6bfb1f9c 100644
 --- a/src/documents/candidate-store.service.ts
 +++ b/src/documents/candidate-store.service.ts
 @@ -9,6 +9,7 @@ import {
@@ -221,10 +126,10 @@ index e2b8c7d2..b6ebe73e 100644
  import { MetricsService } from '../metrics/metrics.service';
  import { idTailOf } from '../ingest/ingest-utils';
 +import { recordedRefusal, type ProviderRefusalClass } from '../ai/provider-refusal';
- import type { CandidateBatch, CandidateKind } from '../indexers/candidate.types';
- import { indexerIdOfPredicate } from '../indexers/virtual-attributor';
- 
-@@ -63,6 +64,7 @@ interface RunLedgerRow {
+ import { recordIdOf, recordKey } from '../db/record-key';
+ import {
+   GENERAL_INDEXER_ID,
+@@ -69,6 +70,7 @@ interface RunLedgerRow {
    external?: unknown;
    claimToken?: unknown;
    createdAt?: unknown;
@@ -232,7 +137,7 @@ index e2b8c7d2..b6ebe73e 100644
  }
  
  interface FailedInternalRunRow {
-@@ -599,23 +601,36 @@ export class CandidateStoreService {
+@@ -699,23 +701,36 @@ export class CandidateStoreService {
    async listRuns(
      companyId: string,
      docId: string,
@@ -278,18 +183,18 @@ index e2b8c7d2..b6ebe73e 100644
    }
  
 diff --git a/src/documents/extraction-batch.service.ts b/src/documents/extraction-batch.service.ts
-index 90bcccc6..877e8b56 100644
+index fef41e27..357ed42b 100644
 --- a/src/documents/extraction-batch.service.ts
 +++ b/src/documents/extraction-batch.service.ts
-@@ -20,6 +20,7 @@ import { LeaderLeaseService } from '../jobs/leader-lease.service';
- import { Semaphore } from '../common/semaphore';
+@@ -33,6 +33,7 @@ import { tenantLeaseName } from '../common/lease-name';
  import { retryOnReadConflict } from '../db/surreal-retry';
  import { IndexerRunService, groupDocOf } from './indexer-run.service';
+ import { halvingCanHelp } from './read-failure';
 +import { describeRunError, needsOperator, providerRefusal } from '../ai/provider-refusal';
+ import { harnessServesTenant } from '../common/model-source';
  
  /**
-  * Extraction off the write path. A document is remembered when it
-@@ -174,6 +175,7 @@ export class ExtractionBatchService implements OnModuleInit {
+@@ -291,6 +292,7 @@ export class ExtractionBatchService implements OnModuleInit {
      let read = 0;
      let failed = 0;
      let committed = 0;
@@ -297,7 +202,7 @@ index 90bcccc6..877e8b56 100644
      // A document is read at most once per pass: a failed one waits for
      // the retry pass instead of being listed again by the next page.
      const attempted = new Set<string>();
-@@ -200,6 +202,7 @@ export class ExtractionBatchService implements OnModuleInit {
+@@ -314,6 +316,7 @@ export class ExtractionBatchService implements OnModuleInit {
        read += outcome.read;
        failed += outcome.failed;
        committed += outcome.committed;
@@ -305,7 +210,7 @@ index 90bcccc6..877e8b56 100644
        if (outcome.nextAt && (!nextAt || outcome.nextAt < nextAt)) nextAt = outcome.nextAt;
      }
      if (nextAt) {
-@@ -208,7 +211,10 @@ export class ExtractionBatchService implements OnModuleInit {
+@@ -322,7 +325,10 @@ export class ExtractionBatchService implements OnModuleInit {
          delayMs: Math.max(1000, nextAt.getTime() - Date.now()),
        });
      }
@@ -317,9 +222,9 @@ index 90bcccc6..877e8b56 100644
        await this.schedule(ctx.companyId, {
          retry: retry + 1,
          delayMs: RETRY_BASE_MS * 2 ** retry,
-@@ -231,7 +237,13 @@ export class ExtractionBatchService implements OnModuleInit {
+@@ -349,7 +355,13 @@ export class ExtractionBatchService implements OnModuleInit {
      ctx: PassContext,
-     waiting: Array<{ docId: string; arrivedAt: Date }>,
+     waiting: Array<{ docId: string; arrivedAt: Date; priority: number }>,
      force: boolean,
 -  ): Promise<{ read: number; failed: number; committed: number; nextAt?: Date }> {
 +  ): Promise<{
@@ -329,10 +234,10 @@ index 90bcccc6..877e8b56 100644
 +    operatorNeeded?: boolean;
 +    nextAt?: Date;
 +  }> {
-     const docs: StoredDocument[] = [];
-     const texts = new Map<string, string>();
      const arrived = new Map(waiting.map((w) => [w.docId, w.arrivedAt]));
-@@ -277,6 +289,7 @@ export class ExtractionBatchService implements OnModuleInit {
+     const priority = new Map(waiting.map((w) => [w.docId, w.priority]));
+     // The page is loaded at once (bounded), in its listed order.
+@@ -432,6 +444,7 @@ export class ExtractionBatchService implements OnModuleInit {
        read: sum('read'),
        failed: sum('failed'),
        committed: sum('committed'),
@@ -340,68 +245,106 @@ index 90bcccc6..877e8b56 100644
        ...(nextAt ? { nextAt } : {}),
      };
    }
-@@ -286,8 +299,8 @@ export class ExtractionBatchService implements OnModuleInit {
+@@ -441,8 +454,8 @@ export class ExtractionBatchService implements OnModuleInit {
      ctx: PassContext,
      groups: GroupDoc[][],
-     page: { byId: Map<string, StoredDocument>; texts: Map<string, string> },
+     page: Page,
 -  ): Promise<{ read: number; failed: number; committed: number }> {
 -    const out = { read: 0, failed: 0, committed: 0 };
 +  ): Promise<{ read: number; failed: number; committed: number; operatorNeeded: boolean }> {
 +    const out = { read: 0, failed: 0, committed: 0, operatorNeeded: false };
      const first = (g: GroupDoc[]) => g[0]?.occurredAt.getTime() ?? 0;
-     for (const group of [...groups].sort((a, b) => first(a) - first(b))) {
-       // Past the budget the rest waits for the next pass (still pending),
-@@ -297,6 +310,7 @@ export class ExtractionBatchService implements OnModuleInit {
-       const r = await this.readGroup(ctx, group, page);
-       if (!r.ok) {
-         out.failed += r.members.length;
-+        out.operatorNeeded ||= r.operatorNeeded === true;
-         continue;
-       }
-       out.read += r.members.length;
-@@ -310,7 +324,7 @@ export class ExtractionBatchService implements OnModuleInit {
+     const urgent = (g: GroupDoc[]) => (g.some((d) => d.urgent) ? 1 : 0);
+     // What something asked for or what is urgent first, then in the order
+@@ -463,6 +476,7 @@ export class ExtractionBatchService implements OnModuleInit {
+       const r = await runInCircle(circles, () => this.readSplitting(ctx, { group, depth }, page));
+       out.failed += r.failed.length;
+       out.read += r.read.length;
++      out.operatorNeeded ||= r.operatorNeeded === true;
+       if (r.read.length > 0) out.committed += await this.commitInOrder(ctx.companyId, r.read);
+     }
+     return out;
+@@ -481,18 +495,24 @@ export class ExtractionBatchService implements OnModuleInit {
      ctx: PassContext,
-     group: GroupDoc[],
-     page: { byId: Map<string, StoredDocument>; texts: Map<string, string> },
--  ): Promise<{ ok: boolean; members: StoredDocument[] }> {
-+  ): Promise<{ ok: boolean; members: StoredDocument[]; operatorNeeded?: boolean }> {
+     { group, depth }: { group: GroupDoc[]; depth: Exclude<ReadDepth, 'raw'> },
+     page: Page,
+-  ): Promise<{ read: StoredDocument[]; failed: StoredDocument[] }> {
++  ): Promise<{ read: StoredDocument[]; failed: StoredDocument[]; operatorNeeded?: boolean }> {
+     const r = await this.withLeaseHeartbeat(ctx, () => this.readGroup(ctx, { group, depth }, page));
+     if (r.ok) return { read: r.members, failed: [] };
+     const tooLate = ctx.abortSignal?.aborted || Date.now() > ctx.deadline;
+-    if (group.length < 2 || tooLate || !r.halvingCanHelp) return { read: [], failed: r.members };
++    if (group.length < 2 || tooLate || !r.halvingCanHelp) {
++      return { read: [], failed: r.members, operatorNeeded: r.operatorNeeded === true };
++    }
+     const mid = Math.ceil(group.length / 2);
+     this.logger.log(
+       `extract_documents ${ctx.companyId}: reading the failed group of ${group.length} as ${mid} + ${group.length - mid}`,
+     );
+     const first = await this.readSplitting(ctx, { group: group.slice(0, mid), depth }, page);
+     const second = await this.readSplitting(ctx, { group: group.slice(mid), depth }, page);
+-    return { read: [...first.read, ...second.read], failed: [...first.failed, ...second.failed] };
++    return {
++      read: [...first.read, ...second.read],
++      failed: [...first.failed, ...second.failed],
++      operatorNeeded: first.operatorNeeded === true || second.operatorNeeded === true,
++    };
+   }
+ 
+   /**
+@@ -514,7 +534,12 @@ export class ExtractionBatchService implements OnModuleInit {
+     ctx: PassContext,
+     { group, depth }: { group: GroupDoc[]; depth: Exclude<ReadDepth, 'raw'> },
+     page: Page,
+-  ): Promise<{ ok: boolean; members: StoredDocument[]; halvingCanHelp?: boolean }> {
++  ): Promise<{
++    ok: boolean;
++    members: StoredDocument[];
++    halvingCanHelp?: boolean;
++    operatorNeeded?: boolean;
++  }> {
      const members = group.map((g) => page.byId.get(g.id) as StoredDocument);
      const { texts } = page;
-     // D1 triage, in shadow: stamped beside the read, deciding nothing.
-@@ -342,9 +356,9 @@ export class ExtractionBatchService implements OnModuleInit {
+     try {
+@@ -546,9 +571,14 @@ export class ExtractionBatchService implements OnModuleInit {
        return { ok: true, members };
      } catch (err) {
        this.logger.warn(
 -        `extract_documents ${ctx.companyId}: a group of ${members.length} failed: ${(err as Error).message}`,
 +        `extract_documents ${ctx.companyId}: a group of ${members.length} failed: ${describeRunError(err)}`,
        );
--      return { ok: false, members };
-+      return { ok: false, members, operatorNeeded: needsOperator(providerRefusal(err)) };
-     } finally {
-       await triaged;
+-      return { ok: false, members, halvingCanHelp: halvingCanHelp(err) };
++      return {
++        ok: false,
++        members,
++        halvingCanHelp: halvingCanHelp(err),
++        operatorNeeded: needsOperator(providerRefusal(err)),
++      };
      }
+   }
+ 
 diff --git a/src/documents/indexer-run.service.ts b/src/documents/indexer-run.service.ts
-index fb5e935d..c407b04d 100644
+index 1eb92f84..ee3e9194 100644
 --- a/src/documents/indexer-run.service.ts
 +++ b/src/documents/indexer-run.service.ts
-@@ -17,6 +17,7 @@ import { CandidateStoreService } from './candidate-store.service';
- import type { DocumentChunk } from './chunker';
- import type { StoredDocument } from './document-store.service';
- import { renderGroup, splitGroupResult, type GroupDoc } from './extraction-group';
+@@ -26,6 +26,7 @@ import { Semaphore } from '../common/semaphore';
+ import type { ReadDepth } from './read-depth';
+ import { ExtractionStagingError } from './read-failure';
+ import { retryOnReadConflict } from '../db/surreal-retry';
 +import { describeRunError } from '../ai/provider-refusal';
  
  export interface IndexerRunResult {
    runId: string;
-@@ -291,7 +292,7 @@ export class IndexerRunService {
-           .finalizeRun(p.companyId, {
-             runId,
-             status: 'failed',
--            error: { message: (err as Error).message },
-+            error: { message: describeRunError(err) },
-           })
-           .catch(() => undefined);
-         this.metrics?.countIndexerRun('failed');
-@@ -414,7 +415,7 @@ export class IndexerRunService {
+@@ -433,7 +434,7 @@ export class IndexerRunService {
+         .finalizeRun(companyId, {
+           runId,
+           status: 'failed',
+-          error: { message: (err as Error).message },
++          error: { message: describeRunError(err) },
+         })
+         .catch(() => undefined);
+       this.metrics?.countIndexerRun('failed');
+@@ -575,7 +576,7 @@ export class IndexerRunService {
          .finalizeRun(spec.companyId, {
            runId: run.runId,
            status: 'failed',
@@ -410,11 +353,29 @@ index fb5e935d..c407b04d 100644
          })
          .catch(() => undefined);
        this.metrics?.countIndexerRun('failed');
+diff --git a/src/documents/read-failure.ts b/src/documents/read-failure.ts
+index 22c6e8fb..ee248cff 100644
+--- a/src/documents/read-failure.ts
++++ b/src/documents/read-failure.ts
+@@ -1,4 +1,5 @@
+ import { providerSideFailure } from '../ai/openai-client';
++import { providerRefusal } from '../ai/provider-refusal';
+ 
+ /**
+  * Why a group read failed, and whether reading its halves can help.
+@@ -24,6 +25,6 @@ export class ExtractionStagingError extends Error {
+ export function halvingCanHelp(err: unknown): boolean {
+   if (err instanceof ExtractionStagingError) return false;
+   // A refusal about the account or the provider, not about this text.
+-  if (providerSideFailure(err)) return false;
++  if (providerSideFailure(err) || providerRefusal(err) !== undefined) return false;
+   return (err as Error | undefined)?.message !== 'aborted';
+ }
 diff --git a/test/document-retry.e2e-spec.ts b/test/document-retry.e2e-spec.ts
-index e08d42e2..8fc50f6e 100644
+index a9de9165..766b6ed0 100644
 --- a/test/document-retry.e2e-spec.ts
 +++ b/test/document-retry.e2e-spec.ts
-@@ -480,6 +480,30 @@ describe('failed document retry (e2e)', () => {
+@@ -483,6 +483,30 @@ describe('failed document retry (e2e)', () => {
      expect(await indexJobs(userDoc)).toHaveLength(0);
    });
  
@@ -447,10 +408,10 @@ index e08d42e2..8fc50f6e 100644
      await seedRun(docId, {
 diff --git a/test/provider-refusal.unit-spec.ts b/test/provider-refusal.unit-spec.ts
 new file mode 100644
-index 00000000..2bf2c355
+index 00000000..17000387
 --- /dev/null
 +++ b/test/provider-refusal.unit-spec.ts
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,182 @@
 +/**
 + * A provider that refuses the account (no credit, bad key) must not be asked
 + * again for every failed document, and the refusal must reach the failed run
@@ -461,8 +422,10 @@ index 00000000..2bf2c355
 +import { ExtractorLlmService } from '../src/ai/extractor-llm.service';
 +import { ExtractorLocalService } from '../src/ai/extractor-local.service';
 +import { ExtractorRefineService } from '../src/ai/extractor-refine.service';
++import { ProviderCircuitOpen } from '../src/ai/provider-circuit-open';
 +import { describeRunError, needsOperator, providerRefusal } from '../src/ai/provider-refusal';
 +import { ExtractionBatchService } from '../src/documents/extraction-batch.service';
++import { halvingCanHelp } from '../src/documents/read-failure';
 +
 +const apiError = (status: number, extra: Record<string, unknown> = {}) =>
 +  Object.assign(new Error(`${status} refused: account detail`), { status, ...extra });
@@ -471,13 +434,20 @@ index 00000000..2bf2c355
 +  it.each([
 +    [apiError(402), 'billing'],
 +    [apiError(429, { code: 'insufficient_quota' }), 'billing'],
++    [apiError(429, { error: { type: 'credit_balance_exhausted' } }), 'billing'],
 +    [apiError(429), 'rate_limit'],
 +    [apiError(401), 'auth'],
 +    [apiError(403), 'auth'],
 +    [apiError(503), 'outage'],
++    [new ProviderCircuitOpen('openrouter.ai|model'), 'outage'],
 +    [apiError(400), undefined],
++    // A timeout may be about the length of this text: it is not a refusal.
++    [
++      Object.assign(new Error('Request timed out.'), { name: 'APIConnectionTimeoutError' }),
++      undefined,
++    ],
 +    [new Error('incomplete extraction: model response did not finish'), undefined],
-+  ])('classifies %s', (err, expected) => {
++  ])('maps upstream classes to the Manifold values: %s', (err, expected) => {
 +    expect(providerRefusal(err)).toBe(expected);
 +  });
 +
@@ -491,14 +461,23 @@ index 00000000..2bf2c355
 +    expect(needsOperator('rate_limit')).toBe(false);
 +    expect(needsOperator('outage')).toBe(false);
 +  });
++
++  it('does not halve a group the provider refused for payment', () => {
++    expect(halvingCanHelp(apiError(402))).toBe(false);
++    expect(halvingCanHelp(new ProviderCircuitOpen('openrouter.ai|model'))).toBe(false);
++    expect(halvingCanHelp(new Error('Request timed out.'))).toBe(true);
++  });
 +});
 +
-+function mkExtractor(failure: () => Error): { svc: ExtractorService; calls: () => number } {
++function mkExtractor(
++  failure: () => Error,
++  passes = '3',
++): { svc: ExtractorService; calls: () => number } {
 +  const config = {
 +    get: (k: string, def?: string) =>
 +      (
 +        ({
-+          EXTRACTOR_SC_PASSES: '3',
++          EXTRACTOR_SC_PASSES: passes,
 +          OPENAI_CHAT_MODEL: 'gpt-test',
 +          OPENAI_API_KEY: 'sk-test-stub',
 +          OPENAI_CONCURRENCY: '8',
@@ -526,23 +505,30 @@ index 00000000..2bf2c355
 +}
 +
 +describe('extraction when every pass is refused', () => {
-+  it('hands the queued reader the refusal with its status', async () => {
-+    const h = mkExtractor(() => apiError(402));
-+    await expect(h.svc.extractBackground({ text: 'hello', companyId: 'co' })).rejects.toMatchObject(
-+      { status: 402 },
-+    );
-+    expect(h.calls()).toBe(3);
-+  });
++  it.each(['3', '1'])(
++    'hands the queued reader the refusal with its status (%s passes)',
++    async (n) => {
++      const h = mkExtractor(() => apiError(402), n);
++      await expect(
++        h.svc.extractBackground({ text: 'hello', companyId: 'co' }),
++      ).rejects.toMatchObject({ status: 402 });
++      expect(h.calls()).toBe(Number(n));
++    },
++  );
 +
-+  it('fails the request path as incomplete and names the refusal', async () => {
-+    // A queued retry reads through this path; its run must keep the class.
-+    const h = mkExtractor(() => apiError(402));
-+    const err = await h.svc.extract('hello', 'co').catch((e: unknown) => e);
-+    expect(err).not.toHaveProperty('status');
-+    expect(describeRunError(err)).toBe(
-+      'incomplete extraction: model provider refused the request (provider_refusal=billing)',
-+    );
-+  });
++  it.each([402, 401])(
++    'fails the request path as incomplete and names the %s refusal',
++    async (s) => {
++      const h = mkExtractor(() => apiError(s));
++      const err = await h.svc.extract('hello', 'co').catch((e: unknown) => e);
++      expect(err).not.toHaveProperty('status');
++      expect(describeRunError(err)).toBe(
++        `incomplete extraction: model provider refused the request (provider_refusal=${
++          s === 402 ? 'billing' : 'auth'
++        })`,
++      );
++    },
++  );
 +
 +  it('still reports other failures as transient', async () => {
 +    const h = mkExtractor(() => new Error('model response did not finish'));
@@ -593,14 +579,17 @@ index 00000000..2bf2c355
 +}
 +
 +describe('extraction batch retries', () => {
-+  it('schedules no retry pass when the provider refuses the account', async () => {
-+    const h = batch(() => apiError(402));
++  it.each([402, 401])('stops the retry passes after a %s refusal', async (status) => {
++    const h = batch(() => apiError(status));
 +    expect(await h.pass.runPass('co', { force: true })).toMatchObject({ failed: 1 });
 +    expect(h.enqueued).toHaveLength(0);
 +  });
 +
-+  it('keeps the backed-off retry for a transient failure', async () => {
-+    const h = batch(() => new Error('extraction produced no usable response'));
++  it.each([
++    ['transient', () => new Error('extraction produced no usable response')],
++    ['rate limit', () => apiError(429)],
++  ])('keeps the backed-off retry for a %s failure', async (_name, failure) => {
++    const h = batch(failure);
 +    expect(await h.pass.runPass('co', { force: true })).toMatchObject({ failed: 1 });
 +    expect(h.enqueued.map((e) => e.dedupKey)).toEqual([expect.stringMatching(/^xdoc_r1_/)]);
 +  });
