@@ -1,0 +1,99 @@
+diff --git a/src/documents/document-reindex.service.ts b/src/documents/document-reindex.service.ts
+index 6e2f2ba..a48468c 100644
+--- a/src/documents/document-reindex.service.ts
++++ b/src/documents/document-reindex.service.ts
+@@ -1,4 +1,5 @@
+ import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
++import { envFlagEnabled } from '../common/env-flag';
+ import { JobClaimService } from '../jobs/job-claim.service';
+ import { WorkerLoopService, JobContext } from '../jobs/worker-loop.service';
+ import { DocumentStoreService } from './document-store.service';
+@@ -36,15 +37,17 @@ export class DocumentReindexService implements OnModuleInit {
+   ) {}
+ 
+   onModuleInit(): void {
+-    // A new extraction contract re-reads the memory it was written by:
++    // A new extraction contract can re-read the memory it was written by:
+     // each tenant's stored documents are read again by the generalist
+     // pass at GENERAL_INDEXER_VERSION (the run ledger skips a document
+     // already read at that version, so a restart mid-pass resumes rather
+     // than repeats, and a failed one is reopened).
+-    // Without it a contract change (edges gaining the period they held,
+-    // 0164) reached only what was written after the deploy, and every
+-    // earlier document kept the timeless reading.
+-    this.surreal?.onTenantSchemaReady((companyId) => {
++    // The walk is opt-in (REINDEX_ON_PACK_INSTALL): a host that stores
++    // every revision as its own document would have each superseded
++    // revision read again, and its old statements would replace current
++    // facts.
++    const reread = envFlagEnabled(process.env.REINDEX_ON_PACK_INSTALL) ? this.surreal : undefined;
++    reread?.onTenantSchemaReady((companyId) => {
+       void this.enqueueReindex(companyId, {
+         packId: GENERAL_INDEXER_ID,
+         packVersion: GENERAL_INDEXER_VERSION,
+diff --git a/test/document-reindex-boot.unit-spec.ts b/test/document-reindex-boot.unit-spec.ts
+new file mode 100644
+index 0000000..b9a1501
+--- /dev/null
++++ b/test/document-reindex-boot.unit-spec.ts
+@@ -0,0 +1,60 @@
++/**
++ * A boot does not re-read the stored documents on its own. A host that
++ * stores every revision as its own document would have each superseded
++ * revision read again, and its old statements would replace current facts
++ * (seen after the move to v2.11.0, 2026-11-27). The walk stays behind
++ * REINDEX_ON_PACK_INSTALL, the opt-in for a backfill after a pack upgrade.
++ */
++import { DocumentReindexService } from '../src/documents/document-reindex.service';
++
++function boot() {
++  const enqueued: Array<{ dedupKey?: string }> = [];
++  const listeners: Array<(companyId: string) => void> = [];
++  const claim = {
++    enqueue: async (e: { dedupKey?: string }) => {
++      enqueued.push(e);
++      return { runId: 'r', created: true };
++    },
++  };
++  const surreal = {
++    onTenantSchemaReady: (listener: (companyId: string) => void) => {
++      listeners.push(listener);
++    },
++  };
++  new DocumentReindexService(
++    {} as never,
++    {} as never,
++    {} as never,
++    undefined,
++    claim as never,
++    surreal as never,
++  ).onModuleInit();
++  const ready = async () => {
++    for (const listener of listeners) listener('co');
++    await new Promise((r) => setImmediate(r));
++  };
++  return { ready, enqueued };
++}
++
++describe('document reindex on boot', () => {
++  const before = process.env.REINDEX_ON_PACK_INSTALL;
++  afterEach(() => {
++    if (before === undefined) delete process.env.REINDEX_ON_PACK_INSTALL;
++    else process.env.REINDEX_ON_PACK_INSTALL = before;
++  });
++
++  it('enqueues nothing by default', async () => {
++    delete process.env.REINDEX_ON_PACK_INSTALL;
++    const { ready, enqueued } = boot();
++    await ready();
++    expect(enqueued).toEqual([]);
++  });
++
++  it('enqueues the general pass when the backfill is switched on', async () => {
++    process.env.REINDEX_ON_PACK_INSTALL = '1';
++    const { ready, enqueued } = boot();
++    await ready();
++    expect(enqueued).toHaveLength(1);
++    expect(enqueued[0]!.dedupKey).toMatch(/^reindex__general_\d+_start_\d{4}-\d{2}-\d{2}$/);
++  });
++});
