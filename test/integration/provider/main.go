@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +28,7 @@ func main() {
 	})
 	mux.HandleFunc("/v1/embeddings", embeddings)
 	mux.HandleFunc("/v1/chat/completions", chatCompletion)
+	mux.HandleFunc("/control/refuse", controlRefusal)
 	server := &http.Server{
 		Addr:              ":8081",
 		Handler:           mux,
@@ -38,6 +40,23 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// refusal is the HTTP status extraction requests are refused with; zero
+// accepts them. The integration run switches it to act out a provider account
+// without credit. Other requests keep working so only extraction is affected.
+var refusal atomic.Int32
+
+func controlRefusal(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Status int32 `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, `{"error":{"message":"invalid JSON"}}`, http.StatusBadRequest)
+		return
+	}
+	refusal.Store(request.Status)
+	writeJSON(w, request)
 }
 
 func embeddings(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +106,10 @@ func chatCompletion(w http.ResponseWriter, r *http.Request) {
 	content := any(map[string]any{})
 	if responseFormat, ok := request["response_format"].(map[string]any); ok {
 		if schemaWrapper, ok := responseFormat["json_schema"].(map[string]any); ok {
+			if status := int(refusal.Load()); status != 0 && schemaWrapper["name"] == "extraction" {
+				http.Error(w, `{"error":{"message":"insufficient credits","code":402}}`, status)
+				return
+			}
 			if schema, ok := schemaWrapper["schema"].(map[string]any); ok {
 				content = valueForSchema(schema)
 			}
@@ -128,7 +151,7 @@ func extractionFixture(request, schema map[string]any) (any, bool) {
 		if message["role"] != "user" {
 			continue
 		}
-		for _, company := range []string{"Meridian Labs", "Borealis Labs"} {
+		for _, company := range []string{"Meridian Labs", "Borealis Labs", "Cobalt Labs"} {
 			clause := "Mira Chen works at " + company + "."
 			if !strings.Contains(text, clause) {
 				continue

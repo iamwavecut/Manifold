@@ -859,7 +859,7 @@ func exitCode(code string) int {
 		return 15
 	case "stale_rename_plan", "unrewritable_reference":
 		return 16
-	case "dependency_unavailable", "storage_unavailable", "discovery_degraded":
+	case "dependency_unavailable", "storage_unavailable", "discovery_degraded", "provider_credits_exhausted":
 		return 17
 	case "job_failed":
 		return 18

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/iamwavecut/Manifold/internal/model"
@@ -381,7 +382,7 @@ func (s *Store) RetryJob(ctx context.Context, id string) error {
 					return fmt.Errorf("decode document retry payload: %w", err)
 				}
 			}
-			updates := map[string]any{"manual_retry_requested": true}
+			updates := map[string]any{"manual_retry_requested": true, "provider_refusal": ""}
 			if !retry.Requested {
 				updates["brain_retry_key"] = ""
 			}
@@ -456,4 +457,73 @@ func (s *Store) Metrics(ctx context.Context) (map[string]int, error) {
 		result[name] = count
 	}
 	return result, nil
+}
+
+// ProviderBlockedSync is a document sync the model provider refused and that
+// still describes the document's current revision.
+type ProviderBlockedSync struct {
+	JobID     string
+	Refusal   string
+	BlockedAt time.Time
+}
+
+// ProviderBlockedSyncs returns blocked syncs, the longest blocked first. A job
+// a later job of the same document replaced is not blocked any more.
+func (s *Store) ProviderBlockedSyncs(ctx context.Context) ([]ProviderBlockedSync, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT j.id, json_extract(j.payload_json, '$.provider_refusal'), j.updated_at
+		FROM jobs j
+		JOIN documents d ON d.id = j.resource_id AND d.deleted = 0
+		WHERE j.kind = 'document.sync' AND j.status IN ('partially_ready', 'failed')
+			AND d.status IN ('partially_ready', 'failed')
+			AND COALESCE(json_extract(j.payload_json, '$.provider_refusal'), '') <> ''
+			AND json_extract(j.payload_json, '$.revision') = 'r' || d.revision
+			AND NOT EXISTS (
+				SELECT 1 FROM jobs later
+				WHERE later.resource_type = j.resource_type AND later.resource_id = j.resource_id
+					AND later.rowid > j.rowid)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var blocked []ProviderBlockedSync
+	for rows.Next() {
+		var item ProviderBlockedSync
+		var updated string
+		if err := rows.Scan(&item.JobID, &item.Refusal, &updated); err != nil {
+			return nil, err
+		}
+		item.BlockedAt = parseTime(updated)
+		blocked = append(blocked, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Sort parsed times: the stored text drops trailing zeros of its fraction.
+	slices.SortStableFunc(blocked, func(a, b ProviderBlockedSync) int { return a.BlockedAt.Compare(b.BlockedAt) })
+	return blocked, nil
+}
+
+// LatestSyncSuccess returns when a document sync last finished successfully,
+// or the zero time.
+func (s *Store) LatestSyncSuccess(ctx context.Context) (time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT finished_at FROM jobs
+		WHERE kind = 'document.sync' AND status = 'ready' AND finished_at IS NOT NULL
+		ORDER BY finished_at DESC LIMIT 16`)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer rows.Close()
+	var latest time.Time
+	for rows.Next() {
+		var finished string
+		if err := rows.Scan(&finished); err != nil {
+			return time.Time{}, err
+		}
+		if at := parseTime(finished); at.After(latest) {
+			latest = at
+		}
+	}
+	return latest, rows.Err()
 }

@@ -89,6 +89,13 @@ func (s *Service) processOne(ctx context.Context) error {
 	}
 	errorContext := problem.WithRequestID(ctx, identity.NewXID())
 	semantic := s.dependencyProblem(errorContext, job, err)
+	var refused *providerRefusedError
+	if job.Kind == "document.sync" && errors.As(err, &refused) {
+		semantic = s.providerProblem(errorContext, job, refused.class)
+		if mergeErr := s.store.MergeJobPayload(ctx, job.ID, map[string]any{"provider_refusal": refused.class}); mergeErr != nil {
+			err = errors.Join(err, fmt.Errorf("record provider refusal: %w", mergeErr))
+		}
+	}
 	if job.Kind == "rename.apply" {
 		if plan, getErr := s.store.GetRenamePlan(ctx, job.ResourceID); getErr == nil && plan.Error != nil {
 			semantic = plan.Error
@@ -574,9 +581,15 @@ func terminalBrainDocumentError(state upstream.GraphDocumentState) error {
 			}
 		}
 	}
+	var err error
 	if len(failed) == 0 {
-		return fmt.Errorf("Brain document extraction finished in %s state", state.Status)
+		err = fmt.Errorf("Brain document extraction finished in %s state", state.Status)
+	} else {
+		err = fmt.Errorf("Brain document extraction finished in %s state; failed indexers: %s",
+			state.Status, strings.Join(failed, ", "))
 	}
-	return fmt.Errorf("Brain document extraction finished in %s state; failed indexers: %s",
-		state.Status, strings.Join(failed, ", "))
+	if class := upstream.ProviderRefusal(state); class != "" {
+		return &providerRefusedError{class: class, cause: err}
+	}
+	return err
 }

@@ -746,6 +746,22 @@ components:
           status: 403
           title: missing capability
           type: http://localhost:8080/errors/missing_capability
+        - code: provider_credits_exhausted
+          detail: A safe request-specific explanation is returned here.
+          documentation_url: http://localhost:8080/docs/errors/provider_credits_exhausted
+          job: /api/v1/jobs/d5vqh9idc6b5u5sctq00
+          remediation:
+            steps:
+              - Top up the account or key the server uses.
+              - Watch pipeline.blocked_documents in GET /api/v1/status.
+              - POST the job retry endpoint to retry at once.
+            summary: Add credit to the model provider account; Manifold then retries blocked documents.
+          request_id: d5vqh9idc6b5u5sctq00
+          retry_after: 15m
+          retryable: true
+          status: 503
+          title: provider credits exhausted
+          type: http://localhost:8080/errors/provider_credits_exhausted
         - code: request_failed
           detail: A safe request-specific explanation is returned here.
           documentation_url: http://localhost:8080/docs/errors/request_failed
@@ -1423,6 +1439,11 @@ components:
     PipelineStatus:
       additionalProperties: false
       properties:
+        blocked_documents:
+          format: int64
+          type: integer
+        blocked_reason:
+          type: string
         current_documents:
           format: int64
           type: integer
@@ -1451,6 +1472,7 @@ components:
         - failed_documents
         - pending_jobs
         - failed_jobs
+        - blocked_documents
       type: object
     Relation:
       additionalProperties: false

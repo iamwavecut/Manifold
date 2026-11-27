@@ -26,6 +26,7 @@ type Config struct {
 	OpenVikingWriteTimeout time.Duration
 	WorkerInterval         time.Duration
 	WorkerConcurrency      int
+	ProviderRetryInterval  time.Duration
 }
 
 func Load() (Config, error) {
@@ -76,6 +77,13 @@ func Load() (Config, error) {
 	if workerConcurrency < 1 || workerConcurrency > 16 {
 		return Config{}, fmt.Errorf("MANIFOLD_WORKER_CONCURRENCY must be between 1 and 16")
 	}
+	providerRetry, err := envDuration("MANIFOLD_PROVIDER_RETRY_INTERVAL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if providerRetry < 0 {
+		return Config{}, fmt.Errorf("MANIFOLD_PROVIDER_RETRY_INTERVAL must be zero (off) or greater")
+	}
 	cfg := Config{
 		Addr:                   env("MANIFOLD_ADDR", ":8080"),
 		DBPath:                 env("MANIFOLD_DB_PATH", "manifold.db"),
@@ -94,6 +102,7 @@ func Load() (Config, error) {
 		OpenVikingWriteTimeout: writeTimeout,
 		WorkerInterval:         workerInterval,
 		WorkerConcurrency:      int(workerConcurrency),
+		ProviderRetryInterval:  providerRetry,
 	}
 	if cfg.MaxBodyBytes < 1024 {
 		return Config{}, fmt.Errorf("MANIFOLD_MAX_BODY_BYTES must be at least 1024")

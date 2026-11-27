@@ -125,6 +125,28 @@ case "$skill_tree" in
 		;;
 esac
 
+# A provider that refuses extraction for lack of credit: Manifold names the
+# cause and, once the provider accepts again, finishes the document by itself.
+provider_refuse() {
+	compose exec -T provider wget -qO- --header "Content-Type: application/json" \
+		--post-data "{\"status\":$1}" http://127.0.0.1:8081/control/refuse >/dev/null
+}
+state_file=$(mktemp)
+for phase in provider_refusal provider_recovery; do
+	if [ "$phase" = provider_refusal ]; then
+		provider_refuse 402
+	else
+		provider_refuse 0
+	fi
+	MANIFOLD_URL=$url \
+		MANIFOLD_API_KEY=$api_key \
+		MANIFOLD_INTEGRATION_PHASE=$phase \
+		MANIFOLD_INTEGRATION_STATE=$state_file \
+		go test -tags=integration -count=1 -v ./test/integration
+done
+rm -f "$state_file"
+state_file=
+
 # Keep Brain running while SurrealDB restarts. Its scoped pool must restore
 # authentication rather than remaining connected as an anonymous session.
 compose restart surrealdb

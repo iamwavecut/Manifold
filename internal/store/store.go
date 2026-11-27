@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 	finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status, created_at);
+CREATE INDEX IF NOT EXISTS jobs_resource_idx ON jobs(resource_type, resource_id);
 
 CREATE TABLE IF NOT EXISTS entities (
 	id TEXT PRIMARY KEY,

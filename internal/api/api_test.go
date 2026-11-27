@@ -379,7 +379,7 @@ func TestOpenAPIUsesTheSemanticErrorContractForEveryFailureResponse(t *testing.T
 	for _, code := range []string{
 		"validation_failed", "invalid_request", "invalid_api_key", "missing_capability",
 		"resource_not_found", "slug_taken", "folder_path_conflict", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
-		"unrewritable_reference", "dependency_unavailable", "invalid_state_transition",
+		"unrewritable_reference", "dependency_unavailable", "provider_credits_exhausted", "invalid_state_transition",
 		"state_conflict", "csrf_failed", "storage_unavailable", "job_failed",
 		"cannot_revoke_current_key", "internal_error", "request_failed", "error_code_not_found",
 	} {
@@ -394,7 +394,7 @@ func TestEveryPublicSemanticErrorCodeHasReachableDocumentation(t *testing.T) {
 	codes := []string{
 		"validation_failed", "invalid_request", "invalid_api_key", "missing_capability",
 		"resource_not_found", "slug_taken", "folder_path_conflict", "etag_mismatch", "idempotency_key_reused", "api_key_secret_not_replayable", "stale_rename_plan",
-		"unrewritable_reference", "dependency_unavailable", "invalid_state_transition",
+		"unrewritable_reference", "dependency_unavailable", "provider_credits_exhausted", "invalid_state_transition",
 		"state_conflict", "csrf_failed", "storage_unavailable", "job_failed",
 		"cannot_revoke_current_key", "internal_error", "request_failed", "error_code_not_found",
 	}

@@ -169,6 +169,10 @@ var semanticErrorDocs = map[string]problem.Remediation{
 		Summary: "Restore the named dependency and retry.",
 		Steps:   []string{"Inspect /api/v1/status.", "Fix provider or network configuration.", "Retry the failed job."},
 	},
+	"provider_credits_exhausted": {
+		Summary: "Add credit to the model provider account; Manifold then retries blocked documents.",
+		Steps:   []string{"Top up the account or key the server uses.", "Watch pipeline.blocked_documents in GET /api/v1/status.", "POST the job retry endpoint to retry at once."},
+	},
 	"invalid_state_transition": {
 		Summary: "Perform an action allowed by the current state.",
 		Steps:   []string{"Inspect current_state and allowed_states.", "Wait for an active job or select an allowed transition."},
