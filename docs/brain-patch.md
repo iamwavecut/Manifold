@@ -4,13 +4,16 @@ Manifold builds INITE Brain from upstream commit
 `a567f6960c031b916549699fec7b89423c650d1e`: `main` after v2.3.0 (39 later commits, the last
 on 2026-09-26). Brain has published no release since v2.3.0. `main` adds the
 batched entity judge for document commits (#705) and migrations 0161-0167;
-they are one-way, like every Brain migration. The exact ref, base-image digests, and patch application
-order live in [`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile). The build
+they are one-way, like every Brain migration. The exact ref and base-image digests live in
+[`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile); the patch application
+order lives in [`deploy/brain/series`](../deploy/brain/series). The build
 uses Node 22 LTS, the major line of upstream's Dockerfile, and an Alpine
 source stage pinned by digest.
 
-The downstream patches are narrow and covered by the patch-application check
-in [CI](../.github/workflows/ci.yml):
+The downstream patches are narrow.
+[`scripts/brain-apply-patches.sh`](../scripts/brain-apply-patches.sh) applies
+them in series order, and [CI](../.github/workflows/ci.yml) checks that they
+apply:
 
 - [`openai-api-key-format.patch`](../deploy/brain/openai-api-key-format.patch)
   accepts API keys that do not use OpenAI's `sk-` prefix. Upstream `main`
@@ -293,9 +296,6 @@ git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-se
 git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
 git -C "$brain_src" checkout -q FETCH_HEAD
 test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit pool-stall-liveness provider-refusal predicate-vocabulary-refresh; do
-    git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
-    git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
-done
+"$PWD/scripts/brain-apply-patches.sh" "$brain_src"
 git -C "$brain_src" diff --check
 ```
