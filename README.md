@@ -133,7 +133,7 @@ flowchart LR
     API --> SQLite["SQLite control plane"]
     API --> OV["OpenViking v0.5.0\ncanonical content + snapshots"]
     API -->|"submit + durable poll"| Brain["INITE Brain a567f69 (v2.3.0+39)\nfacts + relations + provenance"]
-    Brain --> Surreal["SurrealDB v3.3.0"]
+    Brain --> Surreal["SurrealDB v3.3.5"]
     Brain -->|"committed graph + source revision"| SQLite
     OV --> Provider["OpenAI-compatible provider"]
     Brain --> Provider

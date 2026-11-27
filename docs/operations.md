@@ -263,6 +263,21 @@ logs without a limit. `docker compose logs` reads both. A container keeps its
 log only while it exists; recreating it, as every deployment does, starts an
 empty log.
 
+## SurrealDB 3.3.5
+
+Compose moved SurrealDB from v3.3.0 to v3.3.5 on 2026-11-27. The release line
+and storage format are the same, so `DATA_VERSION` stays 4. On a copy of a
+graph with about 50,000 facts v3.3.5 opened the data with the HNSW index
+`ready`, and v3.3.0 opened the same files again afterwards. Take a cold copy
+of the volume before changing the image anyway:
+
+```bash
+docker compose stop brain surrealdb
+docker run --rm -v manifold_surrealdb-data:/data:ro -v "$PWD:/backup" \
+  alpine:3.24.2 tar -C /data -cf /backup/surrealdb-data.tar .
+docker compose up -d surrealdb brain
+```
+
 ## Data version 4 migration
 
 This release moves INITE Brain from v2.3.0 to upstream commit `a567f69`

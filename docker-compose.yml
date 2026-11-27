@@ -164,7 +164,7 @@ services:
       start_period: 45s
 
   surrealdb:
-    image: surrealdb/surrealdb:v3.3.0@sha256:681c6c22c287421b5c7d99e0fde79b6e0d32c36c1ddeaab2762a1661cb04cd20
+    image: surrealdb/surrealdb:v3.3.5@sha256:3db515b88e79737aa828c05fbf1515748004ba57495ff89a013851cc3f1ad4b9
     restart: unless-stopped
     logging: *logging
     user: root
