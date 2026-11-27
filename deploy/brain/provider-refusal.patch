@@ -1,0 +1,607 @@
+diff --git a/src/ai/extraction-pattern.service.ts b/src/ai/extraction-pattern.service.ts
+index 55e7e3a4..885f19c4 100644
+--- a/src/ai/extraction-pattern.service.ts
++++ b/src/ai/extraction-pattern.service.ts
+@@ -97,6 +97,8 @@ export class ExtractionPatternService {
+    */
+   async record(companyId: string, entries: ExtractionPatternEntry[]): Promise<void> {
+     if (entries.length === 0) return;
++    let failed = 0;
++    let lastError = '';
+     await this.surreal.withCompany(companyId, async (db) => {
+       for (const e of entries) {
+         const key = this.normalise(e.clauseText);
+@@ -119,12 +121,17 @@ export class ExtractionPatternService {
+             { key },
+           );
+         } catch (err) {
+-          this.logger.warn(
+-            `record(${companyId}): failed to upsert pattern for "${key.slice(0, 60)}": ${(err as Error).message}`,
+-          );
++          failed += 1;
++          lastError = (err as Error).message;
+         }
+       }
+     });
++    // Counts only: the clause text is the user's own words.
++    if (failed > 0) {
++      this.logger.warn(
++        `record(${companyId}): ${failed}/${entries.length} pattern upsert(s) failed: ${lastError}`,
++      );
++    }
+     this.invalidate(companyId);
+   }
+ 
+diff --git a/src/ai/extractor-runner.service.ts b/src/ai/extractor-runner.service.ts
+index dd84cfcc..8b20228a 100644
+--- a/src/ai/extractor-runner.service.ts
++++ b/src/ai/extractor-runner.service.ts
+@@ -42,6 +42,8 @@ import {
+   type ConversationContext,
+ } from './extractor-internals/prompts';
+ 
++import { providerSideFailure } from './openai-client';
++
+ export type { ConversationContext } from './extractor-internals/prompts';
+ 
+ type Snapshot = {
+@@ -277,6 +279,7 @@ export class ExtractorRunnerService implements OnApplicationBootstrap, OnApplica
+     // Even temperature spread across [0.1, 0.7].
+     const temperatures = Array.from({ length: N }, (_, i) => 0.1 + (i * 0.6) / Math.max(N - 1, 1));
+ 
++    const failures: unknown[] = [];
+     const rawJsons = await Promise.all(
+       temperatures.map((t) =>
+         this.llm
+@@ -290,6 +293,7 @@ export class ExtractorRunnerService implements OnApplicationBootstrap, OnApplica
+           })
+           .catch((e) => {
+             this.logger.warn(`sc-pass T=${t.toFixed(2)} failed: ${(e as Error).message}`);
++            failures.push(e);
+             return null;
+           }),
+       ),
+@@ -311,9 +315,16 @@ export class ExtractorRunnerService implements OnApplicationBootstrap, OnApplica
+       ),
+     );
+     const surviving = results.filter((r): r is ExtractionResult => !!r);
+-    // Every pass failed → transient LLM trouble, not an empty text. Null
+-    // tells the caller to skip the cache (see run()'s contract).
+-    if (surviving.length === 0) return null;
++    if (surviving.length === 0) {
++      // The provider refused (no credit, a revoked key, an outage): rethrow
++      // the refusal with its status. Folded into a null it reached the batch
++      // as a "transient failure" and every failed document was read again.
++      const refusal = failures.find(providerSideFailure);
++      if (refusal) throw refusal;
++      // Every pass failed → transient LLM trouble, not an empty text. Null
++      // tells the caller to skip the cache (see run()'s contract).
++      return null;
++    }
+ 
+     const { clusterCount, ...union } = mergeExtractions(surviving, {
+       selfConsistency: true,
+diff --git a/src/ai/extractor.service.ts b/src/ai/extractor.service.ts
+index f5c1df6e..24cf3cfc 100644
+--- a/src/ai/extractor.service.ts
++++ b/src/ai/extractor.service.ts
+@@ -12,7 +12,8 @@ import { ExtractorRunnerService } from './extractor-runner.service';
+ import type { ExtractionResult } from './extractor-internals/types';
+ import type { ConversationContext } from './extractor-internals/prompts';
+ import { memoryContextDigest } from './extractor-internals/memory-context';
+-import { offlineServiceTier } from './openai-client';
++import { offlineServiceTier, providerSideFailure } from './openai-client';
++import { describeRunError } from './provider-refusal';
+ 
+ export type { ConversationContext } from './extractor-internals/prompts';
+ 
+@@ -144,13 +145,21 @@ export class ExtractorService {
+       registryVersionHash: snapshot.versionHash,
+     });
+ 
+-    const result = await this.runner.run({
+-      trimmed,
+-      companyId,
+-      snapshot,
+-      context,
+-      ...(p.background ? { overrides: { tier: offlineServiceTier() } } : {}),
+-    });
++    // A provider refusal reaches a queued reader with its status. The
++    // request path (which queued retries use too) reports an incomplete
++    // extraction that names the refusal, without the provider's status.
++    const result = await this.runner
++      .run({
++        trimmed,
++        companyId,
++        snapshot,
++        context,
++        ...(p.background ? { overrides: { tier: offlineServiceTier() } } : {}),
++      })
++      .catch((err: unknown) => {
++        if (p.background || !providerSideFailure(err)) throw err;
++        throw new Error(`incomplete extraction: ${describeRunError(err)}`);
++      });
+     if (!result && p.background) {
+       throw new Error('extraction produced no usable response (transient LLM failure)');
+     }
+diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
+index 69bad070..84bf6e3c 100644
+--- a/src/ai/openai-client.ts
++++ b/src/ai/openai-client.ts
+@@ -1,6 +1,7 @@
+ import { Logger } from '@nestjs/common';
+ import { ConfigService } from '@nestjs/config';
+ import OpenAI from 'openai';
++import { providerRefusal } from './provider-refusal';
+ 
+ /**
+  * The chat model every LLM call runs on unless OPENAI_CHAT_MODEL says
+@@ -202,14 +203,8 @@ function quotaRefusal(err: unknown): boolean {
+  * no credit, a revoked key, an outage — or a rate limit that outlived the
+  * SDK's own retries (the provider has no capacity for us right now).
+  */
+-function providerSideFailure(err: unknown): boolean {
+-  const status = (err as { status?: number })?.status;
+-  return (
+-    status === 429 ||
+-    status === 401 ||
+-    status === 403 ||
+-    (typeof status === 'number' && status >= 500)
+-  );
++export function providerSideFailure(err: unknown): boolean {
++  return providerRefusal(err) !== undefined;
+ }
+ 
+ /** Test seam: forget a quota refusal. */
+diff --git a/src/ai/provider-refusal.ts b/src/ai/provider-refusal.ts
+new file mode 100644
+index 00000000..7d6b7c0f
+--- /dev/null
++++ b/src/ai/provider-refusal.ts
+@@ -0,0 +1,53 @@
++/**
++ * A refusal about the provider account or the provider itself, not about the
++ * text of one request. Reading the same or another document again cannot
++ * succeed until someone acts (credit, key) or the provider recovers.
++ */
++export type ProviderRefusalClass = 'billing' | 'auth' | 'rate_limit' | 'outage';
++
++const BILLING_MARKERS = new Set(['insufficient_quota', 'credit_balance_exhausted']);
++
++type ProviderErrorFields = {
++  status?: unknown;
++  code?: unknown;
++  type?: unknown;
++  error?: { code?: unknown; type?: unknown };
++};
++
++export function providerRefusal(err: unknown): ProviderRefusalClass | undefined {
++  const e = (err ?? {}) as ProviderErrorFields;
++  if (typeof e.status !== 'number') return undefined;
++  // OpenRouter answers 402 when the account or key cannot pay.
++  if (e.status === 402) return 'billing';
++  if (e.status === 401 || e.status === 403) return 'auth';
++  if (e.status === 429) {
++    const marks = [e.code, e.type, e.error?.code, e.error?.type];
++    return marks.some((m) => typeof m === 'string' && BILLING_MARKERS.has(m))
++      ? 'billing'
++      : 'rate_limit';
++  }
++  return e.status >= 500 ? 'outage' : undefined;
++}
++
++/** Retrying sooner cannot help: an operator has to add credit or fix the key. */
++export function needsOperator(refusal: ProviderRefusalClass | undefined): boolean {
++  return refusal === 'billing' || refusal === 'auth';
++}
++
++/**
++ * The error text a failed indexer run records. A refusal becomes a fixed
++ * marker callers can classify, without the provider's own message.
++ */
++export function describeRunError(err: unknown): string {
++  const refusal = providerRefusal(err);
++  if (!refusal) return (err as Error).message;
++  return `model provider refused the request (provider_refusal=${refusal})`;
++}
++
++/** The class a recorded run error carries, when the provider refused it. */
++export function recordedRefusal(error: unknown): ProviderRefusalClass | undefined {
++  const message = (error as { message?: unknown } | null | undefined)?.message;
++  if (typeof message !== 'string') return undefined;
++  const found = /provider_refusal=(billing|auth|rate_limit|outage)\b/.exec(message);
++  return found?.[1] as ProviderRefusalClass | undefined;
++}
+diff --git a/src/documents/candidate-store.service.ts b/src/documents/candidate-store.service.ts
+index e2b8c7d2..b6ebe73e 100644
+--- a/src/documents/candidate-store.service.ts
++++ b/src/documents/candidate-store.service.ts
+@@ -9,6 +9,7 @@ import {
+ } from '../db/surreal.service';
+ import { MetricsService } from '../metrics/metrics.service';
+ import { idTailOf } from '../ingest/ingest-utils';
++import { recordedRefusal, type ProviderRefusalClass } from '../ai/provider-refusal';
+ import type { CandidateBatch, CandidateKind } from '../indexers/candidate.types';
+ import { indexerIdOfPredicate } from '../indexers/virtual-attributor';
+ 
+@@ -63,6 +64,7 @@ interface RunLedgerRow {
+   external?: unknown;
+   claimToken?: unknown;
+   createdAt?: unknown;
++  error?: unknown;
+ }
+ 
+ interface FailedInternalRunRow {
+@@ -599,23 +601,36 @@ export class CandidateStoreService {
+   async listRuns(
+     companyId: string,
+     docId: string,
+-  ): Promise<Array<{ runId: string; packId: string; packVersion: string; status: string }>> {
++  ): Promise<
++    Array<{
++      runId: string;
++      packId: string;
++      packVersion: string;
++      status: string;
++      /** Why the model provider refused a failed run. The message stays internal. */
++      providerRefusal?: ProviderRefusalClass;
++    }>
++  > {
+     return this.surreal.withCompany(companyId, async (db) => {
+       // SurrealDB 3.x: the ORDER BY field must be in the projection
+       // ("Missing order idiom" otherwise) — createdAt rides along.
+       const rows = await queryRows<RunLedgerRow>(
+         db,
+-        `SELECT id, packId, packVersion, status, createdAt FROM indexer_run
++        `SELECT id, packId, packVersion, status, createdAt, error FROM indexer_run
+          WHERE docId = type::record('source_document', $doc)
+          ORDER BY createdAt ASC`,
+         { doc: idTailOf(docId) },
+       );
+-      return rows.map((r) => ({
+-        runId: String(r.id),
+-        packId: String(r.packId),
+-        packVersion: String(r.packVersion),
+-        status: String(r.status),
+-      }));
++      return rows.map((r) => {
++        const refusal = r.status === 'failed' ? recordedRefusal(r.error) : undefined;
++        return {
++          runId: String(r.id),
++          packId: String(r.packId),
++          packVersion: String(r.packVersion),
++          status: String(r.status),
++          ...(refusal ? { providerRefusal: refusal } : {}),
++        };
++      });
+     });
+   }
+ 
+diff --git a/src/documents/extraction-batch.service.ts b/src/documents/extraction-batch.service.ts
+index 90bcccc6..877e8b56 100644
+--- a/src/documents/extraction-batch.service.ts
++++ b/src/documents/extraction-batch.service.ts
+@@ -20,6 +20,7 @@ import { LeaderLeaseService } from '../jobs/leader-lease.service';
+ import { Semaphore } from '../common/semaphore';
+ import { retryOnReadConflict } from '../db/surreal-retry';
+ import { IndexerRunService, groupDocOf } from './indexer-run.service';
++import { describeRunError, needsOperator, providerRefusal } from '../ai/provider-refusal';
+ 
+ /**
+  * Extraction off the write path. A document is remembered when it
+@@ -174,6 +175,7 @@ export class ExtractionBatchService implements OnModuleInit {
+     let read = 0;
+     let failed = 0;
+     let committed = 0;
++    let operatorNeeded = false;
+     // A document is read at most once per pass: a failed one waits for
+     // the retry pass instead of being listed again by the next page.
+     const attempted = new Set<string>();
+@@ -200,6 +202,7 @@ export class ExtractionBatchService implements OnModuleInit {
+       read += outcome.read;
+       failed += outcome.failed;
+       committed += outcome.committed;
++      operatorNeeded ||= outcome.operatorNeeded === true;
+       if (outcome.nextAt && (!nextAt || outcome.nextAt < nextAt)) nextAt = outcome.nextAt;
+     }
+     if (nextAt) {
+@@ -208,7 +211,10 @@ export class ExtractionBatchService implements OnModuleInit {
+         delayMs: Math.max(1000, nextAt.getTime() - Date.now()),
+       });
+     }
+-    if (failed > 0 && retry < MAX_RETRIES) {
++    // A retry pass re-reads every failed document of the tenant. When the
++    // provider refuses the account (no credit, bad key) each of them would
++    // be refused again; the caller retries once the operator has acted.
++    if (failed > 0 && retry < MAX_RETRIES && !operatorNeeded) {
+       await this.schedule(ctx.companyId, {
+         retry: retry + 1,
+         delayMs: RETRY_BASE_MS * 2 ** retry,
+@@ -231,7 +237,13 @@ export class ExtractionBatchService implements OnModuleInit {
+     ctx: PassContext,
+     waiting: Array<{ docId: string; arrivedAt: Date }>,
+     force: boolean,
+-  ): Promise<{ read: number; failed: number; committed: number; nextAt?: Date }> {
++  ): Promise<{
++    read: number;
++    failed: number;
++    committed: number;
++    operatorNeeded?: boolean;
++    nextAt?: Date;
++  }> {
+     const docs: StoredDocument[] = [];
+     const texts = new Map<string, string>();
+     const arrived = new Map(waiting.map((w) => [w.docId, w.arrivedAt]));
+@@ -277,6 +289,7 @@ export class ExtractionBatchService implements OnModuleInit {
+       read: sum('read'),
+       failed: sum('failed'),
+       committed: sum('committed'),
++      operatorNeeded: outcomes.some((o) => o.operatorNeeded),
+       ...(nextAt ? { nextAt } : {}),
+     };
+   }
+@@ -286,8 +299,8 @@ export class ExtractionBatchService implements OnModuleInit {
+     ctx: PassContext,
+     groups: GroupDoc[][],
+     page: { byId: Map<string, StoredDocument>; texts: Map<string, string> },
+-  ): Promise<{ read: number; failed: number; committed: number }> {
+-    const out = { read: 0, failed: 0, committed: 0 };
++  ): Promise<{ read: number; failed: number; committed: number; operatorNeeded: boolean }> {
++    const out = { read: 0, failed: 0, committed: 0, operatorNeeded: false };
+     const first = (g: GroupDoc[]) => g[0]?.occurredAt.getTime() ?? 0;
+     for (const group of [...groups].sort((a, b) => first(a) - first(b))) {
+       // Past the budget the rest waits for the next pass (still pending),
+@@ -297,6 +310,7 @@ export class ExtractionBatchService implements OnModuleInit {
+       const r = await this.readGroup(ctx, group, page);
+       if (!r.ok) {
+         out.failed += r.members.length;
++        out.operatorNeeded ||= r.operatorNeeded === true;
+         continue;
+       }
+       out.read += r.members.length;
+@@ -310,7 +324,7 @@ export class ExtractionBatchService implements OnModuleInit {
+     ctx: PassContext,
+     group: GroupDoc[],
+     page: { byId: Map<string, StoredDocument>; texts: Map<string, string> },
+-  ): Promise<{ ok: boolean; members: StoredDocument[] }> {
++  ): Promise<{ ok: boolean; members: StoredDocument[]; operatorNeeded?: boolean }> {
+     const members = group.map((g) => page.byId.get(g.id) as StoredDocument);
+     const { texts } = page;
+     // D1 triage, in shadow: stamped beside the read, deciding nothing.
+@@ -342,9 +356,9 @@ export class ExtractionBatchService implements OnModuleInit {
+       return { ok: true, members };
+     } catch (err) {
+       this.logger.warn(
+-        `extract_documents ${ctx.companyId}: a group of ${members.length} failed: ${(err as Error).message}`,
++        `extract_documents ${ctx.companyId}: a group of ${members.length} failed: ${describeRunError(err)}`,
+       );
+-      return { ok: false, members };
++      return { ok: false, members, operatorNeeded: needsOperator(providerRefusal(err)) };
+     } finally {
+       await triaged;
+     }
+diff --git a/src/documents/indexer-run.service.ts b/src/documents/indexer-run.service.ts
+index fb5e935d..c407b04d 100644
+--- a/src/documents/indexer-run.service.ts
++++ b/src/documents/indexer-run.service.ts
+@@ -17,6 +17,7 @@ import { CandidateStoreService } from './candidate-store.service';
+ import type { DocumentChunk } from './chunker';
+ import type { StoredDocument } from './document-store.service';
+ import { renderGroup, splitGroupResult, type GroupDoc } from './extraction-group';
++import { describeRunError } from '../ai/provider-refusal';
+ 
+ export interface IndexerRunResult {
+   runId: string;
+@@ -291,7 +292,7 @@ export class IndexerRunService {
+           .finalizeRun(p.companyId, {
+             runId,
+             status: 'failed',
+-            error: { message: (err as Error).message },
++            error: { message: describeRunError(err) },
+           })
+           .catch(() => undefined);
+         this.metrics?.countIndexerRun('failed');
+@@ -414,7 +415,7 @@ export class IndexerRunService {
+         .finalizeRun(spec.companyId, {
+           runId: run.runId,
+           status: 'failed',
+-          error: { message: (err as Error).message },
++          error: { message: describeRunError(err) },
+         })
+         .catch(() => undefined);
+       this.metrics?.countIndexerRun('failed');
+diff --git a/test/document-retry.e2e-spec.ts b/test/document-retry.e2e-spec.ts
+index e08d42e2..8fc50f6e 100644
+--- a/test/document-retry.e2e-spec.ts
++++ b/test/document-retry.e2e-spec.ts
+@@ -480,6 +480,30 @@ describe('failed document retry (e2e)', () => {
+     expect(await indexJobs(userDoc)).toHaveLength(0);
+   });
+ 
++  it('tells a reader that the provider refused a run, without the error text', async () => {
++    const docId = await makeDoc();
++    const run = await candidates.createRun(f.companyId, {
++      docId,
++      packId: GENERAL_INDEXER_ID,
++      packVersion: GENERAL_INDEXER_VERSION,
++    });
++    await candidates.finalizeRun(f.companyId, {
++      runId: run.runId,
++      status: 'failed',
++      error: { message: 'model provider refused the request (provider_refusal=billing)' },
++    });
++
++    const response = await f.http
++      .get('/v1/documents/' + encodeURIComponent(docId))
++      .set(auth(f.apiKey));
++
++    expect(response.status).toBe(200);
++    expect(response.body.runs).toEqual([
++      expect.objectContaining({ status: 'failed', providerRefusal: 'billing' }),
++    ]);
++    expect(response.body.runs[0]).not.toHaveProperty('error');
++  });
++
+   it('allows different retry keys to race while the run-ledger CAS admits one worker', async () => {
+     const docId = await makeDoc();
+     await seedRun(docId, {
+diff --git a/test/provider-refusal.unit-spec.ts b/test/provider-refusal.unit-spec.ts
+new file mode 100644
+index 00000000..2bf2c355
+--- /dev/null
++++ b/test/provider-refusal.unit-spec.ts
+@@ -0,0 +1,154 @@
++/**
++ * A provider that refuses the account (no credit, bad key) must not be asked
++ * again for every failed document, and the refusal must reach the failed run
++ * in a form a caller can classify.
++ */
++import { ExtractorService } from '../src/ai/extractor.service';
++import { ExtractorRunnerService } from '../src/ai/extractor-runner.service';
++import { ExtractorLlmService } from '../src/ai/extractor-llm.service';
++import { ExtractorLocalService } from '../src/ai/extractor-local.service';
++import { ExtractorRefineService } from '../src/ai/extractor-refine.service';
++import { describeRunError, needsOperator, providerRefusal } from '../src/ai/provider-refusal';
++import { ExtractionBatchService } from '../src/documents/extraction-batch.service';
++
++const apiError = (status: number, extra: Record<string, unknown> = {}) =>
++  Object.assign(new Error(`${status} refused: account detail`), { status, ...extra });
++
++describe('providerRefusal', () => {
++  it.each([
++    [apiError(402), 'billing'],
++    [apiError(429, { code: 'insufficient_quota' }), 'billing'],
++    [apiError(429), 'rate_limit'],
++    [apiError(401), 'auth'],
++    [apiError(403), 'auth'],
++    [apiError(503), 'outage'],
++    [apiError(400), undefined],
++    [new Error('incomplete extraction: model response did not finish'), undefined],
++  ])('classifies %s', (err, expected) => {
++    expect(providerRefusal(err)).toBe(expected);
++  });
++
++  it('records a refusal as a marker without the provider message', () => {
++    expect(describeRunError(apiError(402))).toBe(
++      'model provider refused the request (provider_refusal=billing)',
++    );
++    expect(describeRunError(new Error('plain failure'))).toBe('plain failure');
++    expect(needsOperator('billing')).toBe(true);
++    expect(needsOperator('auth')).toBe(true);
++    expect(needsOperator('rate_limit')).toBe(false);
++    expect(needsOperator('outage')).toBe(false);
++  });
++});
++
++function mkExtractor(failure: () => Error): { svc: ExtractorService; calls: () => number } {
++  const config = {
++    get: (k: string, def?: string) =>
++      (
++        ({
++          EXTRACTOR_SC_PASSES: '3',
++          OPENAI_CHAT_MODEL: 'gpt-test',
++          OPENAI_API_KEY: 'sk-test-stub',
++          OPENAI_CONCURRENCY: '8',
++        }) as Record<string, string>
++      )[k] ?? def,
++    getOrThrow: () => 'sk-test-stub',
++  } as never;
++  const registry = { getSnapshot: async () => ({ versionHash: 'h', active: [] }) } as never;
++  const cache = { computeKey: () => 'k', get: () => undefined, set: () => {} } as never;
++  const ner = { isEnabled: () => false, extract: async () => [] } as never;
++  const patterns = { lookup: async () => undefined, record: async () => {} } as never;
++  const llm = new ExtractorLlmService(config);
++  let calls = 0;
++  (llm as unknown as { callLlm: () => Promise<never> }).callLlm = async () => {
++    calls += 1;
++    throw failure();
++  };
++  const local = new ExtractorLocalService(ner, patterns);
++  (local as unknown as { trySkip: () => Promise<null> }).trySkip = async () => null;
++  const refine = new ExtractorRefineService(registry, {
++    selectForExtraction: async () => null,
++  } as never);
++  const runner = new ExtractorRunnerService(llm, local, refine);
++  return { svc: new ExtractorService(cache, registry, runner), calls: () => calls };
++}
++
++describe('extraction when every pass is refused', () => {
++  it('hands the queued reader the refusal with its status', async () => {
++    const h = mkExtractor(() => apiError(402));
++    await expect(h.svc.extractBackground({ text: 'hello', companyId: 'co' })).rejects.toMatchObject(
++      { status: 402 },
++    );
++    expect(h.calls()).toBe(3);
++  });
++
++  it('fails the request path as incomplete and names the refusal', async () => {
++    // A queued retry reads through this path; its run must keep the class.
++    const h = mkExtractor(() => apiError(402));
++    const err = await h.svc.extract('hello', 'co').catch((e: unknown) => e);
++    expect(err).not.toHaveProperty('status');
++    expect(describeRunError(err)).toBe(
++      'incomplete extraction: model provider refused the request (provider_refusal=billing)',
++    );
++  });
++
++  it('still reports other failures as transient', async () => {
++    const h = mkExtractor(() => new Error('model response did not finish'));
++    await expect(h.svc.extractBackground({ text: 'hello', companyId: 'co' })).rejects.toThrow(
++      'transient LLM failure',
++    );
++  });
++});
++
++function batch(failure: () => Error) {
++  const doc = {
++    id: 'source_document:a',
++    occurredAt: new Date(Date.UTC(2026, 8, 26)),
++    chunkCount: 1,
++    meta: {},
++    status: 'indexing',
++  };
++  const enqueued: Array<{ dedupKey: string }> = [];
++  let listed = false;
++  const pass = new ExtractionBatchService(
++    {
++      getById: async () => doc,
++      getChunks: async () => [{ seq: 0, text: 'x', charStart: 0, charEnd: 1 }],
++      setStatus: async () => undefined,
++    } as never,
++    {
++      listAwaitingRuns: async () => {
++        if (listed) return [];
++        listed = true;
++        return [{ docId: doc.id, arrivedAt: new Date(0) }];
++      },
++    } as never,
++    {
++      runGeneral: async () => {
++        throw failure();
++      },
++    } as never,
++    { commitIfRunsSettled: async () => ({ committed: false, deferred: true }) } as never,
++    undefined,
++    {
++      register: () => undefined,
++      enqueue: async (e: { dedupKey: string }) => {
++        enqueued.push(e);
++      },
++    } as never,
++  );
++  return { pass, enqueued };
++}
++
++describe('extraction batch retries', () => {
++  it('schedules no retry pass when the provider refuses the account', async () => {
++    const h = batch(() => apiError(402));
++    expect(await h.pass.runPass('co', { force: true })).toMatchObject({ failed: 1 });
++    expect(h.enqueued).toHaveLength(0);
++  });
++
++  it('keeps the backed-off retry for a transient failure', async () => {
++    const h = batch(() => new Error('extraction produced no usable response'));
++    expect(await h.pass.runPass('co', { force: true })).toMatchObject({ failed: 1 });
++    expect(h.enqueued.map((e) => e.dedupKey)).toEqual([expect.stringMatching(/^xdoc_r1_/)]);
++  });
++});
