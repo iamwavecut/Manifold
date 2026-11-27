@@ -9,7 +9,7 @@ on 2026-11-27. It is a dated snapshot.
 
 | Surface | Baseline | Selected | Compatibility evidence |
 | --- | --- | --- | --- |
-| INITE Brain | `main` at `a567f69` (v2.3.0 plus 39 commits) | v2.11.0, source `6ba986054a546c71c93c39e0e118e0f3dddc983f` | [Compare](https://github.com/inite-ai/inite-brain-service/compare/a567f69...v2.11.0). [Adapter and patch contracts](brain-patch.md). Adapter routes are unchanged. Upstream migrations 0168-0199 and Manifold's 9001-9003 are one-way. The image freezes upstream's flag defaults at the previous values. |
+| INITE Brain | `main` at `a567f69` (v2.3.0 plus 39 commits) | v2.11.0, source `6ba986054a546c71c93c39e0e118e0f3dddc983f` | [Compare](https://github.com/inite-ai/inite-brain-service/compare/a567f69...v2.11.0). [Adapter and patch contracts](brain-patch.md). Adapter routes are unchanged. Upstream migrations 0168-0199 and Manifold's 9001-9004 are one-way. The image freezes upstream's flag defaults at the previous values. |
 | SurrealDB | v3.3.0, image digest `sha256:681c6c22c287421b5c7d99e0fde79b6e0d32c36c1ddeaab2762a1661cb04cd20` | v3.3.5, image digest `sha256:3db515b88e79737aa828c05fbf1515748004ba57495ff89a013851cc3f1ad4b9` | [Release notes](https://surrealdb.com/releases/3.3). Security and stability patches within 3.3 (2026-11-27); same storage line, so that change kept `DATA_VERSION` 4. Its planner scans whole tables for `userId IS NONE` and for array `CONTAINS` on unindexed elements; see the performance patches in [brain-patch.md](brain-patch.md). |
 
 Brain builds on Node 24 (upstream's `node:24-slim` digest) with the upstream

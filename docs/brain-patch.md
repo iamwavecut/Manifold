@@ -202,6 +202,14 @@ apply:
   their source. Manifold never reads derived summaries. Restore the event with
   0089's definition to get write-time marking back at the cost of one table
   pass per superseded fact. The patch also skips the event's e2e spec.
+- [`derived-version-index.patch`](../deploy/brain/derived-version-index.patch)
+  is migration 9004 plus a source guard test. It removes
+  `fact_derived_version_idx` (0074), which serves derived worlds. Without them
+  `derivedVersion IS NONE` matches every fact, and SurrealDB 3.3 still chose
+  this index for entity reads: after the v2.11.0 upgrade one entity's candidate
+  read took 39 s on 51,000 facts, against 1.3 s through `fact_entity_idx`, and
+  hybrid search had a 12 s median. A deployment that builds derived worlds
+  should re-create the index.
 - [`ledger-release.patch`](../deploy/brain/ledger-release.patch) releases the
   migration ids that earlier Manifold builds used for their own files.
   `0168_resolve_fact_entity_index`, `0169_selective_entity_fact_indexes`, and

@@ -24,7 +24,7 @@ Production, before any change (27 jobs since 2026-10-12): 79-662 s, median
 language-model provider, the CPU, and the disk were not the limit. SurrealDB
 3.3.0 planned Brain's graph queries as scans of whole tables (the migration
 numbers below are those of that release; since Brain v2.11.0 these fixes are
-migrations 9001–9003, and upstream covers the two HNSW patches named later):
+migrations 9001–9004, and upstream covers the two HNSW patches named later):
 
 | Pattern | Why it scans | Fix |
 | --- | --- | --- |

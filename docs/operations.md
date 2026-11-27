@@ -293,10 +293,14 @@ On the first start:
 - Earlier Manifold builds recorded their own migrations as 0168–0170. The
   migrator deletes those ledger rows by file name
   ([`ledger-release.patch`](brain-patch.md)), then applies upstream's
-  0168–0199 and the local 9001–9003 (the `settle_fact` index hint, removal of
-  the per-user indexes plus element indexes on `aliases` and `nameKeys`, and
-  the `derivedFrom` element index with removal of the `fact_staleness` event).
-  All of them are one-way.
+  0168–0199 and the local 9001–9004 (the `settle_fact` index hint, removal of
+  the per-user indexes plus element indexes on `aliases` and `nameKeys`, the
+  `derivedFrom` element index with removal of the `fact_staleness` event, and
+  removal of `fact_derived_version_idx`). All of them are one-way.
+- Migration 0177 updates facts one subquery at a time: on 51,000 facts it ran
+  for about 15 minutes. Brain reports `unhealthy` meanwhile and
+  `docker compose up --wait` fails; the container is not restarted, so wait for
+  `Nest application successfully started`.
 - Upstream's hourly data migrations (minute 23, UTC) then back-fill edge fields
   in batches of 500 rows per tenant until each `data_migration` row reports
   done. They change stored data.
@@ -324,8 +328,8 @@ additions:
    before any new image opens the volumes.
 4. After the start, check the running commit and component readiness, and that
    Brain's log has no migration or environment validation error.
-   `INFO FOR TABLE knowledge_fact` lists `fact_derived_from_el_idx` and no
-   `fact_user_idx`.
+   `INFO FOR TABLE knowledge_fact` lists `fact_derived_from_el_idx` and
+   neither `fact_user_idx` nor `fact_derived_version_idx`.
 5. Acceptance: write a small synthetic document, wait for `ready`, and confirm
    that the entity and fact counts in `GET /api/v1/status` grew. Update it,
    delete it, and check search and context without `degraded_dependencies`.
