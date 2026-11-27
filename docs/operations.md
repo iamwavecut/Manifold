@@ -304,6 +304,10 @@ On the first start:
 - Upstream's hourly data migrations (minute 23, UTC) then back-fill edge fields
   in batches of 500 rows per tenant until each `data_migration` row reports
   done. They change stored data.
+- Upstream v2.11.0 would read every stored revision again at start, including
+  superseded ones. The image turns that walk off
+  ([`opt-in-boot-reread.patch`](brain-patch.md)); documents keep what the
+  previous Brain read from them.
 - The image keeps the previous flag defaults (`deploy/brain/flags/defaults.env`),
   and Compose sets `DECISIONS_LANES` to an empty string.
 - Brain's nightly sweep (03:45 UTC) now also retries failed runs.

@@ -235,6 +235,17 @@ apply:
   name as before. Set `INGEST_SAME_NAME_CHECK: "1"` on the Brain service in a
   Compose override where two different people with one name matter more than
   facts that change.
+- [`opt-in-boot-reread.patch`](../deploy/brain/opt-in-boot-reread.patch) stops
+  v2.11.0 from re-reading every stored document at start. Upstream enqueues
+  that walk on each boot of a new day after its extraction contract changes.
+  Manifold stores each revision as its own Brain document, so superseded and
+  deleted revisions were read again: their facts replaced older current facts
+  in Brain, and Manifold never shows a fact that its own jobs did not project.
+  The walk now needs `REINDEX_ON_PACK_INSTALL=1`, upstream's opt-in for a
+  backfill after a pack upgrade. Leave it unset, and do not call
+  `POST /v1/admin/documents/reindex` for the general indexer: both read old
+  revisions again. Failed runs are still retried by the nightly sweep. A unit
+  spec covers both settings.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical

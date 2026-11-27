@@ -20,3 +20,4 @@ derived-stale-cascade
 ledger-release
 same-name-check-flag
 derived-version-index
+opt-in-boot-reread
