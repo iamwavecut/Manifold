@@ -31,6 +31,9 @@ COPY --from=source /source/package.json /source/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/dist ./dist
 COPY --from=source /source/packs ./packs
+# The flag defaults of the release Manifold ran before (scripts/brain-flags.py);
+# the environment still wins over this file.
+COPY deploy/brain/flags/defaults.env ./defaults.env
 COPY --chmod=0755 deploy/brain/healthcheck.sh /usr/local/bin/brain-healthcheck
 RUN mkdir -p /app/.cache && chown node:node /app/.cache
 ENV NODE_ENV=production \
@@ -39,4 +42,4 @@ ENV NODE_ENV=production \
     XDG_CACHE_HOME=/app/.cache
 EXPOSE 3000
 USER node
-CMD ["node", "dist/main.js"]
+CMD ["node", "--env-file=/app/defaults.env", "dist/main.js"]
