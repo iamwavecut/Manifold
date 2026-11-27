@@ -45,5 +45,6 @@ services:
   manifold:
     environment:
       MANIFOLD_PUBLIC_URL: http://127.0.0.1:${MANIFOLD_PORT:-18080}
-      MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: 3m
+      # The convergence phase shortens it to give up on a held extraction.
+      MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: ${MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT:-3m}
       MANIFOLD_PROVIDER_RETRY_INTERVAL: 5s

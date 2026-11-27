@@ -18,3 +18,4 @@ settle-fact-entity-index
 selective-entity-fact-indexes
 derived-stale-cascade
 ledger-release
+same-name-check-flag

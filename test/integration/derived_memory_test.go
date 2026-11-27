@@ -21,10 +21,15 @@ func TestDocumentExtractionProducesCanonicalGraph(t *testing.T) {
 	const id = "integration-derived-memory"
 	const first = "Mira Chen works at Meridian Labs."
 	const second = "Mira Chen works at Borealis Labs."
+	before := graphCounts(t, ctx, c)
 	created := c.expectStatus(t, ctx, http.MethodPost, "/api/v1/documents", map[string]any{
 		"id": id, "folder_path": "integration-derived/graph-proof", "title": "Derived graph proof", "format": "markdown", "content": first,
 	}, "derived-create", "", http.StatusAccepted)
 	waitForJob(t, ctx, c, nestedStringField(t, created.Body, "job", "id"), "ready")
+	// A ready document has been extracted, not only stored.
+	if after := graphCounts(t, ctx, c); after.Facts <= before.Facts || after.Entities <= before.Entities {
+		t.Fatalf("ready document added no graph: %+v then %+v", before, after)
+	}
 
 	entities := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/entities?query=Mira", nil, "", "", http.StatusOK)
 	var entityID string

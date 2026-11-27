@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -29,12 +31,14 @@ func main() {
 	mux.HandleFunc("/v1/embeddings", embeddings)
 	mux.HandleFunc("/v1/chat/completions", chatCompletion)
 	mux.HandleFunc("/control/refuse", controlRefusal)
+	mux.HandleFunc("/control/hold", controlHold)
 	server := &http.Server{
 		Addr:              ":8081",
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		// A held extraction answers only after its release.
+		WriteTimeout: 10 * time.Minute,
 	}
 	log.Printf("deterministic provider listening on %s", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -57,6 +61,46 @@ func controlRefusal(w http.ResponseWriter, r *http.Request) {
 	}
 	refusal.Store(request.Status)
 	writeJSON(w, request)
+}
+
+// hold, when set, keeps extraction requests unanswered until the release
+// closes it. The integration run uses it to keep Brain busy with a document.
+var (
+	holdMu sync.Mutex
+	hold   chan struct{}
+)
+
+func controlHold(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Hold bool `json:"hold"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, `{"error":{"message":"invalid JSON"}}`, http.StatusBadRequest)
+		return
+	}
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	switch {
+	case request.Hold && hold == nil:
+		hold = make(chan struct{})
+	case !request.Hold && hold != nil:
+		close(hold)
+		hold = nil
+	}
+	writeJSON(w, request)
+}
+
+func waitWhileHeld(ctx context.Context) {
+	holdMu.Lock()
+	held := hold
+	holdMu.Unlock()
+	if held == nil {
+		return
+	}
+	select {
+	case <-held:
+	case <-ctx.Done():
+	}
 }
 
 func embeddings(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +150,9 @@ func chatCompletion(w http.ResponseWriter, r *http.Request) {
 	content := any(map[string]any{})
 	if responseFormat, ok := request["response_format"].(map[string]any); ok {
 		if schemaWrapper, ok := responseFormat["json_schema"].(map[string]any); ok {
+			if schemaWrapper["name"] == "extraction" {
+				waitWhileHeld(r.Context())
+			}
 			if status := int(refusal.Load()); status != 0 && schemaWrapper["name"] == "extraction" {
 				http.Error(w, `{"error":{"message":"insufficient credits","code":402}}`, status)
 				return
@@ -140,6 +187,16 @@ func chatCompletion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// employments are the sentences the provider extracts as grounded facts. The
+// convergence phases use their own people, so their facts never conflict.
+var employments = [][2]string{
+	{"Mira Chen", "Meridian Labs"},
+	{"Mira Chen", "Borealis Labs"},
+	{"Mira Chen", "Cobalt Labs"},
+	{"Noor Patel", "Delta Labs"},
+	{"Ines Moreno", "Echo Labs"},
+}
+
 func extractionFixture(request, schema map[string]any) (any, bool) {
 	if schema["name"] != "extraction" {
 		return nil, false
@@ -151,15 +208,16 @@ func extractionFixture(request, schema map[string]any) (any, bool) {
 		if message["role"] != "user" {
 			continue
 		}
-		for _, company := range []string{"Meridian Labs", "Borealis Labs", "Cobalt Labs"} {
-			clause := "Mira Chen works at " + company + "."
+		for _, employment := range employments {
+			person, company := employment[0], employment[1]
+			clause := person + " works at " + company + "."
 			if !strings.Contains(text, clause) {
 				continue
 			}
 			return map[string]any{
 				"clauses": []string{clause},
 				"entities": []map[string]any{
-					{"name": "Mira Chen", "type": "staff", "canonical": nil},
+					{"name": person, "type": "staff", "canonical": nil},
 					{"name": company, "type": "project", "canonical": nil},
 				},
 				"facts": []map[string]any{{"entityIndex": 0, "clauseIndex": 0,

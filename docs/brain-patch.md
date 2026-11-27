@@ -184,7 +184,7 @@ apply:
   or context request. A value that is not a positive integer keeps 10. A unit
   spec reads the route's throttle metadata.
 - [`pool-stall-liveness.patch`](../deploy/brain/pool-stall-liveness.patch)
-  makes `GET /health` answer `503` with `status: "pool_stalled"` when a
+  makes `GET /health` answer `503` with `state: "pool_stalled"` when a
   SurrealDB connection pool has no idle connection and every acquire has timed
   out, without one success, for `SURREALDB_POOL_STALL_MS` (2 minutes by
   default; it must not be shorter than `SURREALDB_ACQUIRE_TIMEOUT_MS`).
@@ -198,6 +198,11 @@ apply:
   A pool that hands released connections to its waiters is busy, not stalled,
   and keeps `/health` green. Unit specs cover the stall, its reset, a
   saturated pool that recovers, the scoped pool, and the `503` body.
+  Brain v2.11.0 ships surrealdb-js 2.2.0, which does reject such a query:
+  tested on 2026-11-27 with a restart and with `SIGKILL` of SurrealDB under a
+  `SLEEP 30s` query, the query failed at once with `CallTerminatedError` and
+  the next query ran after the reconnect. The patch stays for the cases where
+  no close reaches the client, such as a lost network path.
 - [`provider-refusal.patch`](../deploy/brain/provider-refusal.patch) keeps
   the reason when the model provider refuses extraction. Upstream turned a
   failed pass into an empty result, so a run failed with no cause, and treated
@@ -223,6 +228,17 @@ apply:
   the cached list and refreshes it in the background at most every 10 minutes.
   A smaller vocabulary is still recounted after each commit, so a new tenant
   sees its predicates at once. A unit spec covers the stale read.
+- [`same-name-check-flag.patch`](../deploy/brain/same-name-check-flag.patch)
+  adds `INGEST_SAME_NAME_CHECK` around upstream's v2.11.0 check of same-named
+  entities (upstream #821). With the check, a mention whose facts contradict the
+  entity of the same name creates a second entity: a document update from
+  "Mira Chen works at Meridian Labs" to "... Borealis Labs" produced
+  `mira-chen-2` and left the old facts on the first node. Manifold's dedup pass
+  is off, so such a split stays. Upstream's default stays on; the frozen
+  defaults of the image set it to `0`, which reuses the first entity of that
+  name as before. Set `INGEST_SAME_NAME_CHECK: "1"` on the Brain service in a
+  Compose override where two different people with one name matter more than
+  facts that change.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical

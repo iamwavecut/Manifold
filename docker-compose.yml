@@ -129,6 +129,10 @@ services:
       # Brain v2.3 stores every conversational turn verbatim by default.
       # Manifold sends documents, not turns, so keep that store closed.
       EPISODE_SUBSTRATE_ENABLED: "0"
+      # Brain's decision lanes (`triage` among them) can keep a captured
+      # document raw: its run ends `skipped` and nothing is extracted, while
+      # Manifold counts the document as read. Fixed here, not read from .env.
+      DECISIONS_LANES: ""
       # Brain gathers new documents for this many seconds before one
       # extraction pass reads them (upstream default 20). Manifold submits one
       # document per job and waits for it, so the window is dead time.
