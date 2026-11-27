@@ -180,11 +180,13 @@ watchdog reacts to a wedged process rather than to a dependency outage. The
 log of the restarted container contains the watchdog line, and its restart
 count increases; investigate both instead of treating the restart as recovery.
 
-A wedged process includes one whose SurrealDB connection pool leaked. When
-SurrealDB restarts, surrealdb-js reconnects its sockets but never settles the
-queries that were in flight, so their pool leases are never released.
+A wedged process includes one whose SurrealDB connection pool leaked. With
+surrealdb-js 2.0.8 (Brain before v2.11.0), a SurrealDB restart reconnected the
+sockets but never settled the queries that were in flight, so their pool leases
+were never released. surrealdb-js 2.2.0 rejects such queries; a lost network
+path can still leave them waiting.
 `pool-stall-liveness.patch` makes `/health` answer `503` with
-`status: "pool_stalled"` once a pool has had no idle connection and no
+`state: "pool_stalled"` once a pool has had no idle connection and no
 successful acquire for `SURREALDB_POOL_STALL_MS` (2 minutes) while acquires
 time out. The watchdog replaces the process about seven minutes after the
 leak, and Manifold's `status` reports Brain as not ready meanwhile. Brain's log
@@ -277,6 +279,56 @@ docker run --rm -v manifold_surrealdb-data:/data:ro -v "$PWD:/backup" \
   alpine:3.24.2 tar -C /data -cf /backup/surrealdb-data.tar .
 docker compose up -d surrealdb brain
 ```
+
+## Data version 5 migration
+
+This release moves INITE Brain from commit `a567f69` (v2.3.0 plus 39 commits)
+to release v2.11.0. SurrealDB stays at v3.3.5 and OpenViking at v0.5.0.
+`DATA_VERSION=5` stops automatic deployment before the checkout or runtime
+changes. The only rollback is a restore of the cold backup with the old images;
+never start the old Brain on migrated data.
+
+On the first start:
+
+- Earlier Manifold builds recorded their own migrations as 0168–0170. The
+  migrator deletes those ledger rows by file name
+  ([`ledger-release.patch`](brain-patch.md)), then applies upstream's
+  0168–0199 and the local 9001–9003 (the `settle_fact` index hint, removal of
+  the per-user indexes plus element indexes on `aliases` and `nameKeys`, and
+  the `derivedFrom` element index with removal of the `fact_staleness` event).
+  All of them are one-way.
+- Upstream's hourly data migrations (minute 23, UTC) then back-fill edge fields
+  in batches of 500 rows per tenant until each `data_migration` row reports
+  done. They change stored data.
+- The image keeps the previous flag defaults (`deploy/brain/flags/defaults.env`),
+  and Compose sets `DECISIONS_LANES` to an empty string.
+- Brain's nightly sweep (03:45 UTC) now also retries failed runs.
+- `docker-compose.yml` changed, so the fingerprint of the deployment runtime
+  profile changes. Review the profile, add the new Brain environment, and
+  update the fingerprint before the new commit reaches the host.
+
+Follow steps 1–3 of the
+[data version 2 procedure](#brain-v2--data-version-2-migration), with these
+additions:
+
+1. Rehearse on a copy of the data first, without a provider network: every
+   tenant database applies all migrations, a second start applies none, the
+   counts of facts, entities, and edges do not drop, the hourly data migrations
+   report done, and `EXPLAIN` of the `settle_fact` candidate query uses
+   `fact_entity_idx`.
+2. Before stopping services, confirm that no indexing job is active and that
+   the model provider account has credit.
+3. Take the cold backup of all four volumes and verify the archive hashes
+   before any new image opens the volumes.
+4. After the start, check the running commit and component readiness, and that
+   Brain's log has no migration or environment validation error.
+   `INFO FOR TABLE knowledge_fact` lists `fact_derived_from_el_idx` and no
+   `fact_user_idx`.
+5. Acceptance: write a small synthetic document, wait for `ready`, and confirm
+   that the entity and fact counts in `GET /api/v1/status` grew. Update it,
+   delete it, and check search and context without `degraded_dependencies`.
+6. Watch the next 03:45 UTC sweep and one day of provider token spend, and
+   compare them with the week before.
 
 ## Data version 4 migration
 
