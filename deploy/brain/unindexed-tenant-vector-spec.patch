@@ -1,0 +1,30 @@
+diff --git a/test/hnsw.e2e-spec.ts b/test/hnsw.e2e-spec.ts
+index 2c606c77..51789330 100644
+--- a/test/hnsw.e2e-spec.ts
++++ b/test/hnsw.e2e-spec.ts
+@@ -30,8 +30,11 @@ describe('HNSW vector leg (real SurrealDB)', () => {
+     if (f) await f.close();
+   });
+ 
+-  const search = async (query: string) => {
+-    const r = await f.http.post('/v1/search').set(auth()).send({ query, limit: 5 });
++  const search = async (query: string, searchMode?: 'vector') => {
++    const r = await f.http
++      .post('/v1/search')
++      .set(auth())
++      .send({ query, limit: 5, ...(searchMode ? { searchMode } : {}) });
+     expect(r.status).toBe(201);
+     return r.body.results as Array<{ canonicalName: string }>;
+   };
+@@ -52,7 +55,11 @@ describe('HNSW vector leg (real SurrealDB)', () => {
+ 
+     process.env.SEARCH_HNSW_ENABLED = '1';
+     const results = await search('HNSW Probe Tenant');
++    // The vector leg alone, so a lexical hit cannot hide an empty KNN leg:
++    // SurrealDB 3.3 answers an un-indexed KNN with no rows at all.
++    const vectorResults = await search('HNSW Probe Tenant', 'vector');
+     process.env.SEARCH_HNSW_ENABLED = '0';
++    expect(vectorResults[0]?.canonicalName).toBe('HNSW Probe Tenant');
+     expect(results.length).toBeGreaterThan(0);
+     // Named by its `name` fact (entity-name.ts) — 'HNSW Probe Tenant' — the
+     // reference id stays among the aliases.

@@ -1,0 +1,89 @@
+diff --git a/src/admin/config-catalog/02-calibration-scenes.ts b/src/admin/config-catalog/02-calibration-scenes.ts
+index 2fcaac8a..6506ea1d 100644
+--- a/src/admin/config-catalog/02-calibration-scenes.ts
++++ b/src/admin/config-catalog/02-calibration-scenes.ts
+@@ -536,6 +536,16 @@ export const CATALOG_PART_02: ConfigCatalogSpec[] = [
+   },
+   // ── Multilingual (Tier 5) ───────────
+ 
++  {
++    key: 'INGEST_SAME_NAME_CHECK',
++    category: 'pipeline',
++    // Read per-call in EntityUpsertService (process.env).
++    defaultValue: '1',
++    runtimeMutable: true,
++    isBooleanFlag: true,
++    description:
++      'Before the exact-name and transliteration rungs reuse an entity, check that the mention\'s facts do not contradict it (#815). Off → the first entity with the same name is reused, whatever the facts say.',
++  },
+   {
+     key: 'INGEST_CONFUSABLES_CHECK',
+     category: 'pipeline',
+diff --git a/src/common/known-boolean-flags.ts b/src/common/known-boolean-flags.ts
+index 7f921042..9f5115e2 100644
+--- a/src/common/known-boolean-flags.ts
++++ b/src/common/known-boolean-flags.ts
+@@ -252,6 +252,8 @@ export const KNOWN_BOOLEAN_FLAGS = [
+   // off = byte-identical (no skeleton computed). ENGINE (INGEST_) prefix, so
+   // this one IS on the flag budget golden (a deliberate owner decision).
+   'INGEST_CONFUSABLES_CHECK',
++  // Same-name contradiction check (#815); off reuses by name alone.
++  'INGEST_SAME_NAME_CHECK',
+   // Code-identifier alias resolution (k10 battery finding): a module
+   // mentioned by file path and by the symbol it defines resolves to ONE
+   // entity — the path↔symbol mapping is derived deterministically (no
+diff --git a/src/ingest/entity-upsert.service.ts b/src/ingest/entity-upsert.service.ts
+index 731322b5..989b3e27 100644
+--- a/src/ingest/entity-upsert.service.ts
++++ b/src/ingest/entity-upsert.service.ts
+@@ -541,7 +541,12 @@ export class EntityUpsertService {
+       entityId: String(r.id),
+       canonicalName: r.canonicalName,
+     }));
+-    if (!this.entityResolver) return candidates[0]?.entityId ?? null;
++    // INGEST_SAME_NAME_CHECK=0 keeps a shared name as the identity: for a
++    // memory whose facts change over time, a changed employer is the same
++    // person, and a split would stay split without the dedup pass.
++    if (!this.entityResolver || !envFlagNotDisabled(process.env.INGEST_SAME_NAME_CHECK)) {
++      return candidates[0]?.entityId ?? null;
++    }
+     const outcome = await this.entityResolver.confirmSameName({
+       db,
+       name: e.canonical ?? e.name,
+diff --git a/test/golden/engine-behavior-flags.golden.json b/test/golden/engine-behavior-flags.golden.json
+index d42278d7..e4b0048c 100644
+--- a/test/golden/engine-behavior-flags.golden.json
++++ b/test/golden/engine-behavior-flags.golden.json
+@@ -34,6 +34,7 @@
+   "INGEST_EPISODE_ONLY",
+   "INGEST_EVENT_TIME_EXTRACTION",
+   "INGEST_MENTION_VIA_DOCUMENT",
++  "INGEST_SAME_NAME_CHECK",
+   "INGEST_SANITIZE_UNICODE",
+   "MULTI_HOP_EDGE_EXPANSION_ENABLED",
+   "RETRIEVAL_ANSWER_CONDITIONING",
+diff --git a/test/same-name-different-person.unit-spec.ts b/test/same-name-different-person.unit-spec.ts
+index 721f9460..82425bed 100644
+--- a/test/same-name-different-person.unit-spec.ts
++++ b/test/same-name-different-person.unit-spec.ts
+@@ -257,6 +257,20 @@ describe('same name, different person (#815)', () => {
+     expect(judge.judge).not.toHaveBeenCalled();
+   });
+ 
++  it('INGEST_SAME_NAME_CHECK=0 reuses the same-named entity whatever its facts say', async () => {
++    process.env.INGEST_SAME_NAME_CHECK = '0';
++    try {
++      const rows = [vet()];
++      const { resolve, judge, steps } = makeLadder(rows);
++      expect(await resolve('Anna Schmidt', ENGINEER_FACTS)).toBe('knowledge_entity:vet');
++      expect(steps).toEqual(['exact']);
++      expect(rows).toHaveLength(1);
++      expect(judge.judge).not.toHaveBeenCalled();
++    } finally {
++      delete process.env.INGEST_SAME_NAME_CHECK;
++    }
++  });
++
+   it('a personal entity of the same name is never a candidate (scope fence kept)', async () => {
+     const rows = [{ ...vet(), userId: 'u1' }];
+     const { resolve, db, judge } = makeLadder(rows);

@@ -1,8 +1,8 @@
 diff --git a/src/facts/facts.service.ts b/src/facts/facts.service.ts
-index 43d5321..5380513 100644
+index cfa5b237..18d9bb52 100644
 --- a/src/facts/facts.service.ts
 +++ b/src/facts/facts.service.ts
-@@ -963,16 +963,28 @@ export class FactsService {
+@@ -1009,16 +1009,28 @@ export class FactsService {
     */
    private async reviveSupersededBy(db: Surreal, retractedFactId: string): Promise<string[]> {
      const rid = this.normalizeFactId(retractedFactId).id;
@@ -37,7 +37,7 @@ index 43d5321..5380513 100644
            status = 'active',
            retractedAt = NONE,
            retractedBy = NONE,
-@@ -980,11 +992,10 @@ export class FactsService {
+@@ -1026,11 +1038,10 @@ export class FactsService {
            supersededBy = NONE,
            validUntil = priorValidUntil,
            priorValidUntil = NONE

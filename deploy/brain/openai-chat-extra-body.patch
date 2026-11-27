@@ -1,8 +1,8 @@
 diff --git a/src/ai/openai-client.ts b/src/ai/openai-client.ts
-index 0b38fd659..69bad0705 100644
+index 2cdbe060..e40eff8e 100644
 --- a/src/ai/openai-client.ts
 +++ b/src/ai/openai-client.ts
-@@ -39,12 +39,50 @@ export function chatModel(config: ConfigService): string {
+@@ -44,12 +44,50 @@ export function chatModel(config: ConfigService): string {
    return config.get<string>('OPENAI_CHAT_MODEL', DEFAULT_CHAT_MODEL);
  }
  
@@ -54,21 +54,21 @@ index 0b38fd659..69bad0705 100644
      ...(baseURL ? { baseURL } : {}),
    });
 diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
-index acf722c30..3928fab49 100644
+index d8fba795..0ba3f3e7 100644
 --- a/src/common/env-validation.ts
 +++ b/src/common/env-validation.ts
-@@ -4,6 +4,7 @@ import {
+@@ -10,6 +10,7 @@ import {
    validateEvidenceStorageEnv,
    validateOcrEnvValues,
  } from './evidence-flags';
 +import { chatExtraBody } from '../ai/openai-client';
  import { KNOWN_BOOLEAN_FLAGS } from './known-boolean-flags';
  import { isProcessRole, normalizeProcessRole } from './process-role';
- 
-@@ -33,6 +34,11 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
-   // planner all build an OpenAI client eagerly in their constructors, so a
-   // key-less boot fails there instead of here.
-   required({ env, name: 'OPENAI_API_KEY', errors });
+ import { serverModelsRefused } from './model-source';
+@@ -57,6 +58,11 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
+   } else {
+     required({ env, name: 'OPENAI_API_KEY', errors });
+   }
 +  try {
 +    chatExtraBody(env.OPENAI_CHAT_EXTRA_BODY);
 +  } catch (e) {
@@ -79,7 +79,7 @@ index acf722c30..3928fab49 100644
    // BRAIN_API_KEYS is required, but [] is acceptable in dev (no callers).
 diff --git a/test/openai-chat-extra-body.unit-spec.ts b/test/openai-chat-extra-body.unit-spec.ts
 new file mode 100644
-index 000000000..454adae3b
+index 00000000..454adae3
 --- /dev/null
 +++ b/test/openai-chat-extra-body.unit-spec.ts
 @@ -0,0 +1,82 @@

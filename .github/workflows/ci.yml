@@ -63,52 +63,18 @@ jobs:
           python-version: "3.14.8"
       - run: python3 scripts/test-deploy-production.py
       - run: python3 scripts/test-geta-release-request.py
+      - run: python3 scripts/test-brain-flags.py
       - run: git init -q /tmp/brain
       - run: git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
-      - run: git -C /tmp/brain fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
+      - run: git -C /tmp/brain fetch -q --depth 1 origin 6ba986054a546c71c93c39e0e118e0f3dddc983f
       - run: git -C /tmp/brain checkout -q FETCH_HEAD
-      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/openai-api-key-format.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/openai-api-key-format.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/document-origin-identity.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/document-origin-identity.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/worker-startup-order.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/worker-startup-order.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/corroborated-commit-ref.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/failed-run-retry.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/extraction-completion.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/fatal-signal-default.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/fatal-signal-default.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/openai-chat-extra-body.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/openai-chat-extra-body.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/entity-fact-read-index-hints.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/entity-fact-read-index-hints.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/resolve-fact-entity-index.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/resolve-fact-entity-index.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/selective-entity-fact-indexes.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/selective-entity-fact-indexes.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/derived-stale-cascade.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/derived-stale-cascade.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/edge-retraction.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/edge-retraction.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/revive-superseded-index.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/revive-superseded-index.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/knn-empty-result-fallback.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/knn-empty-result-fallback.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/hnsw-provision-early-tenants.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/hnsw-provision-early-tenants.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/search-throttle-limit.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/search-throttle-limit.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/pool-stall-liveness.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/pool-stall-liveness.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/provider-refusal.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/provider-refusal.patch"
-      - run: git -C /tmp/brain apply --check "$GITHUB_WORKSPACE/deploy/brain/predicate-vocabulary-refresh.patch"
-      - run: git -C /tmp/brain apply "$GITHUB_WORKSPACE/deploy/brain/predicate-vocabulary-refresh.patch"
+      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = 6ba986054a546c71c93c39e0e118e0f3dddc983f
+      - run: scripts/brain-apply-patches.sh /tmp/brain
       - run: git -C /tmp/brain diff --check
+      # The image pins Brain's previous flag defaults; a changed catalog needs new pins.
+      - run: docker build --target builder -t brain-builder -f deploy/brain/Dockerfile .
+      - run: scripts/brain-catalog.sh brain-builder > /tmp/brain-catalog.json
+      - run: python3 scripts/brain-flags.py --check --baseline deploy/brain/flags/baseline.json --current /tmp/brain-catalog.json --adopt deploy/brain/flags/adopt.txt --out deploy/brain/flags/defaults.env
 
   integration:
     runs-on: ubuntu-latest

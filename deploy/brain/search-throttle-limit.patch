@@ -1,8 +1,8 @@
-diff --git a/src/admin/config-catalog.data.ts b/src/admin/config-catalog.data.ts
-index e4303d2..f3cb188 100644
---- a/src/admin/config-catalog.data.ts
-+++ b/src/admin/config-catalog.data.ts
-@@ -1257,6 +1257,13 @@ export const CONFIG_CATALOG: ConfigCatalogSpec[] = [
+diff --git a/src/admin/config-catalog/03-platform.ts b/src/admin/config-catalog/03-platform.ts
+index b33cc409..c5ebaf72 100644
+--- a/src/admin/config-catalog/03-platform.ts
++++ b/src/admin/config-catalog/03-platform.ts
+@@ -60,6 +60,13 @@ export const CATALOG_PART_03: ConfigCatalogSpec[] = [
      runtimeMutable: false,
      isBooleanFlag: false,
    },
@@ -16,39 +16,44 @@ index e4303d2..f3cb188 100644
    // ── Jobs / trace persistence ────────────────────────
    {
      key: 'JOB_RUN_PERSIST',
-diff --git a/src/search/search.controller.ts b/src/search/search.controller.ts
-index 342f3fa..b919433 100644
---- a/src/search/search.controller.ts
-+++ b/src/search/search.controller.ts
-@@ -6,6 +6,16 @@ import { SearchService } from './search.service';
- import { SearchDto } from './dto/search.dto';
- import { AuthenticatedRequest } from '../auth/api-key.types';
- 
+diff --git a/src/common/search-throttle-limit.ts b/src/common/search-throttle-limit.ts
+new file mode 100644
+index 00000000..8f5bbe14
+--- /dev/null
++++ b/src/common/search-throttle-limit.ts
+@@ -0,0 +1,9 @@
 +/**
 + * Searches per credential and minute. A deployment whose one credential
 + * serves every agent raises it with THROTTLE_SEARCH_LIMIT; anything but a
 + * positive integer keeps the upstream 10.
 + */
-+function searchLimit(): number {
++export function searchThrottleLimit(): number {
 +  const raw = Number.parseInt(process.env.THROTTLE_SEARCH_LIMIT ?? '', 10);
 +  return Number.isInteger(raw) && raw > 0 ? raw : 10;
 +}
-+
- @Controller('v1/search')
- @UseGuards(ApiKeyGuard)
- export class SearchController {
-@@ -16,7 +26,7 @@ export class SearchController {
+diff --git a/src/search/search.controller.ts b/src/search/search.controller.ts
+index 342f3fab..9c915f07 100644
+--- a/src/search/search.controller.ts
++++ b/src/search/search.controller.ts
+@@ -1,5 +1,6 @@
+ import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+ import { Throttle } from '@nestjs/throttler';
++import { searchThrottleLimit } from '../common/search-throttle-limit';
+ import { ApiKeyGuard, RequireScopes } from '../auth/api-key.guard';
+ import { PolicyAction } from '../policy/action-registry';
+ import { SearchService } from './search.service';
+@@ -16,7 +17,7 @@ export class SearchController {
    // per-credential `expensive` bucket like synthesize/multi-hop so one
    // compromised tenant can't drain the token budget at the 120/min
    // default rate. See app.module.ts throttler config.
 -  @Throttle({ expensive: { limit: 10, ttl: 60_000 } })
-+  @Throttle({ expensive: { limit: searchLimit, ttl: 60_000 } })
++  @Throttle({ expensive: { limit: searchThrottleLimit, ttl: 60_000 } })
    @Post()
    @RequireScopes('brain:read')
    @PolicyAction('search_knowledge')
 diff --git a/test/search-throttle-limit.unit-spec.ts b/test/search-throttle-limit.unit-spec.ts
 new file mode 100644
-index 0000000..8bd024e
+index 00000000..8bd024ea
 --- /dev/null
 +++ b/test/search-throttle-limit.unit-spec.ts
 @@ -0,0 +1,35 @@

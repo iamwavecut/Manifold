@@ -147,6 +147,97 @@ done
 rm -f "$state_file"
 state_file=
 
+# Brain's search above proves the tenant database exists.
+surreal_query() {
+	printf '%s\n' "$1" |
+		compose exec -T surrealdb /surreal sql --endpoint http://127.0.0.1:8000 \
+			--user root --pass "$surreal_pass" --ns manifold --db co_manifold --hide-welcome --json 2>/dev/null
+}
+# Every document Manifold sent was read: a generalist run kept raw would end
+# `skipped` while the document still reached ready.
+runs=$(surreal_query "SELECT status, count() FROM indexer_run WHERE packId = '_general' GROUP BY status;")
+case "$runs" in
+	*'"skipped"'*)
+		echo "Brain skipped a generalist run: $runs" >&2
+		exit 1
+		;;
+	*'"succeeded"'*) ;;
+	*)
+		echo "Brain recorded no succeeded generalist run: $runs" >&2
+		exit 1
+		;;
+esac
+
+provider_hold() {
+	compose exec -T provider wget -qO- --header "Content-Type: application/json" \
+		--post-data "{\"hold\":$1}" http://127.0.0.1:8081/control/hold >/dev/null
+}
+run_phase() {
+	MANIFOLD_URL=$url \
+		MANIFOLD_API_KEY=$api_key \
+		MANIFOLD_INTEGRATION_PHASE=$1 \
+		MANIFOLD_INTEGRATION_STATE=$state_file \
+		go test -tags=integration -count=1 -v ./test/integration
+}
+wait_for_manifold() {
+	attempt=0
+	until curl --fail --silent "$url/health" >/dev/null; do
+		attempt=$((attempt + 1))
+		if [ "$attempt" -ge 60 ]; then
+			echo "Manifold did not become healthy" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+}
+wait_for_brain_runs() {
+	attempt=0
+	while :; do
+		open=$(surreal_query "SELECT count() FROM indexer_run WHERE status IN ['pending','running'] GROUP ALL;")
+		case "$open" in
+			*'"count":0}'*) break ;;
+		esac
+		attempt=$((attempt + 1))
+		if [ "$attempt" -ge 120 ]; then
+			echo "Brain runs did not finish: $open" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+}
+
+# Manifold restarts while Brain still reads the document.
+state_file=$(mktemp)
+provider_hold true
+run_phase restart_submit
+compose restart manifold
+wait_for_manifold
+provider_hold false
+run_phase restart_verify
+
+# Manifold gives up waiting, Brain finishes the revision, and the retry
+# converges on it without a second extraction.
+provider_hold true
+export MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT=15s
+compose up --detach --no-deps --wait manifold
+unset MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT
+run_phase finished_retry_submit
+provider_hold false
+wait_for_brain_runs
+compose up --detach --no-deps --wait manifold
+wait_for_manifold
+run_phase finished_retry_verify
+retried_runs=$(surreal_query "SELECT count() FROM indexer_run WHERE docId.originUri = 'manifold://documents/finished-retry@r1' GROUP ALL;")
+case "$retried_runs" in
+	*'"count":1}'*) ;;
+	*)
+		echo "Brain read the retried revision more than once: $retried_runs" >&2
+		exit 1
+		;;
+esac
+rm -f "$state_file"
+state_file=
+
 # Keep Brain running while SurrealDB restarts. Its scoped pool must restore
 # authentication rather than remaining connected as an anonymous session.
 compose restart surrealdb

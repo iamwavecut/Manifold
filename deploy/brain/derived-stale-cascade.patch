@@ -1,8 +1,8 @@
-diff --git a/src/db/migrations/0170_derived_from_element_index.surql b/src/db/migrations/0170_derived_from_element_index.surql
+diff --git a/src/db/migrations/9003_derived_from_element_index.surql b/src/db/migrations/9003_derived_from_element_index.surql
 new file mode 100644
-index 000000000..d48d755a0
+index 00000000..d48d755a
 --- /dev/null
-+++ b/src/db/migrations/0170_derived_from_element_index.surql
++++ b/src/db/migrations/9003_derived_from_element_index.surql
 @@ -0,0 +1,81 @@
 +-- Manifold: serve the derivedFrom closure from an element index.
 +--
@@ -85,9 +85,21 @@ index 000000000..d48d755a0
 +};
 +
 +REMOVE EVENT IF EXISTS fact_staleness ON TABLE knowledge_fact;
+diff --git a/test/golden/migration-checksums.json b/test/golden/migration-checksums.json
+index 47cd8882..720f2929 100644
+--- a/test/golden/migration-checksums.json
++++ b/test/golden/migration-checksums.json
+@@ -197,5 +197,6 @@
+   "0198_episode_turn_unique.surql": "7d2c8fdeaf4461a3cf6a05d0dbe1757d94872efa378996164b56893498cf0256",
+   "0199_tenant_model_source.surql": "e942cbe2f065e117f5fee57ff3a95db241740cf004c3dabcd6028a4185c13d52",
+   "9001_settle_fact_entity_index.surql": "3856185e9aeb6205a1515a231ed5973b0277d717f0e4a32e20db5ce264b263c7",
+-  "9002_selective_entity_fact_indexes.surql": "e618d8a0523da5c727c2abb29ae3edba616a35a844a13d1804252525da3d9da3"
++  "9002_selective_entity_fact_indexes.surql": "e618d8a0523da5c727c2abb29ae3edba616a35a844a13d1804252525da3d9da3",
++  "9003_derived_from_element_index.surql": "6da2f846176da015d2d98bbfa269af575ca8af03ac7753745cd8e03535acf3c5"
+ }
 diff --git a/test/stale-cascade-plans.unit-spec.ts b/test/stale-cascade-plans.unit-spec.ts
 new file mode 100644
-index 000000000..f26d3c51a
+index 00000000..f8544b47
 --- /dev/null
 +++ b/test/stale-cascade-plans.unit-spec.ts
 @@ -0,0 +1,38 @@
@@ -95,14 +107,14 @@ index 000000000..f26d3c51a
 + * Guards for the derivedFrom closure. SurrealDB 3 serves
 + * `derivedFrom CONTAINSANY $parents` from an element index only for a
 + * SELECT issued by a statement; inside a DEFINE EVENT it is a table pass.
-+ * Migration 0170 therefore indexes the elements, finds dependents with a
++ * Migration 9003 therefore indexes the elements, finds dependents with a
 + * SELECT, and removes the write-time event.
 + */
 +import { readFileSync } from 'node:fs';
 +import { join } from 'node:path';
 +
 +const migration = readFileSync(
-+  join(__dirname, '../src/db/migrations/0170_derived_from_element_index.surql'),
++  join(__dirname, '../src/db/migrations/9003_derived_from_element_index.surql'),
 +  'utf8',
 +);
 +
@@ -130,7 +142,7 @@ index 000000000..f26d3c51a
 +  });
 +});
 diff --git a/test/staleness-event.e2e-spec.ts b/test/staleness-event.e2e-spec.ts
-index 0d17c6abd..713d4c4c8 100644
+index 0d17c6ab..56f7ed16 100644
 --- a/test/staleness-event.e2e-spec.ts
 +++ b/test/staleness-event.e2e-spec.ts
 @@ -36,7 +36,10 @@ import { newRunToken, promoteStaging, stagingNamespace } from '../src/admin/deri
@@ -138,10 +150,10 @@ index 0d17c6abd..713d4c4c8 100644
  const ENTITY_ID = 'knowledge_entity:staleness_evt';
  
 -describe('0089 fact_staleness event', () => {
-+// Manifold's migration 0170 removes the event (a table pass per superseded
++// Manifold's migration 9003 removes the event (a table pass per superseded
 +// fact in this deployment); the nightly drain carries the load. The claims
 +// below describe the event and no longer hold on a fully migrated tenant.
-+describe.skip('0089 fact_staleness event (removed by migration 0170)', () => {
++describe.skip('0089 fact_staleness event (removed by migration 9003)', () => {
    let f: AppFixture;
    let surreal: SurrealService;
    const auth = () => ({ Authorization: `Bearer ${f.apiKey}` });

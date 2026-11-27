@@ -1,5 +1,5 @@
 diff --git a/src/common/health.controller.ts b/src/common/health.controller.ts
-index 3efa73b..d8762e3 100644
+index b1b3b9dd..02f2bcc9 100644
 --- a/src/common/health.controller.ts
 +++ b/src/common/health.controller.ts
 @@ -38,6 +38,23 @@ export class HealthController {
@@ -13,7 +13,7 @@ index 3efa73b..d8762e3 100644
 +      // release them, so it is not live: the container healthcheck counts
 +      // this and replaces the process.
 +      throw new ServiceUnavailableException({
-+        status: 'pool_stalled',
++        state: 'pool_stalled',
 +        service: 'inite-brain-service',
 +        version: SERVICE_VERSION,
 +        timestamp: new Date().toISOString(),
@@ -27,7 +27,7 @@ index 3efa73b..d8762e3 100644
        // The balancer health-checks THIS path (traefik loadbalancer
        // healthcheck.path=/health, deliberately not /ready), so a leaving
 diff --git a/src/common/health.service.ts b/src/common/health.service.ts
-index f9f63d3..31fe538 100644
+index f9f63d35..31fe5383 100644
 --- a/src/common/health.service.ts
 +++ b/src/common/health.service.ts
 @@ -130,6 +130,15 @@ export class HealthService {
@@ -47,10 +47,10 @@ index f9f63d3..31fe538 100644
     * Readiness — request-path dependencies warm enough for production
     * traffic: DB reachable, the CALLER-FACING read path still authorized,
 diff --git a/src/db/surreal.service.ts b/src/db/surreal.service.ts
-index 80d2104..f7d9df3 100644
+index bbfe4d60..282f5627 100644
 --- a/src/db/surreal.service.ts
 +++ b/src/db/surreal.service.ts
-@@ -39,6 +39,12 @@ const SESSION_PROBE_TIMEOUT_MS = 3000;
+@@ -50,6 +50,12 @@ const SESSION_PROBE_TIMEOUT_MS = 3000;
   * lock arbitrates on.
   */
  const ADMIN_DATABASE = 'system';
@@ -63,7 +63,7 @@ index 80d2104..f7d9df3 100644
  
  type PoolRole = 'root' | 'scoped';
  
-@@ -98,6 +104,16 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+@@ -109,6 +115,16 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
    private poolSize!: number;
    private scopedPoolSize!: number;
    private acquireTimeoutMs!: number;
@@ -80,7 +80,7 @@ index 80d2104..f7d9df3 100644
    private scopedEnabled = false;
    // Track whether we've already overwritten brain_caller's password
    // this process boot for an existing-tenant case. Migrations only
-@@ -259,6 +275,13 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+@@ -285,6 +301,13 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
      if (!Number.isFinite(this.acquireTimeoutMs) || this.acquireTimeoutMs < 100) {
        throw new Error('SURREALDB_ACQUIRE_TIMEOUT_MS must be >= 100ms');
      }
@@ -93,8 +93,8 @@ index 80d2104..f7d9df3 100644
 +    }
  
      // Cache for re-signin / rebuild on ws drops (see ensureSession).
-     this.rootCreds = { username, password };
-@@ -584,6 +607,24 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+     // SURREALDB_AUTH_LEVEL=namespace: the privileged connection is a
+@@ -628,6 +651,24 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
      };
    }
  
@@ -119,7 +119,7 @@ index 80d2104..f7d9df3 100644
    private acquireRoot(): Promise<Surreal> {
      return this.acquireWithTimeout(this.rootIdle, this.rootWaiters, 'root');
    }
-@@ -643,16 +684,21 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
+@@ -687,16 +728,21 @@ export class SurrealService implements OnModuleInit, OnApplicationShutdown {
      label: 'root' | 'scoped',
    ): Promise<Surreal> {
      const free = idle.shift();
@@ -143,10 +143,18 @@ index 80d2104..f7d9df3 100644
            new Error(
              `Surreal ${label} pool acquire timed out after ${ms}ms (pool=${this.poolSize}, waiters=${waiters.length}). Likely a connection leak — check long-running requests in /admin/now.`,
 diff --git a/test/health-ready.unit-spec.ts b/test/health-ready.unit-spec.ts
-index 3e5a90e..27fe400 100644
+index 64a3b25f..2b66263d 100644
 --- a/test/health-ready.unit-spec.ts
 +++ b/test/health-ready.unit-spec.ts
-@@ -21,11 +21,17 @@ function shuttingDownService(controller: HealthController): HealthService {
+@@ -14,6 +14,7 @@
+ import { HealthController } from '../src/common/health.controller';
+ import { HealthService } from '../src/common/health.service';
+ import { ServiceUnavailableException } from '@nestjs/common';
++import { problemDetails } from '../src/common/all-exceptions.filter';
+ 
+ /** The HealthService the controller was built with — the shutdown flag lives there. */
+ function shuttingDownService(controller: HealthController): HealthService {
+@@ -21,11 +22,17 @@ function shuttingDownService(controller: HealthController): HealthService {
  }
  
  describe('HealthController', () => {
@@ -165,10 +173,10 @@ index 3e5a90e..27fe400 100644
      } as any;
      const embedder = {
        isReady: () => opts.embedderReady,
-@@ -60,6 +66,23 @@ describe('HealthController', () => {
-      * healthcheck.path=/health, deliberately not /ready), so a leaving
-      * replica has to fail THIS path to be drained.
-      */
+@@ -55,6 +62,30 @@ describe('HealthController', () => {
+       expect(res.status).toBe('ok');
+     });
+ 
 +    /**
 +     * Manifold 2026-11-21: SurrealDB was OOM-killed with eight root queries
 +     * in flight. surrealdb-js never rejected them, the root pool stayed
@@ -180,18 +188,25 @@ index 3e5a90e..27fe400 100644
 +        .health()
 +        .catch((e: ServiceUnavailableException) => e);
 +      expect(err).toBeInstanceOf(ServiceUnavailableException);
-+      expect((err as ServiceUnavailableException).getResponse()).toMatchObject({
-+        status: 'pool_stalled',
++      // `state`, not `status`: the 503 is rendered as problem details whose
++      // `status` member is the HTTP code.
++      const body = problemDetails(
++        503,
++        (err as ServiceUnavailableException).getResponse() as Record<string, unknown>,
++        { instance: '/health', requestId: 'req-1' },
++      );
++      expect(body).toMatchObject({
++        state: 'pool_stalled',
 +        checks: { surrealdb: 'ok', rootPool: 'stalled', scopedPool: 'stalled' },
 +      });
 +    });
 +
-     it('answers 503 with status shutting_down once shutdown begins', async () => {
-       const controller = mk({ db: true, embedderReady: true });
-       await expect(controller.health()).resolves.toMatchObject({ status: 'ok' });
+     /**
+      * Traefik load-balances on /health (deploy-brain.yml sets
+      * healthcheck.path=/health, deliberately not /ready), so a leaving
 diff --git a/test/surreal-pool-stall.unit-spec.ts b/test/surreal-pool-stall.unit-spec.ts
 new file mode 100644
-index 0000000..ddeea15
+index 00000000..ddeea15c
 --- /dev/null
 +++ b/test/surreal-pool-stall.unit-spec.ts
 @@ -0,0 +1,95 @@

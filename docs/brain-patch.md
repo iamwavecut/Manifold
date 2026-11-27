@@ -1,19 +1,27 @@
 # INITE Brain integration
 
-Manifold builds INITE Brain from upstream commit
-`a567f6960c031b916549699fec7b89423c650d1e`: `main` after v2.3.0 (39 later commits, the last
-on 2026-09-26). Brain has published no release since v2.3.0. `main` adds the
-batched entity judge for document commits (#705) and migrations 0161-0167;
-they are one-way, like every Brain migration. The exact ref, base-image digests, and patch application
-order live in [`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile). The build
-uses Node 22 LTS, the major line of upstream's Dockerfile, and an Alpine
-source stage pinned by digest.
+Manifold builds INITE Brain from release v2.11.0, commit
+`6ba986054a546c71c93c39e0e118e0f3dddc983f`. The exact ref and base-image digests
+live in [`deploy/brain/Dockerfile`](../deploy/brain/Dockerfile); the patch
+application order lives in [`deploy/brain/series`](../deploy/brain/series). The
+build uses Node 24, upstream's base-image digest, and an Alpine source stage
+pinned by digest. The runtime image also carries upstream's `packs/` directory.
 
-The downstream patches are narrow and covered by the patch-application check
-in [CI](../.github/workflows/ci.yml):
+Brain's flag defaults live in code, so the image freezes the ones that the
+previous Manifold build ran with: `deploy/brain/flags/defaults.env` pins every
+changed default to its old value and every new on-by-default switch to `0`, and
+`node --env-file` loads it. Compose and `.env` values still win. CI rebuilds the
+config catalog (`scripts/brain-catalog.sh`) and fails when
+`scripts/brain-flags.py --check` finds the file stale. List a key in
+`deploy/brain/flags/adopt.txt` to take its new upstream default.
+
+The downstream patches are narrow.
+[`scripts/brain-apply-patches.sh`](../scripts/brain-apply-patches.sh) applies
+them in series order, and [CI](../.github/workflows/ci.yml) checks that they
+apply:
 
 - [`openai-api-key-format.patch`](../deploy/brain/openai-api-key-format.patch)
-  accepts API keys that do not use OpenAI's `sk-` prefix. Upstream `main`
+  accepts API keys that do not use OpenAI's `sk-` prefix. Upstream
   reads `OPENAI_BASE_URL` itself, so this patch no longer touches the client.
 - [`document-origin-identity.patch`](../deploy/brain/document-origin-identity.patch)
   salts the content hash with canonical Manifold document/revision identity.
@@ -36,7 +44,10 @@ in [CI](../.github/workflows/ci.yml):
   check to `GENERAL_INDEXER_VERSION`. An accepted retry also puts the failed
   run back to `pending`, so a caller that polls before a worker claims the job
   does not read the old failure as the result; a replayed `retryKey` then finds
-  nothing to queue. The worker rechecks source availability after extraction and
+  nothing to queue. Upstream's nightly sweep also retries failed runs, so a
+  queued retry and the sweep can reopen one run; the run-ledger reads retry the
+  write conflict that this can cause instead of failing the request. The worker
+  rechecks source availability after extraction and
   before automatic commit; conditional header writes preserve `purged` during
   concurrent extraction or commit. Purge does not retract already committed
   knowledge or change manual candidate review. A commit that passed its content
@@ -45,7 +56,7 @@ in [CI](../.github/workflows/ci.yml):
   commit pipeline. The conditional header write still preserves `purged`.
 - [`worker-startup-order.patch`](../deploy/brain/worker-startup-order.patch)
   starts the worker scheduler in `onApplicationBootstrap`, after module-owned
-  job handlers register in `onModuleInit`. In v2.3 an early lease tick with no
+  job handlers register in `onModuleInit`. Without it, an early lease tick with no
   handlers retries later, but one with some handlers starts only those and
   never the ones registered afterwards.
 - [`corroborated-commit-ref.patch`](../deploy/brain/corroborated-commit-ref.patch)
@@ -97,42 +108,10 @@ in [CI](../.github/workflows/ci.yml):
   of the production graph (3,496 facts): a profile took 278 ms before and
   1 ms after, an expectation stamp 236 ms before; on the production VPS a
   profile took 1.4-4.7 s. Hydration calls the profile once per entity.
-- [`resolve-fact-entity-index.patch`](../deploy/brain/resolve-fact-entity-index.patch)
-  is migration 0168: `fn::resolve_fact` (and the unchanged batch mapper
-  `fn::resolve_facts`) with `WITH INDEX fact_entity_idx` on the `$candidates`
-  query, and with the two `UPDATE knowledge_fact SET status = 'competing'
-  WHERE id IN ...` statements rewritten as direct record updates. Inside a
-  function body the planner scans the whole fact table for both forms (the
-  `WHERE` runs against every row even for an empty list). A document commit
-  calls the function once per fact. On the copy of the production graph an
-  inserting or corroborating resolve fell from 290 ms to 10-15 ms and a
-  superseding one from 1.1 s to 24 ms; the production VPS took 0.8-1.2 s for
-  the candidate query alone. Parameters are unchanged, so the rolling-deploy
-  signature gate still holds.
-- [`selective-entity-fact-indexes.patch`](../deploy/brain/selective-entity-fact-indexes.patch)
-  is migration 0169 plus a source guard test. It removes `fact_user_idx` and
-  `entity_user_idx` (per-user memory indexes this deployment never uses) and
-  adds element indexes `aliases[*]` and `nameKeys[*]`. SurrealDB 3 indexes an
-  array field as a single value, so `aliases CONTAINS $x` and
-  `nameKeys CONTAINS $x` scanned all entities (46 ms per lookup on the copy,
-  0 ms with the element indexes). A deployment with per-user memory should
-  re-create the two removed indexes.
-- [`derived-stale-cascade.patch`](../deploy/brain/derived-stale-cascade.patch)
-  is migration 0170. `fn::mark_derived_stale` and `fn::cascade_retract` find a
-  fact's dependents with `UPDATE ... WHERE derivedFrom CONTAINSANY $parents`,
-  which scans the table; they now find them with a SELECT served by a new
-  element index on `derivedFrom[*]` (2 ms instead of 330 ms) and update only
-  those rows. Inside a `DEFINE EVENT` the planner cannot use the index for any
-  spelling of the lookup (280-470 ms), so the migration removes the
-  `fact_staleness` event (0089). Upstream documents that removal: the nightly
-  drain then marks stale derived summaries instead of the write that superseded
-  their source. Manifold never reads derived summaries. Restore the event with
-  0089's definition to get write-time marking back at the cost of one table
-  pass per superseded fact. The patch also skips the event's e2e spec.
 - [`edge-retraction.patch`](../deploy/brain/edge-retraction.patch) lets
-  `POST /v1/facts/:id/retract` take a `knowledge_edge:` id. Brain `main` serves
+  `POST /v1/facts/:id/retract` take a `knowledge_edge:` id. Brain serves
   every live edge of a matched entity as a fact-shaped line in search (the
-  relation leg), and v2.3 had no way to withdraw an edge, so the relation of a
+  relation leg), and upstream has no way to withdraw an edge, so the relation of a
   deleted document kept ranking. The route closes the edge on both time axes
   (`validUntil` unless it already ended, `invalidatedAt`) and records the
   retraction and the earlier end in `source.retraction`, with the same
@@ -152,26 +131,6 @@ in [CI](../.github/workflows/ci.yml):
   took 549 ms before and 53 ms after, one that revives a predecessor 590-660 ms
   and 105-117 ms. On production a fact retraction took 980 ms (median) against
   78 ms for an edge, and a document update can retract more than a hundred.
-- [`knn-empty-result-fallback.patch`](../deploy/brain/knn-empty-result-fallback.patch)
-  makes the search vector leg fall back to the exact scan when SurrealDB 3.3
-  answers a KNN statement with no rows and the HNSW index is absent, building,
-  or failed. SurrealDB 3.2.4, which upstream measured, returns unranked rows
-  with a null distance in that state, and Brain detects only that shape; 3.3.0
-  plans a table scan with a KNN filter and returns nothing, so the vector leg
-  silently returned nothing for an unindexed tenant. With a ready index an
-  empty result still means the filters removed every candidate, and the leg
-  stays empty as upstream intends. The patch adjusts the HNSW unit and e2e
-  specs to both engine versions; the e2e spec now also checks a vector-only
-  search on a tenant without the index.
-- [`hnsw-provision-early-tenants.patch`](../deploy/brain/hnsw-provision-early-tenants.patch)
-  makes Brain build the HNSW indexes of a tenant that it opened during startup.
-  Brain provisions a tenant when it reports the tenant's schema as ready, but
-  `CalibrationService` opens the host tenant in its own `onModuleInit`, before
-  `AdminModule` registers the provisioning listener. That notice is not
-  repeated, so the `manifold` tenant never received an index and the vector
-  leg kept the exact scan. The patch adds `SurrealService.readyTenantIds()`, and
-  the provisioning service notes those tenants when it registers. A unit spec
-  covers a tenant migrated before the listener.
 - [`search-throttle-limit.patch`](../deploy/brain/search-throttle-limit.patch)
   makes the per-credential limit of `POST /v1/search` configurable with
   `THROTTLE_SEARCH_LIMIT`. Upstream hardcodes 10 searches a minute on the
@@ -181,7 +140,7 @@ in [CI](../.github/workflows/ci.yml):
   or context request. A value that is not a positive integer keeps 10. A unit
   spec reads the route's throttle metadata.
 - [`pool-stall-liveness.patch`](../deploy/brain/pool-stall-liveness.patch)
-  makes `GET /health` answer `503` with `status: "pool_stalled"` when a
+  makes `GET /health` answer `503` with `state: "pool_stalled"` when a
   SurrealDB connection pool has no idle connection and every acquire has timed
   out, without one success, for `SURREALDB_POOL_STALL_MS` (2 minutes by
   default; it must not be shorter than `SURREALDB_ACQUIRE_TIMEOUT_MS`).
@@ -195,23 +154,60 @@ in [CI](../.github/workflows/ci.yml):
   A pool that hands released connections to its waiters is busy, not stalled,
   and keeps `/health` green. Unit specs cover the stall, its reset, a
   saturated pool that recovers, the scoped pool, and the `503` body.
-- [`provider-refusal.patch`](../deploy/brain/provider-refusal.patch) keeps
-  the reason when the model provider refuses extraction. Upstream turned a
-  failed pass into an empty result, so a run failed with no cause, and treated
-  `402` as transient. A provider account without credit then received the same
-  request again and again, every document ended as a generic failed run, and
-  the batch retry passes read all failed documents again. With the patch, when
-  every pass fails and one failure is a refusal, the error reaches the run,
-  whose message names the class:
-  `model provider refused the request (provider_refusal=billing)`, or `auth`,
-  `rate_limit`, `outage`. A queued retry reads through the request path, which
-  names the same class. `GET /v1/documents/:id` returns the class as
-  `providerRefusal` on the failed run, without the error text, and Manifold
-  reports `provider_credits_exhausted` from it. A `billing` or `auth` refusal also stops the
-  batch retry passes, because no retry succeeds until an operator acts. A
-  rejected clause no longer appears in the pattern warning log; it logs a count
-  only. This backports upstream `c2fe8eaa` and `d0441212` and extends the first
-  to `402`. Unit specs cover the classes, the rethrow, and the batch stop.
+  Brain v2.11.0 ships surrealdb-js 2.2.0, which does reject such a query:
+  tested on 2026-11-27 with a restart and with `SIGKILL` of SurrealDB under a
+  `SLEEP 30s` query, the query failed at once with `CallTerminatedError` and
+  the next query ran after the reconnect. The patch stays for the cases where
+  no close reaches the client, such as a lost network path.
+- [`unindexed-tenant-vector-spec.patch`](../deploy/brain/unindexed-tenant-vector-spec.patch)
+  keeps an end-to-end check that a vector-only search finds a fact on a tenant
+  without a ready HNSW index. SurrealDB 3.3 answers such a KNN query with no
+  rows; upstream v2.11.0 reads the index catalogue and uses the exact scan.
+  Test only.
+- [`provider-refusal.patch`](../deploy/brain/provider-refusal.patch) keeps the
+  reason when the model provider refuses extraction. Upstream classifies
+  `402` and other refusals for search and synthesis, not for document
+  extraction. `src/ai/provider-refusal.ts` maps upstream's classes to `billing`,
+  `auth`, `rate_limit`, and `outage` for errors that carry an HTTP status; a
+  timeout without one still splits the text and retries. A refusal fails the
+  run with `model provider refused the request (provider_refusal=<class>)`,
+  stops text splitting, and stops the batch. A `billing` or `auth` refusal also
+  stops the retry passes until an operator acts. `GET /v1/documents/:id`
+  returns the class as `providerRefusal` on the failed run, and Manifold reports
+  `provider_credits_exhausted` from it. Unit and end-to-end specs cover the
+  classes, the rethrow, the batch stop, and the ledger field.
+- [`settle-fact-entity-index.patch`](../deploy/brain/settle-fact-entity-index.patch)
+  is migration 9001. Ingest in v2.11.0 settles facts with `fn::settle_fact`
+  (0177), whose candidate query and `competing` updates scan the whole fact
+  table inside a function body. The migration redefines the function unchanged
+  except for `WITH INDEX fact_entity_idx` and record-targeted updates. A unit
+  spec requires the body to equal 0177 with those edits.
+- [`selective-entity-fact-indexes.patch`](../deploy/brain/selective-entity-fact-indexes.patch)
+  is migration 9002 plus a source guard test. It removes `fact_user_idx` and
+  `entity_user_idx` (per-user memory indexes this deployment never uses) and
+  adds element indexes `aliases[*]` and `nameKeys[*]`. SurrealDB 3 indexes an
+  array field as a single value, so `aliases CONTAINS $x` and
+  `nameKeys CONTAINS $x` scanned all entities (46 ms per lookup on a copy of
+  the production graph, 0 ms with the element indexes). A deployment with
+  per-user memory should re-create the two removed indexes.
+- [`derived-stale-cascade.patch`](../deploy/brain/derived-stale-cascade.patch)
+  is migration 9003. `fn::mark_derived_stale` and `fn::cascade_retract` find a
+  fact's dependents with `UPDATE ... WHERE derivedFrom CONTAINSANY $parents`,
+  which scans the table; they now find them with a SELECT served by a new
+  element index on `derivedFrom[*]` (2 ms instead of 330 ms) and update only
+  those rows. Inside a `DEFINE EVENT` the planner cannot use the index for any
+  spelling of the lookup (280-470 ms), so the migration removes the
+  `fact_staleness` event (0089). Upstream documents that removal: the nightly
+  drain then marks stale derived summaries instead of the write that superseded
+  their source. Manifold never reads derived summaries. Restore the event with
+  0089's definition to get write-time marking back at the cost of one table
+  pass per superseded fact. The patch also skips the event's e2e spec.
+- [`ledger-release.patch`](../deploy/brain/ledger-release.patch) releases the
+  migration ids that earlier Manifold builds used for their own files.
+  `0168_resolve_fact_entity_index`, `0169_selective_entity_fact_indexes`, and
+  `0170_derived_from_element_index` collide with upstream's 0168–0170, so the
+  migrator deletes those ledger rows by file name before it applies migrations.
+  Local migrations now start at 9001 and are DDL only and idempotent.
 - [`predicate-vocabulary-refresh.patch`](../deploy/brain/predicate-vocabulary-refresh.patch)
   stops each committed document from forcing the next extraction to recount the
   predicate vocabulary. The count scans every active fact: on a graph of about
@@ -220,6 +216,17 @@ in [CI](../.github/workflows/ci.yml):
   the cached list and refreshes it in the background at most every 10 minutes.
   A smaller vocabulary is still recounted after each commit, so a new tenant
   sees its predicates at once. A unit spec covers the stale read.
+- [`same-name-check-flag.patch`](../deploy/brain/same-name-check-flag.patch)
+  adds `INGEST_SAME_NAME_CHECK` around upstream's v2.11.0 check of same-named
+  entities (upstream #821). With the check, a mention whose facts contradict the
+  entity of the same name creates a second entity: a document update from
+  "Mira Chen works at Meridian Labs" to "... Borealis Labs" produced
+  `mira-chen-2` and left the old facts on the first node. Manifold's dedup pass
+  is off, so such a split stays. Upstream's default stays on; the frozen
+  defaults of the image set it to `0`, which reuses the first entity of that
+  name as before. Set `INGEST_SAME_NAME_CHECK: "1"` on the Brain service in a
+  Compose override where two different people with one name matter more than
+  facts that change.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
@@ -272,11 +279,14 @@ later document states again is reopened in Brain. Facts and relations of
 documents deleted before this behavior existed stay active in Brain until they
 are retracted separately.
 
+Compose sets `DECISIONS_LANES` to an empty string: a decision lane such as
+`triage` can keep a document raw, with a `skipped` run and no extraction, while
+Manifold counts the document as read.
+
 Compose enables Brain's HNSW vector index (`SEARCH_HNSW_ENABLED`); see
-[operations](operations.md#brain-vector-index-and-slow-query-log). With these
-patches, Brain's HNSW, retraction, and supersession e2e specs pass on SurrealDB
-3.3.0 (23 tests), and its HNSW provisioning and search throttle unit specs
-pass.
+[operations](operations.md#brain-vector-index-and-slow-query-log). On
+v2.11.0 with this series, Brain's unit suite passes (642 suites, 7,440 tests on
+2026-11-27) on SurrealDB 3.3.5.
 
 Brain has no published host port. Manifold and SurrealDB communicate with it
 over the private Compose network; Brain also joins the provider network for
@@ -290,12 +300,9 @@ To verify the patch chain against a clean source checkout:
 brain_src=$(mktemp -d)
 git init -q "$brain_src"
 git -C "$brain_src" remote add origin https://github.com/inite-ai/inite-brain-service.git
-git -C "$brain_src" fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
+git -C "$brain_src" fetch -q --depth 1 origin 6ba986054a546c71c93c39e0e118e0f3dddc983f
 git -C "$brain_src" checkout -q FETCH_HEAD
-test "$(git -C "$brain_src" rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
-for patch in openai-api-key-format document-origin-identity worker-startup-order corroborated-commit-ref failed-run-retry extraction-completion fatal-signal-default openai-chat-extra-body entity-fact-read-index-hints resolve-fact-entity-index selective-entity-fact-indexes derived-stale-cascade edge-retraction revive-superseded-index knn-empty-result-fallback hnsw-provision-early-tenants search-throttle-limit pool-stall-liveness provider-refusal predicate-vocabulary-refresh; do
-    git -C "$brain_src" apply --check "$PWD/deploy/brain/$patch.patch"
-    git -C "$brain_src" apply "$PWD/deploy/brain/$patch.patch"
-done
+test "$(git -C "$brain_src" rev-parse HEAD)" = 6ba986054a546c71c93c39e0e118e0f3dddc983f
+"$PWD/scripts/brain-apply-patches.sh" "$brain_src"
 git -C "$brain_src" diff --check
 ```

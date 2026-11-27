@@ -91,7 +91,7 @@ services:
       context: .
       dockerfile: deploy/brain/Dockerfile
       args:
-        BRAIN_REF: a567f6960c031b916549699fec7b89423c650d1e
+        BRAIN_REF: 6ba986054a546c71c93c39e0e118e0f3dddc983f
     restart: unless-stopped
     logging: *logging
     init: true
@@ -129,6 +129,10 @@ services:
       # Brain v2.3 stores every conversational turn verbatim by default.
       # Manifold sends documents, not turns, so keep that store closed.
       EPISODE_SUBSTRATE_ENABLED: "0"
+      # Brain's decision lanes (`triage` among them) can keep a captured
+      # document raw: its run ends `skipped` and nothing is extracted, while
+      # Manifold counts the document as read. Fixed here, not read from .env.
+      DECISIONS_LANES: ""
       # Brain gathers new documents for this many seconds before one
       # extraction pass reads them (upstream default 20). Manifold submits one
       # document per job and waits for it, so the window is dead time.

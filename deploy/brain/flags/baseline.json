@@ -1,0 +1,1850 @@
+{
+ "ABAC_DB_FENCE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "ABAC_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "ABAC_FORCE_REPORT_ONLY": {
+  "default": "0",
+  "boolean": true
+ },
+ "AGENT_QA_ROUTE_MODE": {
+  "default": null,
+  "boolean": false
+ },
+ "AGENT_QA_TOOLS_V2": {
+  "default": "0",
+  "boolean": true
+ },
+ "AUDIT_CHANGEFEED_BATCH": {
+  "default": "500",
+  "boolean": false
+ },
+ "AUDIT_CHANGEFEED_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "BELIEFS_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "BELIEFS_FACT_DAMPING": {
+  "default": "0",
+  "boolean": true
+ },
+ "BELIEFS_LANE_DATE_DISAMBIGUATION": {
+  "default": "0",
+  "boolean": true
+ },
+ "BELIEFS_SERVING_LANE": {
+  "default": "0",
+  "boolean": true
+ },
+ "BGE_M3_CONCURRENCY": {
+  "default": "2",
+  "boolean": false
+ },
+ "BGE_M3_REMOTE_API_KEY": {
+  "default": "",
+  "boolean": false
+ },
+ "BGE_M3_REMOTE_MODEL": {
+  "default": "baai/bge-m3",
+  "boolean": false
+ },
+ "BGE_M3_REMOTE_URL": {
+  "default": "https://openrouter.ai/api/v1/embeddings",
+  "boolean": false
+ },
+ "BGE_M3_WORKER": {
+  "default": "1",
+  "boolean": true
+ },
+ "BILLING_ENTITLEMENT_CACHE_TTL_MS": {
+  "default": "60000",
+  "boolean": false
+ },
+ "BILLING_SERVICE_API_KEY": {
+  "default": null,
+  "boolean": false
+ },
+ "BILLING_SERVICE_URL": {
+  "default": null,
+  "boolean": false
+ },
+ "BILLING_TIMEOUT_MS": {
+  "default": "5000",
+  "boolean": false
+ },
+ "BRAIN_TENANT_OVERRIDE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "CALIBRATION_NIGHTLY_REFIT": {
+  "default": "true",
+  "boolean": true
+ },
+ "CALIBRATION_USE_GOLD_SET": {
+  "default": "1",
+  "boolean": true
+ },
+ "CAPABILITY_PROBE_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "CAPABILITY_PROBE_INTERVAL_MS": {
+  "default": "60000",
+  "boolean": false
+ },
+ "CAPABILITY_PROBE_TENANT": {
+  "default": null,
+  "boolean": false
+ },
+ "CHAT_ROUTE_CACHE_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "CHAT_ROUTE_CACHE_SIZE": {
+  "default": "256",
+  "boolean": false
+ },
+ "CHAT_ROUTE_HINT_MAX": {
+  "default": "3",
+  "boolean": false
+ },
+ "CHAT_ROUTE_HINT_SIMILARITY": {
+  "default": "0.55",
+  "boolean": false
+ },
+ "CHAT_ROUTE_INTENT_CONFIDENCE_FLOOR": {
+  "default": "0.85",
+  "boolean": false
+ },
+ "CHAT_ROUTE_NLI_ASK_THRESHOLD": {
+  "default": "0.6",
+  "boolean": false
+ },
+ "CHAT_ROUTE_NLI_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "CHAT_ROUTE_NLI_MODEL": {
+  "default": "Xenova/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+  "boolean": false
+ },
+ "CHAT_ROUTE_NLI_TIMEOUT_MS": {
+  "default": "3000",
+  "boolean": false
+ },
+ "CHAT_ROUTE_NLI_WORKER": {
+  "default": "1",
+  "boolean": true
+ },
+ "COMMUNITIES_LP_OFFLOAD_MIN_EDGES": {
+  "default": "2000",
+  "boolean": false
+ },
+ "COMMUNITIES_MAX_ITERATIONS": {
+  "default": "10",
+  "boolean": false
+ },
+ "COMMUNITIES_MIN_SIZE": {
+  "default": "3",
+  "boolean": false
+ },
+ "COMMUNITIES_SUMMARY_MAX_MEMBERS": {
+  "default": "10",
+  "boolean": false
+ },
+ "COMPACTION_HOT_RETENTION_DAYS": {
+  "default": "90",
+  "boolean": false
+ },
+ "COMPACTION_PROMOTION_CONFLICT_GUARD": {
+  "default": "0",
+  "boolean": true
+ },
+ "COMPACTION_PROMOTION_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "COMPACTION_PROMOTION_MIN_EPISODES": {
+  "default": "0",
+  "boolean": false
+ },
+ "COMPACTION_SUMMARIES": {
+  "default": "false",
+  "boolean": true
+ },
+ "COMPACTION_TENANT_OVERRIDES": {
+  "default": null,
+  "boolean": false
+ },
+ "CONFLICT_DIRECT_FACT_SLOT": {
+  "default": "0",
+  "boolean": true
+ },
+ "CONFLICT_MARGIN_SUPERSEDE": {
+  "default": "0.15",
+  "boolean": false
+ },
+ "CONFLICT_MENTION_FACT_SLOT": {
+  "default": "0",
+  "boolean": true
+ },
+ "CONFLICT_REJECT_THRESHOLD": {
+  "default": "0.3",
+  "boolean": false
+ },
+ "CONFLICT_SIMILARITY_THRESHOLD": {
+  "default": "0.85",
+  "boolean": false
+ },
+ "CONFLICT_SLOT_CANONICALIZATION": {
+  "default": "0",
+  "boolean": true
+ },
+ "CONFLICT_TEMPORAL_TIEBREAKER": {
+  "default": "0",
+  "boolean": true
+ },
+ "CONFLICT_TEMPORAL_TIEBREAK_WINDOW_MS": {
+  "default": "0",
+  "boolean": false
+ },
+ "CONFLICT_WEIGHT_AUTHORITY": {
+  "default": "0.1",
+  "boolean": false
+ },
+ "CONFLICT_WEIGHT_CONFIDENCE": {
+  "default": "0.3",
+  "boolean": false
+ },
+ "CONFLICT_WEIGHT_RECENCY": {
+  "default": "0.2",
+  "boolean": false
+ },
+ "CONFLICT_WEIGHT_SOURCE_TRUST": {
+  "default": "0.4",
+  "boolean": false
+ },
+ "COST_CHAT_COMPLETION_USD_PER_MTOK": {
+  "default": "1.2",
+  "boolean": false
+ },
+ "COST_CHAT_PROMPT_USD_PER_MTOK": {
+  "default": "0.2",
+  "boolean": false
+ },
+ "COST_EMBED_USD_PER_MTOK": {
+  "default": "0.02",
+  "boolean": false
+ },
+ "DEBUG_TRACE_DB_CAPACITY": {
+  "default": "1000",
+  "boolean": false
+ },
+ "DEBUG_TRACE_PERSIST": {
+  "default": "0",
+  "boolean": true
+ },
+ "DECISIONS_CONFIDENCE_FLOOR": {
+  "default": "0.7",
+  "boolean": false
+ },
+ "DECISIONS_LANES": {
+  "default": null,
+  "boolean": false
+ },
+ "DERIVER_ASSISTANT_CONTENT": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_COMPLETION_PASS": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_COMPOSE_PASS": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_DATE_RESOLVE": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_DIGEST": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_MENTION_STAMP": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_SALIENCE_STAMP": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_SCENE_TRACE": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_SLOT_SEMANTICS": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_SLOT_SIMILARITY": {
+  "default": "0.9",
+  "boolean": false
+ },
+ "DERIVER_SPANS": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_TURN_HEADERS": {
+  "default": "0",
+  "boolean": true
+ },
+ "DERIVER_TYPED_ATOMS": {
+  "default": "0",
+  "boolean": true
+ },
+ "DOCUMENT_INGEST_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "DOCUMENT_MULTI_INDEXER_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DOMAIN_PACK_BILLING_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_COMMUNITIES_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_CORROBORATE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_CORROBORATE_MAX_LLM_CALLS": {
+  "default": "40",
+  "boolean": false
+ },
+ "DREAMS_DEDUP_COSINE_THRESHOLD": {
+  "default": "0.92",
+  "boolean": false
+ },
+ "DREAMS_DEDUP_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_DEDUP_MAX_PAIRS": {
+  "default": "50",
+  "boolean": false
+ },
+ "DREAMS_DEDUP_MAX_SEEDS": {
+  "default": "500",
+  "boolean": false
+ },
+ "DREAMS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_LLM_SUMMARY_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_RESOLVE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "DREAMS_RESOLVE_MAX_PAIRS": {
+  "default": "20",
+  "boolean": false
+ },
+ "DREAMS_RESOLVE_MIN_AGE_DAYS": {
+  "default": "7",
+  "boolean": false
+ },
+ "DREAMS_RUN_SUMMARIZE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EMBEDDER_PROVIDER": {
+  "default": "openai",
+  "boolean": false
+ },
+ "EMBEDDING_SPACE_ACTIVE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EMBEDDING_SPACE_DUAL_WRITE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EMBEDDING_SPACE_STRICT": {
+  "default": "1",
+  "boolean": true
+ },
+ "EMBEDDING_SPACE_TRACKING": {
+  "default": "0",
+  "boolean": true
+ },
+ "ENTITY_JUDGE_MODEL": {
+  "default": "gpt-5.6-luna",
+  "boolean": false
+ },
+ "EPISODES_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EPISODE_SUBSCRIPTIONS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "EPISODE_SUBSTRATE_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EVIDENCE_BLOB_UPLOAD_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_DERIVED_MAX_BYTES": {
+  "default": "1048576",
+  "boolean": false
+ },
+ "EVIDENCE_DOCUMENT_BRIDGE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_FAIL_CLOSED_CAPTURE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_FRAGMENT_CITATIONS": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_FRAGMENT_EMBEDDINGS": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_FS_ROOT": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_GRANTS_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EVIDENCE_GROUNDING_STAMP": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_INGEST_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EVIDENCE_MAX_BYTES": {
+  "default": "1073741824",
+  "boolean": false
+ },
+ "EVIDENCE_PROCESSOR_BROKER": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_QUARANTINE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_RAW_READ_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EVIDENCE_S3_ACCESS_KEY_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_S3_BUCKET": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_S3_ENDPOINT": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_S3_FORCE_PATH_STYLE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_S3_PREFIX": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_S3_REGION": {
+  "default": "us-east-1",
+  "boolean": false
+ },
+ "EVIDENCE_S3_SECRET_ACCESS_KEY": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_SIGNED_URL_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "EVIDENCE_SIGNED_URL_TTL_SECONDS": {
+  "default": "300",
+  "boolean": false
+ },
+ "EVIDENCE_STORAGE_SCHEME": {
+  "default": "fs",
+  "boolean": false
+ },
+ "EVIDENCE_SUBSTRATE_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EVIDENCE_UNGROUNDED_EXCLUDE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EVIDENCE_UNGROUNDED_SERVING_GATE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTION_BATCH_WINDOW_SECONDS": {
+  "default": "20",
+  "boolean": false
+ },
+ "EXTRACTION_CONVERSATION_MAX_WAIT_SECONDS": {
+  "default": "600",
+  "boolean": false
+ },
+ "EXTRACTION_CONVERSATION_SETTLE_SECONDS": {
+  "default": "120",
+  "boolean": false
+ },
+ "EXTRACTION_GROUP_MAX_CHARS": {
+  "default": "12000",
+  "boolean": false
+ },
+ "EXTRACTION_GROUP_MAX_DOCS": {
+  "default": "16",
+  "boolean": false
+ },
+ "EXTRACTION_OBJECT_NORMALIZE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTION_PASS_CONCURRENCY": {
+  "default": "4",
+  "boolean": false
+ },
+ "EXTRACTOR_CACHE_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "EXTRACTOR_CACHE_SIZE": {
+  "default": "256",
+  "boolean": false
+ },
+ "EXTRACTOR_DIALOGUE_PROFILE": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTOR_LITERAL_HARVEST": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTOR_LOCAL_NER_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTOR_LOCAL_NER_MIN_SCORE": {
+  "default": "0.7",
+  "boolean": false
+ },
+ "EXTRACTOR_LOCAL_NER_MODEL": {
+  "default": "Xenova/bert-base-multilingual-cased-ner-hrl",
+  "boolean": false
+ },
+ "EXTRACTOR_LOCAL_NER_TIMEOUT_MS": {
+  "default": "3000",
+  "boolean": false
+ },
+ "EXTRACTOR_LOCAL_NER_WORKER": {
+  "default": "1",
+  "boolean": true
+ },
+ "EXTRACTOR_LOCAL_PREDICATE_THRESHOLD": {
+  "default": "0.55",
+  "boolean": false
+ },
+ "EXTRACTOR_ROUTING_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTOR_SC_PASSES": {
+  "default": "3",
+  "boolean": false
+ },
+ "EXTRACTOR_SKIP_LLM_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTOR_STATE_VERB_HARVEST": {
+  "default": "0",
+  "boolean": true
+ },
+ "EXTRACTOR_TRANSITION_CLASSIFIER": {
+  "default": "0",
+  "boolean": true
+ },
+ "FACTS_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "FOVEA_ADAPTIVE_ABSTAIN": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_ADAPTIVE_ABSTAIN_THRESHOLD": {
+  "default": "0.5",
+  "boolean": false
+ },
+ "FOVEA_ADAPTIVE_L3": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_ADAPTIVE_L3_THRESHOLD": {
+  "default": "0.5",
+  "boolean": false
+ },
+ "FOVEA_ATTENTION_HINTS": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_EVIDENCE_CAPABILITY": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_FOCUS_CAPTURE": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_FRAGMENT_ZOOM": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_FRAGMENT_ZOOM_MAX_CHARS": {
+  "default": "4000",
+  "boolean": false
+ },
+ "FOVEA_L3_EPISODE_CITATIONS": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_LENS_SUPPRESS": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_LENS_SUPPRESS_MIN_COSINE": {
+  "default": "0.5",
+  "boolean": false
+ },
+ "FOVEA_PLAUSIBILITY_CHECK": {
+  "default": "0",
+  "boolean": true
+ },
+ "FOVEA_REQUIRE_CITATIONS": {
+  "default": "0",
+  "boolean": true
+ },
+ "HNSW_PROVISION_ENABLED": {
+  "default": null,
+  "boolean": true
+ },
+ "HNSW_PROVISION_MAX_BUILDS_PER_RUN": {
+  "default": "5",
+  "boolean": false
+ },
+ "HNSW_PROVISION_TIME_BUDGET_MS": {
+  "default": "600000",
+  "boolean": false
+ },
+ "INDEXER_EXTERNAL_PENDING_TTL_DAYS": {
+  "default": "7",
+  "boolean": false
+ },
+ "INDEXER_OPERATOR_VIEW_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "INDEXER_WEBHOOK_PUSH_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "INGEST_ARTICLE_NORMALIZATION": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_BATCH_EDGES": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_CODE_ALIAS_RESOLUTION": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_CONFUSABLES_CHECK": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_CONTEXTUAL_FACT_EMBEDDING": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_EPISODE_ONLY": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_EVENT_TIME_EXTRACTION": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_PREDICATE_INDEX_TEXT": {
+  "default": "0",
+  "boolean": true
+ },
+ "INGEST_SANITIZE_UNICODE": {
+  "default": "0",
+  "boolean": true
+ },
+ "JOBS_QUEUE_MODE": {
+  "default": "enqueue",
+  "boolean": false
+ },
+ "JOB_RUN_PERSIST": {
+  "default": "1",
+  "boolean": true
+ },
+ "JWKS_URL": {
+  "default": null,
+  "boolean": false
+ },
+ "LIVE_SUBSCRIPTIONS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "LOG_FORMAT": {
+  "default": null,
+  "boolean": false
+ },
+ "MAPPING_ASSISTANT_MODEL": {
+  "default": "gpt-5.6-luna",
+  "boolean": false
+ },
+ "MCP_PACK_EXTERNAL_TOOLS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "MCP_PACK_QUERY_TOOLS_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "MCP_PACK_TOOLS_ALLOW_HTTP": {
+  "default": "0",
+  "boolean": true
+ },
+ "MCP_PACK_TOOLS_CACHE_TTL_MS": {
+  "default": "30000",
+  "boolean": false
+ },
+ "MCP_PACK_TOOLS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "MCP_TOOL_PROFILE_DEFAULT": {
+  "default": "full",
+  "boolean": false
+ },
+ "MCP_TOOL_PROFILE_OVERRIDES": {
+  "default": null,
+  "boolean": false
+ },
+ "MINICHECK_MODEL": {
+  "default": "bespoke-minicheck",
+  "boolean": false
+ },
+ "MINICHECK_URL": {
+  "default": "http://127.0.0.1:11434",
+  "boolean": false
+ },
+ "MULTILINGUAL_ANSWER_GUARD": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_CALIBRATION": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_CJK_SEGMENTATION": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_CONFLICT": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_ENTITY_REVERSIBLE": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_LANE_ROUTING": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_LANG_ATTRIBUTION": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_LANG_FILTER_CONFIDENCE_GATE": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_LANG_STAMP_CONFIDENCE_GATE": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTILINGUAL_SOFT_LANG_FILTER": {
+  "default": "0",
+  "boolean": true
+ },
+ "MULTI_HOP_EDGE_EXPANSION_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "OPENAI_API_KEY": {
+  "default": null,
+  "boolean": false
+ },
+ "OPENAI_BASE_URL": {
+  "default": null,
+  "boolean": false
+ },
+ "OPENAI_CHAT_MODEL": {
+  "default": "gpt-6-luna",
+  "boolean": false
+ },
+ "OPENAI_CONCURRENCY": {
+  "default": "6",
+  "boolean": false
+ },
+ "OPENAI_FALLBACK_API_KEY": {
+  "default": null,
+  "boolean": false
+ },
+ "OPENAI_FALLBACK_BASE_URL": {
+  "default": null,
+  "boolean": false
+ },
+ "OPENAI_FALLBACK_MODEL_PREFIX": {
+  "default": "openai/",
+  "boolean": false
+ },
+ "OPENAI_MAX_RETRIES": {
+  "default": "3",
+  "boolean": false
+ },
+ "OPENAI_MODEL_PREFIX": {
+  "default": null,
+  "boolean": false
+ },
+ "OPENAI_OFFLINE_SERVICE_TIER": {
+  "default": null,
+  "boolean": false
+ },
+ "OPENAI_TIMEOUT_MS": {
+  "default": "30000",
+  "boolean": false
+ },
+ "OUTCOME_DECISION_CAPTURE": {
+  "default": "1",
+  "boolean": true
+ },
+ "OUTCOME_DECISION_RETENTION_DAYS": {
+  "default": "30",
+  "boolean": false
+ },
+ "OUTCOME_EVENT_RETENTION_DAYS": {
+  "default": "30",
+  "boolean": false
+ },
+ "OUTCOME_RETRIEVED_EVENTS": {
+  "default": "0",
+  "boolean": true
+ },
+ "OUTCOME_TELEMETRY_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "OUTCOME_TX_WRITES": {
+  "default": "0",
+  "boolean": true
+ },
+ "PACK_MEMORY_PROJECTIONS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "PACK_SEED_INGEST_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "PACK_SOURCE_VERSION_STALENESS": {
+  "default": "0",
+  "boolean": true
+ },
+ "POLICY_META_UNION_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "PREDICATE_IDENTITY_CONCURRENCY": {
+  "default": "4",
+  "boolean": false
+ },
+ "PREDICATE_IDENTITY_MODEL": {
+  "default": null,
+  "boolean": false
+ },
+ "PREDICATE_SEMANTICS_CONCURRENCY": {
+  "default": "4",
+  "boolean": false
+ },
+ "PREDICATE_SEMANTICS_MODEL": {
+  "default": null,
+  "boolean": false
+ },
+ "PRIVACY_COMPOSER_USER_SCOPE": {
+  "default": "0",
+  "boolean": true
+ },
+ "PRIVACY_SEGMENT_USER_FENCE": {
+  "default": "0",
+  "boolean": true
+ },
+ "PROCESS_ROLE": {
+  "default": "all",
+  "boolean": false
+ },
+ "PROJECTIONS_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "PROVENANCE_CLOSURE_MAX_DEPTH": {
+  "default": "5",
+  "boolean": false
+ },
+ "PROVENANCE_CLOSURE_MAX_EPISODES": {
+  "default": "200",
+  "boolean": false
+ },
+ "PROVENANCE_CLOSURE_MAX_FACTS": {
+  "default": "256",
+  "boolean": false
+ },
+ "PROVENANCE_EPISODE_NEIGHBOURS": {
+  "default": "0",
+  "boolean": true
+ },
+ "PROVENANCE_EPISODE_NEIGHBOUR_RADIUS": {
+  "default": "1",
+  "boolean": false
+ },
+ "PROVENANCE_RECURSIVE_CLOSURE": {
+  "default": "0",
+  "boolean": true
+ },
+ "PROVENANCE_SUMMARY_EPISODE_STAMP": {
+  "default": "0",
+  "boolean": true
+ },
+ "PROVENANCE_SUPPORT_EDGES": {
+  "default": "0",
+  "boolean": true
+ },
+ "PROVENANCE_SUPPORT_GRAPH_READ": {
+  "default": "0",
+  "boolean": true
+ },
+ "READ_SURFACE_USER_SCOPE": {
+  "default": "1",
+  "boolean": true
+ },
+ "REGISTRY_MIRROR_INTERVAL_HOURS": {
+  "default": "24",
+  "boolean": false
+ },
+ "REGISTRY_UPSTREAM_TOKEN": {
+  "default": null,
+  "boolean": false
+ },
+ "REGISTRY_UPSTREAM_URL": {
+  "default": null,
+  "boolean": false
+ },
+ "RETRIEVAL_ABSTENTION_CALIBRATION": {
+  "default": "verifier",
+  "boolean": false
+ },
+ "RETRIEVAL_ABSTENTION_MIN_EVIDENCE": {
+  "default": "2",
+  "boolean": false
+ },
+ "RETRIEVAL_ABSTENTION_MIN_SCORE": {
+  "default": "0.35",
+  "boolean": false
+ },
+ "RETRIEVAL_ANSWER_CONDITIONING": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_ASSISTANT_LANE": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_ASSISTANT_LANE_MATCH": {
+  "default": "assistant",
+  "boolean": false
+ },
+ "RETRIEVAL_ASSISTANT_LANE_TOPK": {
+  "default": "6",
+  "boolean": false
+ },
+ "RETRIEVAL_COVERAGE_LEX_MODE": {
+  "default": "phrase",
+  "boolean": false
+ },
+ "RETRIEVAL_COVERAGE_SCAN_MODE": {
+  "default": "brute",
+  "boolean": false
+ },
+ "RETRIEVAL_DATE_ANCHORING": {
+  "default": "absolute",
+  "boolean": false
+ },
+ "RETRIEVAL_DATE_MATH": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_DERIVED_VERSION": {
+  "default": null,
+  "boolean": false
+ },
+ "RETRIEVAL_DERIVED_VERSIONS": {
+  "default": null,
+  "boolean": false
+ },
+ "RETRIEVAL_DIGEST_EVIDENCE": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_DIGEST_LANES": {
+  "default": "all",
+  "boolean": false
+ },
+ "RETRIEVAL_ENTITY_EXPANSION": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_ENUM_STRICT": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_FACTS_AS_KEYS": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_FACTS_AS_KEYS_CAP": {
+  "default": "8",
+  "boolean": false
+ },
+ "RETRIEVAL_FRAGMENT_LANE": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_GENRE": {
+  "default": "assistant_chat",
+  "boolean": false
+ },
+ "RETRIEVAL_INSIGHT_EVIDENCE": {
+  "default": "off",
+  "boolean": false
+ },
+ "RETRIEVAL_L3_DIRECT_ANCHOR": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_L3_ESCALATION": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_L3_MAX_SESSIONS": {
+  "default": "3",
+  "boolean": false
+ },
+ "RETRIEVAL_L3_SEGMENT_ANCHOR": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_L3_TEMPORAL_ANCHOR": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_L3_TOKEN_CAP": {
+  "default": "60000",
+  "boolean": false
+ },
+ "RETRIEVAL_MENTION_DATES": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_NOISE_FILTER": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_ORDERING_FRAME": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_PROFILE_OVERRIDES": {
+  "default": null,
+  "boolean": false
+ },
+ "RETRIEVAL_RAW_WINDOW": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_RAW_WINDOW_SPAN": {
+  "default": "2",
+  "boolean": false
+ },
+ "RETRIEVAL_SALIENCE_SCORING": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_SCAN_HNSW_EF": {
+  "default": "400",
+  "boolean": false
+ },
+ "RETRIEVAL_SCAN_HNSW_OVERFETCH": {
+  "default": "4",
+  "boolean": false
+ },
+ "RETRIEVAL_SCENE_LANE": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_SCENE_TRACES": {
+  "default": "1",
+  "boolean": true
+ },
+ "RETRIEVAL_SEARCH_LOOP": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_TEMPORAL_MODE": {
+  "default": "filter",
+  "boolean": false
+ },
+ "RETRIEVAL_TENANT_DECAY": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_TIMELINE_EVIDENCE": {
+  "default": "off",
+  "boolean": false
+ },
+ "RETRIEVAL_TIME_FILTER": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_UPDATE_STORY": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_VERBATIM_EVIDENCE": {
+  "default": "shape_conditioned",
+  "boolean": false
+ },
+ "RETRIEVAL_VERIFIED_USE_DECAY": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_VERIFIED_USE_RANKING": {
+  "default": "0",
+  "boolean": true
+ },
+ "RETRIEVAL_VERIFIER_EFFORT": {
+  "default": "",
+  "boolean": false
+ },
+ "RETRIEVAL_VERIFIER_MODEL": {
+  "default": "gpt-5.6-luna",
+  "boolean": false
+ },
+ "RETRIEVAL_VERIFIER_TOPIC_COVERAGE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "SCENES_BELIEF_FIELD_FOLD": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_BELIEF_LLM_SYNTHESIS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_BELIEF_MIN_SCENES": {
+  "default": "0",
+  "boolean": false
+ },
+ "SCENES_BELIEF_NEGATION_DELTAS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_BELIEF_PROMOTION": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_ENTITY_LINKS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_EVIDENCE_LINKS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_FACT_BACKLINK": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_GIST_EMBEDDING": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_LLM_ENRICHMENT": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_MAINTENANCE_MAX_CONVERSATIONS": {
+  "default": "200",
+  "boolean": false
+ },
+ "SCENES_MAINTENANCE_SETTLE_MS": {
+  "default": "600000",
+  "boolean": false
+ },
+ "SCENES_MAINTENANCE_TIME_BUDGET_MS": {
+  "default": "1800000",
+  "boolean": false
+ },
+ "SCENES_MAX_TURNS": {
+  "default": "40",
+  "boolean": false
+ },
+ "SCENES_PACK_DELTA_PROMOTION": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_PREDICTION_BASELINE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_SCHEDULED_MAINTENANCE": {
+  "default": "1",
+  "boolean": true
+ },
+ "SCENES_SEGMENTATION_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_TOPIC_BOUNDARY": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_TOPIC_MIN_COSINE": {
+  "default": "0.55",
+  "boolean": false
+ },
+ "SCENES_VALUE_GATE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCENES_VALUE_GATE_MIN": {
+  "default": "0.05",
+  "boolean": false
+ },
+ "SCENES_VERSION_FINGERPRINT": {
+  "default": "0",
+  "boolean": true
+ },
+ "SCOPE_TAGS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_CHATTER_PENALTY": {
+  "default": "1.0",
+  "boolean": false
+ },
+ "SEARCH_COMBINED_VECTOR_GRAPH": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_EDGE_EXPANSION_ALPHA": {
+  "default": "0",
+  "boolean": false
+ },
+ "SEARCH_EDGE_EXPANSION_MAX_NEIGHBOURS": {
+  "default": "5",
+  "boolean": false
+ },
+ "SEARCH_EDGE_EXPANSION_TOP_SEEDS": {
+  "default": "3",
+  "boolean": false
+ },
+ "SEARCH_EPISODIC_LANE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_EPISODIC_LANE_TOPK": {
+  "default": "8",
+  "boolean": false
+ },
+ "SEARCH_FACT_CENTRIC_BUDGET": {
+  "default": "48",
+  "boolean": false
+ },
+ "SEARCH_FACT_RERANK": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_FACT_RERANK_WINDOW": {
+  "default": "64",
+  "boolean": false
+ },
+ "SEARCH_HIGHLIGHT_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_HNSW_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_PPR_AUTO_THRESHOLD": {
+  "default": "0",
+  "boolean": false
+ },
+ "SEARCH_PPR_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_RERANK_SKIP_MARGIN": {
+  "default": "0",
+  "boolean": false
+ },
+ "SEARCH_RERANK_TRUST_BAND": {
+  "default": "0",
+  "boolean": false
+ },
+ "SEARCH_SEGMENT_LANE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_SEGMENT_LANE_RERANK": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_SEGMENT_LANE_TOPK": {
+  "default": "5",
+  "boolean": false
+ },
+ "SEARCH_TOKEN_COUNT_OFFLOAD": {
+  "default": "1",
+  "boolean": true
+ },
+ "SEARCH_TOKEN_OFFLOAD_MIN_HITS": {
+  "default": "24",
+  "boolean": false
+ },
+ "SEARCH_USAGE_BETA": {
+  "default": "0",
+  "boolean": false
+ },
+ "SEARCH_USAGE_DECAY_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_USAGE_RANKING_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_USAGE_RECORDING_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SEARCH_USAGE_SATURATION": {
+  "default": "20",
+  "boolean": false
+ },
+ "SEARCH_VERIFIED_USE_BETA": {
+  "default": "0",
+  "boolean": false
+ },
+ "SEARCH_VERIFIED_USE_SATURATION": {
+  "default": "10",
+  "boolean": false
+ },
+ "SOURCE_CREDENTIAL_ENCRYPTION_KEY": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_CREDENTIAL_ENCRYPTION_KEY_PREVIOUS": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_EGRESS_ALLOW_PRIVATE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_FS_ROOTS": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_KIND_BITRIX24": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_CONFLUENCE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_DROPBOX": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_FS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_GDRIVE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_GITHUB": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_GMAIL": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_HUBSPOT": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_IMAP": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_KOMMO": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_MCP": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_NOTION": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_ONEDRIVE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_PIPEDRIVE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_REST_RECORDS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_S3": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_SALESFORCE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_SLACK": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_TELEGRAM": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_KIND_URL": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_MAPPING_ASSISTANT": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_MCP_OAUTH": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_META_STRICT": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_OAUTH_ATLASSIAN_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_ATLASSIAN_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_ATLASSIAN_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_BITRIX24_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_BITRIX24_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_BITRIX24_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_BITRIX24_LOGIN_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_CLIENT": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_OAUTH_DROPBOX_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_DROPBOX_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_DROPBOX_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_GITHUB_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_GITHUB_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_GITHUB_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_GOOGLE_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_GOOGLE_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_GOOGLE_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_HUBSPOT_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_HUBSPOT_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_HUBSPOT_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_KOMMO_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_KOMMO_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_KOMMO_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_KOMMO_LOGIN_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_MICROSOFT_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_MICROSOFT_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_MICROSOFT_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_NOTION_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_NOTION_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_NOTION_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_PIPEDRIVE_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_PIPEDRIVE_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_PIPEDRIVE_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_REDIRECT_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SALESFORCE_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SALESFORCE_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SALESFORCE_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SALESFORCE_LOGIN_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SLACK_BASE_URL": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SLACK_CLIENT_ID": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_OAUTH_SLACK_CLIENT_SECRET": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_PLANE_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SOURCE_TELEGRAM_API_BASE": {
+  "default": "",
+  "boolean": false
+ },
+ "SOURCE_WEBHOOKS": {
+  "default": "0",
+  "boolean": true
+ },
+ "STATS_VIEWS_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "STRATEGY_DISTILL_CRON_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "STRATEGY_MEMORY_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "STRATEGY_RETRIEVAL_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "STRATEGY_SIMILARITY_FLOOR": {
+  "default": "0.4",
+  "boolean": false
+ },
+ "STRATEGY_TRAJECTORIES_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SYNTHESIZE_ANSWER_CACHE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SYNTHESIZE_ANSWER_CACHE_ENUM_MIN_CITATIONS": {
+  "default": "5",
+  "boolean": false
+ },
+ "SYNTHESIZE_ANSWER_CACHE_ENUM_TTL_HOURS": {
+  "default": "1",
+  "boolean": false
+ },
+ "SYNTHESIZE_ANSWER_CACHE_TTL_HOURS": {
+  "default": "24",
+  "boolean": false
+ },
+ "SYNTHESIZE_ANSWER_ROUTER_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "SYNTHESIZE_DATE_CONTEXT": {
+  "default": "1",
+  "boolean": true
+ },
+ "SYNTHESIZE_EXTRA_EVIDENCE_CAP": {
+  "default": "40",
+  "boolean": false
+ },
+ "SYNTHESIZE_INSTRUCTION_LANE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SYNTHESIZE_LANE_WIDE_PROBE": {
+  "default": "0",
+  "boolean": true
+ },
+ "SYNTHESIZE_SOURCE_EXCERPTS": {
+  "default": "0",
+  "boolean": true
+ },
+ "SYNTHESIZE_SOURCE_EXCERPTS_CAP": {
+  "default": "16",
+  "boolean": false
+ },
+ "SYNTHESIZE_WIDE_PROBE_LIMIT": {
+  "default": "12",
+  "boolean": false
+ },
+ "THROTTLE_EXPENSIVE_LIMIT": {
+  "default": "10",
+  "boolean": false
+ },
+ "THROTTLE_EXPENSIVE_TTL_MS": {
+  "default": "60000",
+  "boolean": false
+ },
+ "THROTTLE_LIMIT": {
+  "default": "120",
+  "boolean": false
+ },
+ "THROTTLE_SEARCH_LIMIT": {
+  "default": "10",
+  "boolean": false
+ },
+ "THROTTLE_TTL_MS": {
+  "default": "60000",
+  "boolean": false
+ },
+ "TOOL_OBSERVATIONS_ENABLED": {
+  "default": "0",
+  "boolean": true
+ },
+ "TOOL_OBSERVATION_CONTENT": {
+  "default": "0",
+  "boolean": true
+ },
+ "TOOL_OBSERVATION_RETENTION_DAYS": {
+  "default": "30",
+  "boolean": false
+ },
+ "TRUST_PROXY": {
+  "default": null,
+  "boolean": false
+ },
+ "TYPESAFE_API_KEY": {
+  "default": null,
+  "boolean": false
+ },
+ "TYPESAFE_BASE_URL": {
+  "default": "https://api.typesafe.ai",
+  "boolean": false
+ },
+ "TYPESAFE_CONCURRENCY": {
+  "default": "16",
+  "boolean": false
+ },
+ "TYPESAFE_MAX_RETRIES": {
+  "default": "3",
+  "boolean": false
+ },
+ "TYPESAFE_MODEL": {
+  "default": "jev-latest",
+  "boolean": false
+ },
+ "TYPESAFE_TIMEOUT_MS": {
+  "default": "10000",
+  "boolean": false
+ },
+ "USER_PROFILE_API_ENABLED": {
+  "default": "1",
+  "boolean": true
+ },
+ "WORKER_LOOP_GLOBAL_MAX_CONCURRENT": {
+  "default": "0",
+  "boolean": false
+ },
+ "WORKER_LOOP_MAX_CONCURRENT": {
+  "default": "1",
+  "boolean": false
+ },
+ "WORKER_LOOP_TENANT_MAX_CONCURRENT": {
+  "default": "1",
+  "boolean": false
+ }
+}

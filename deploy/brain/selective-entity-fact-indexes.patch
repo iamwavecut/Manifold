@@ -1,8 +1,8 @@
-diff --git a/src/db/migrations/0169_selective_entity_fact_indexes.surql b/src/db/migrations/0169_selective_entity_fact_indexes.surql
+diff --git a/src/db/migrations/9002_selective_entity_fact_indexes.surql b/src/db/migrations/9002_selective_entity_fact_indexes.surql
 new file mode 100644
-index 000000000..45f289f95
+index 00000000..45f289f9
 --- /dev/null
-+++ b/src/db/migrations/0169_selective_entity_fact_indexes.surql
++++ b/src/db/migrations/9002_selective_entity_fact_indexes.surql
 @@ -0,0 +1,20 @@
 +-- Manifold: drop the non-selective userId indexes, index array elements.
 +--
@@ -26,10 +26,10 @@ index 000000000..45f289f95
 +DEFINE INDEX IF NOT EXISTS entity_name_keys_el_idx ON knowledge_entity FIELDS nameKeys[*];
 diff --git a/test/entity-fact-index-plans.unit-spec.ts b/test/entity-fact-index-plans.unit-spec.ts
 new file mode 100644
-index 000000000..a8a541a18
+index 00000000..87c69745
 --- /dev/null
 +++ b/test/entity-fact-index-plans.unit-spec.ts
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,78 @@
 +/**
 + * Plan guards for the entity/fact reads a document commit and its hydration
 + * depend on. SurrealDB 3.3 plans `userId IS NONE` (true for every row of a
@@ -96,23 +96,8 @@ index 000000000..a8a541a18
 +    );
 +  });
 +
-+  it('resolve_fact reads its candidate facts through fact_entity_idx', () => {
-+    const migration = read('src/db/migrations/0168_resolve_fact_entity_index.surql');
-+    const candidates = migration.slice(migration.indexOf('LET $candidates = SELECT'));
-+    expect(candidates.slice(0, candidates.indexOf('WHERE entityId = $entity_id'))).toContain(
-+      'FROM knowledge_fact WITH INDEX fact_entity_idx',
-+    );
-+  });
-+
-+  it('resolve_fact updates competing rows by record, not by a table-wide WHERE', () => {
-+    const migration = read('src/db/migrations/0168_resolve_fact_entity_index.surql');
-+    expect(migration).not.toMatch(/UPDATE knowledge_fact SET [^;]*WHERE id IN/);
-+    expect(migration).toContain("UPDATE $day_peers.id SET status = 'competing';");
-+    expect(migration).toContain("UPDATE $loser_ids SET status = 'competing';");
-+  });
-+
 +  it('drops the userId indexes and indexes the elements of alias and name-key arrays', () => {
-+    const migration = read('src/db/migrations/0169_selective_entity_fact_indexes.surql');
++    const migration = read('src/db/migrations/9002_selective_entity_fact_indexes.surql');
 +    expect(migration).toContain('REMOVE INDEX IF EXISTS fact_user_idx ON knowledge_fact;');
 +    expect(migration).toContain('REMOVE INDEX IF EXISTS entity_user_idx ON knowledge_entity;');
 +    expect(migration).toMatch(
@@ -123,3 +108,15 @@ index 000000000..a8a541a18
 +    );
 +  });
 +});
+diff --git a/test/golden/migration-checksums.json b/test/golden/migration-checksums.json
+index 130cc72c..47cd8882 100644
+--- a/test/golden/migration-checksums.json
++++ b/test/golden/migration-checksums.json
+@@ -196,5 +196,6 @@
+   "0197_data_migration_ledger.surql": "51899238288435c2f6be3bdccb1e40ecdc58fddf75587018428061753fb676c0",
+   "0198_episode_turn_unique.surql": "7d2c8fdeaf4461a3cf6a05d0dbe1757d94872efa378996164b56893498cf0256",
+   "0199_tenant_model_source.surql": "e942cbe2f065e117f5fee57ff3a95db241740cf004c3dabcd6028a4185c13d52",
+-  "9001_settle_fact_entity_index.surql": "3856185e9aeb6205a1515a231ed5973b0277d717f0e4a32e20db5ce264b263c7"
++  "9001_settle_fact_entity_index.surql": "3856185e9aeb6205a1515a231ed5973b0277d717f0e4a32e20db5ce264b263c7",
++  "9002_selective_entity_fact_indexes.surql": "e618d8a0523da5c727c2abb29ae3edba616a35a844a13d1804252525da3d9da3"
+ }

@@ -1,8 +1,8 @@
 diff --git a/brain-landing/public/openapi.json b/brain-landing/public/openapi.json
-index 627843bd..22220a29 100644
+index 8e63fa7a..8f967d30 100644
 --- a/brain-landing/public/openapi.json
 +++ b/brain-landing/public/openapi.json
-@@ -7121,6 +7121,63 @@
+@@ -7314,6 +7314,63 @@
          ],
          "type": "object"
        },
@@ -63,10 +63,10 @@ index 627843bd..22220a29 100644
 +        ],
 +        "type": "object"
 +      },
-       "SetPricingRequest": {
+       "RevokeEvidenceGrantResponse": {
          "additionalProperties": false,
          "properties": {
-@@ -12526,6 +12583,70 @@
+@@ -13619,6 +13676,70 @@
          ]
        }
      },
@@ -134,14 +134,14 @@ index 627843bd..22220a29 100644
 +        ]
 +      }
 +    },
-     "/v1/episodes": {
+     "/v1/entities/autocomplete": {
        "get": {
-         "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
+         "description": "Word-start match over the edge-ngram `prefix` fulltext index, BM25-ranked via `search::score`. A query under 2 characters returns nothing (the tokenizer produces no grams). Live, tenant-global entities only — merged-away redirects and personal-scoped entities are excluded. Source: src/entities/entities.controller.ts.\n\nRequired scope: `brain:read`.",
 diff --git a/docs/openapi.json b/docs/openapi.json
-index 627843bd..22220a29 100644
+index 8e63fa7a..8f967d30 100644
 --- a/docs/openapi.json
 +++ b/docs/openapi.json
-@@ -7121,6 +7121,63 @@
+@@ -7314,6 +7314,63 @@
          ],
          "type": "object"
        },
@@ -202,10 +202,10 @@ index 627843bd..22220a29 100644
 +        ],
 +        "type": "object"
 +      },
-       "SetPricingRequest": {
+       "RevokeEvidenceGrantResponse": {
          "additionalProperties": false,
          "properties": {
-@@ -12526,6 +12583,70 @@
+@@ -13619,6 +13676,70 @@
          ]
        }
      },
@@ -273,14 +273,14 @@ index 627843bd..22220a29 100644
 +        ]
 +      }
 +    },
-     "/v1/episodes": {
+     "/v1/entities/autocomplete": {
        "get": {
-         "description": "Verbatim pre-extraction dialogue turns in stable (occurredAt, id) order — the raw layer any consumer can build its own projection from. Callers without `brain:read_pii` see only episodes whose piiClass is empty. 404 until EPISODES_API_ENABLED=1. Source: src/episodes/episodes.controller.ts.\n\nRequired scope: `brain:read`.",
+         "description": "Word-start match over the edge-ngram `prefix` fulltext index, BM25-ranked via `search::score`. A query under 2 characters returns nothing (the tokenizer produces no grams). Live, tenant-global entities only — merged-away redirects and personal-scoped entities are excluded. Source: src/entities/entities.controller.ts.\n\nRequired scope: `brain:read`.",
 diff --git a/scripts/build-openapi.ts b/scripts/build-openapi.ts
-index 0d16568e..5f363e13 100644
+index 989e9596..89377f31 100644
 --- a/scripts/build-openapi.ts
 +++ b/scripts/build-openapi.ts
-@@ -185,6 +185,8 @@ import {
+@@ -187,6 +187,8 @@ import {
    IngestDocumentAsyncResponseSchema,
    IngestDocumentRequestSchema,
    IngestDocumentSyncResponseSchema,
@@ -289,7 +289,7 @@ index 0d16568e..5f363e13 100644
    SubmitCandidatesRequestSchema,
    SubmitCandidatesResponseSchema,
    SubmittedEntitySchema,
-@@ -364,6 +366,8 @@ const ZOD_COMPONENTS: Record<string, z.ZodType> = {
+@@ -388,6 +390,8 @@ const ZOD_COMPONENTS: Record<string, z.ZodType> = {
    IngestDocumentAsyncResponse: IngestDocumentAsyncResponseSchema,
    IngestDocumentRequest: IngestDocumentRequestSchema,
    IngestDocumentSyncResponse: IngestDocumentSyncResponseSchema,
@@ -298,7 +298,7 @@ index 0d16568e..5f363e13 100644
    SubmitCandidatesRequest: SubmitCandidatesRequestSchema,
    SubmitCandidatesResponse: SubmitCandidatesResponseSchema,
    SubmittedEntity: SubmittedEntitySchema,
-@@ -1480,6 +1484,36 @@ function documentsPaths(): Json {
+@@ -1548,6 +1552,36 @@ function documentsPaths(): Json {
          },
        }),
      },
@@ -368,10 +368,18 @@ index 5a0a8d4a..1c0a958a 100644
  export const CommitCountsSchema = z.object({
    pending: z.number().int().nonnegative(),
 diff --git a/src/documents/candidate-store.service.ts b/src/documents/candidate-store.service.ts
-index e963b134..e2b8c7d2 100644
+index cfa0a023..8f5bae08 100644
 --- a/src/documents/candidate-store.service.ts
 +++ b/src/documents/candidate-store.service.ts
-@@ -65,6 +65,12 @@ interface RunLedgerRow {
+@@ -16,6 +16,7 @@ import {
+   type CandidateKind,
+ } from '../indexers/candidate.types';
+ import { indexerIdOfPredicate } from '../indexers/virtual-attributor';
++import { retryOnReadConflict } from '../db/surreal-retry';
+ 
+ /**
+  * insertBatch tallies, echoed into the submission response (`staged`) and
+@@ -70,6 +71,12 @@ interface RunLedgerRow {
    createdAt?: unknown;
  }
  
@@ -384,7 +392,93 @@ index e963b134..e2b8c7d2 100644
  /** candidate → parent-document status probe (findDocsNeedingCommit). */
  interface DocCommitRow {
    docId?: unknown;
-@@ -242,6 +248,28 @@ export class CandidateStoreService {
+@@ -165,47 +172,52 @@ export class CandidateStoreService {
+         return { runId: String(row.id), created: true };
+       } catch (err) {
+         if (!isUniqueViolation(err)) throw err;
+-        const existing = await queryFirst<RunLedgerRow>(
+-          db,
+-          `SELECT id, status, createdAt FROM indexer_run
++        // A concurrent reopener (nightly retry pass, queued retry) can abort
++        // this with a write conflict. Looking again is safe: a run it took is
++        // 'running' by then, and nothing is deleted or reopened.
++        return retryOnReadConflict(async () => {
++          const existing = await queryFirst<RunLedgerRow>(
++            db,
++            `SELECT id, status, createdAt FROM indexer_run
+            WHERE docId = type::record('source_document', $doc)
+              AND packId = $pack AND packVersion = $ver LIMIT 1`,
+-          { doc: idTailOf(p.docId), pack: p.packId, ver: p.packVersion },
+-        );
+-        if (!existing) throw err;
+-        const status = String(existing.status);
+-        const runId = String(existing.id);
+-        const createdMs = existing.createdAt ? new Date(String(existing.createdAt)).getTime() : 0;
+-        const isStaleRunning = status === 'running' && Date.now() - createdMs > staleRunMs();
+-        if (status === 'pending' || status === 'failed' || isStaleRunning) {
+-          // Reopen under a CAS: only proceed if the row is STILL in the
+-          // status we observed (`RETURN AFTER` gives us the updated rows;
+-          // an empty result = a concurrent reopener already flipped it, so
+-          // we defer to it). Drop any prior attempt's staged candidates
+-          // (re-extraction re-inserts; a 'pending' run has none). option<>
+-          // fields clear with NONE (never NULL — 0049 is SCHEMAFULL).
+-          // Two statements → two result slots; the CAS verdict is the
+-          // UPDATE's (slot 1), not the DELETE's (slot 0).
+-          // Two statements → two result slots. The DELETE's rows (slot 0)
+-          // are unread; the CAS verdict is the UPDATE's RETURN AFTER (slot 1).
+-          const res = await db.query<[unknown[], unknown[]]>(
+-            `DELETE candidate WHERE runId = type::record('indexer_run', $run);
++            { doc: idTailOf(p.docId), pack: p.packId, ver: p.packVersion },
++          );
++          if (!existing) throw err;
++          const status = String(existing.status);
++          const runId = String(existing.id);
++          const createdMs = existing.createdAt ? new Date(String(existing.createdAt)).getTime() : 0;
++          const isStaleRunning = status === 'running' && Date.now() - createdMs > staleRunMs();
++          if (status === 'pending' || status === 'failed' || isStaleRunning) {
++            // Reopen under a CAS: only proceed if the row is STILL in the
++            // status we observed (`RETURN AFTER` gives us the updated rows;
++            // an empty result = a concurrent reopener already flipped it, so
++            // we defer to it). Drop any prior attempt's staged candidates
++            // (re-extraction re-inserts; a 'pending' run has none). option<>
++            // fields clear with NONE (never NULL — 0049 is SCHEMAFULL).
++            // Two statements → two result slots; the CAS verdict is the
++            // UPDATE's (slot 1), not the DELETE's (slot 0).
++            // Two statements → two result slots. The DELETE's rows (slot 0)
++            // are unread; the CAS verdict is the UPDATE's RETURN AFTER (slot 1).
++            const res = await db.query<[unknown[], unknown[]]>(
++              `DELETE candidate WHERE runId = type::record('indexer_run', $run);
+              UPDATE type::record('indexer_run', $run) SET
+                status = 'running', createdAt = time::now(),
+                finishedAt = NONE, error = NONE, stats = NONE
+              WHERE status = $observed
+              RETURN AFTER`,
+-            { run: idTailOf(runId), observed: status },
+-          );
+-          const swapped = res[1] ?? [];
+-          if (swapped.length === 0) {
+-            // Lost the race — another job reopened it and is extracting.
+-            return { runId, created: false };
++              { run: idTailOf(runId), observed: status },
++            );
++            const swapped = res[1] ?? [];
++            if (swapped.length === 0) {
++              // Lost the race — another job reopened it and is extracting.
++              return { runId, created: false };
++            }
++            this.metrics?.countIndexerRun('reopened');
++            return { runId, created: true };
+           }
+-          this.metrics?.countIndexerRun('reopened');
+-          return { runId, created: true };
+-        }
+-        return { runId, created: false };
++          return { runId, created: false };
++        });
+       }
+     });
+   }
+@@ -247,6 +259,28 @@ export class CandidateStoreService {
      });
    }
  
@@ -413,7 +507,7 @@ index e963b134..e2b8c7d2 100644
    /**
     * Reap non-terminal indexer_run rows past the stale window:
     *   - 'running' — a worker that crashed between createRun and finalizeRun
-@@ -591,6 +619,28 @@ export class CandidateStoreService {
+@@ -685,6 +719,32 @@ export class CandidateStoreService {
      });
    }
  
@@ -428,13 +522,17 @@ index e963b134..e2b8c7d2 100644
 +    p: { docId: string; packId: string; packVersion: string },
 +  ): Promise<void> {
 +    return this.surreal.withCompany(companyId, async (db) => {
-+      await db.query(
-+        `UPDATE indexer_run SET
-+           status = 'pending', createdAt = time::now(), finishedAt = NONE, error = NONE
-+         WHERE docId = type::record('source_document', $doc)
-+           AND packId = $pack AND packVersion = $ver AND status = 'failed'
-+         RETURN NONE`,
-+        { doc: idTailOf(p.docId), pack: p.packId, ver: p.packVersion },
++      // Two retry requests for one document can update this row at once; the
++      // aborted write is safe to repeat (it only moves 'failed' rows).
++      await retryOnReadConflict(() =>
++        db.query(
++          `UPDATE indexer_run SET
++             status = 'pending', createdAt = time::now(), finishedAt = NONE, error = NONE
++           WHERE docId = type::record('source_document', $doc)
++             AND packId = $pack AND packVersion = $ver AND status = 'failed'
++           RETURN NONE`,
++          { doc: idTailOf(p.docId), pack: p.packId, ver: p.packVersion },
++        ),
 +      );
 +    });
 +  }
@@ -443,7 +541,7 @@ index e963b134..e2b8c7d2 100644
    async getRun(companyId: string, runId: string): Promise<RunRow | null> {
      return this.surreal.withCompany(companyId, async (db) => {
 diff --git a/src/documents/document-async.service.ts b/src/documents/document-async.service.ts
-index a613684a..33e26e3f 100644
+index 6228d97a..bb1ff09b 100644
 --- a/src/documents/document-async.service.ts
 +++ b/src/documents/document-async.service.ts
 @@ -1,6 +1,6 @@
@@ -470,7 +568,7 @@ index a613684a..33e26e3f 100644
  /**
   * Queue-driven document ingest: one `index_document` job per selected
   * indexer, each finishing job enqueues a `commit_document` that DEFERS
-@@ -156,7 +165,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -165,7 +174,7 @@ export class DocumentAsyncService implements OnModuleInit {
        ...dedicated.map((b) => ({ packId: b.indexerId, packVersion: b.packVersion })),
      ];
  
@@ -479,7 +577,7 @@ index a613684a..33e26e3f 100644
      const runs: DocumentAsyncResponse['runs'] = [];
      for (const spec of specs) {
        // Pre-create the run ledger row as 'pending' BEFORE enqueuing, so
-@@ -205,11 +214,95 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -214,11 +223,95 @@ export class DocumentAsyncService implements OnModuleInit {
      return runs;
    }
  
@@ -575,7 +673,7 @@ index a613684a..33e26e3f 100644
      const chunks = await this.store.getChunks(ctx.companyId, docId);
      if (chunks.length === 0) return { skipped: 'no_stored_content' };
  
-@@ -220,15 +313,18 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -229,15 +322,18 @@ export class DocumentAsyncService implements OnModuleInit {
          doc,
          chunks,
          packId,
@@ -597,7 +695,7 @@ index a613684a..33e26e3f 100644
      }
      return { packId, status };
    }
-@@ -237,6 +333,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -246,6 +342,7 @@ export class DocumentAsyncService implements OnModuleInit {
      const docId = String(ctx.payload?.docId ?? '');
      const doc = await this.store.getById(ctx.companyId, docId);
      if (!doc) return { skipped: 'missing_document' };
@@ -605,7 +703,7 @@ index a613684a..33e26e3f 100644
      const result = await this.commit.commitIfRunsSettled(ctx.companyId, doc);
      if (result.deferred) return { deferred: true };
      if (result.committed) {
-@@ -251,7 +348,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -260,7 +357,7 @@ export class DocumentAsyncService implements OnModuleInit {
  
    private async enqueueCommit(
      companyId: string,
@@ -614,7 +712,7 @@ index a613684a..33e26e3f 100644
    ): Promise<void> {
      if (!this.claim) return;
      try {
-@@ -261,7 +358,7 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -270,7 +367,7 @@ export class DocumentAsyncService implements OnModuleInit {
          jobType: 'commit_document',
          companyId,
          triggeredBy: 'manual',
@@ -623,7 +721,7 @@ index a613684a..33e26e3f 100644
          payload: { docId: p.docId },
        });
      } catch (e) {
-@@ -274,6 +371,13 @@ export class DocumentAsyncService implements OnModuleInit {
+@@ -283,6 +380,13 @@ export class DocumentAsyncService implements OnModuleInit {
      doc: StoredDocument,
      status: string,
    ): Promise<void> {
@@ -639,10 +737,10 @@ index a613684a..33e26e3f 100644
    }
  }
 diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
-index c35ebd46..404774fd 100644
+index 24454c52..6be9367b 100644
 --- a/src/documents/document-store.service.ts
 +++ b/src/documents/document-store.service.ts
-@@ -349,6 +349,23 @@ export class DocumentStoreService {
+@@ -374,6 +374,23 @@ export class DocumentStoreService {
      });
    }
  
@@ -745,7 +843,7 @@ index 00000000..db24bd6c
 +  retryKey!: string;
 +}
 diff --git a/src/documents/indexer-dispatch.service.ts b/src/documents/indexer-dispatch.service.ts
-index 8a7f928e..28b5b8c6 100644
+index b8e7e7d9..09953159 100644
 --- a/src/documents/indexer-dispatch.service.ts
 +++ b/src/documents/indexer-dispatch.service.ts
 @@ -3,7 +3,7 @@ import { envFlagEnabled } from '../common/env-validation';
@@ -757,13 +855,14 @@ index 8a7f928e..28b5b8c6 100644
  import { IndexerRunService, IndexerRunResult } from './indexer-run.service';
  import { IndexerWebhookService } from './indexer-webhook.service';
  import type { DocumentChunk } from './chunker';
-@@ -84,15 +84,31 @@ export class IndexerDispatchService {
+@@ -84,16 +84,32 @@ export class IndexerDispatchService {
      doc: StoredDocument;
      chunks: DocumentChunk[];
      packId: string;
 +    expectedPackVersion?: string | undefined;
      abortSignal?: AbortSignal;
    }): Promise<IndexerRunResult> {
+     // Queued (a job, a re-index): nobody waits on the read.
      if (p.packId === GENERAL_INDEXER_ID) {
 +      if (
 +        p.expectedPackVersion !== undefined &&
@@ -771,7 +870,7 @@ index 8a7f928e..28b5b8c6 100644
 +      ) {
 +        return { runId: '', packId: p.packId, status: 'skipped' };
 +      }
-       return this.runs.runGeneral(p);
+       return this.runs.runGeneral({ ...p, background: true });
      }
      const binding = await this.bindingFor(p.companyId, p.packId);
      if (!binding) {
@@ -790,10 +889,10 @@ index 8a7f928e..28b5b8c6 100644
        // Backfill for an external pack: don't burn LLM calls extracting
        // with its vocabulary in-process — register the work item and let
 diff --git a/src/policy/action-registry.ts b/src/policy/action-registry.ts
-index da7be5a2..17f3a24a 100644
+index 8fb6c53f..0403efd1 100644
 --- a/src/policy/action-registry.ts
 +++ b/src/policy/action-registry.ts
-@@ -106,6 +106,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
+@@ -159,6 +159,7 @@ export const ACTIONS: Record<string, ActionSpec> = {
    'rest.documents.get': { kind: 'read', family: 'rest', title: 'Get document' },
    'rest.documents.candidates': { kind: 'read', family: 'rest', title: 'List candidates' },
    'rest.documents.commit': { kind: 'write', family: 'rest', title: 'Commit candidates' },
@@ -803,11 +902,13 @@ index da7be5a2..17f3a24a 100644
      family: 'rest',
 diff --git a/test/document-async-retry.unit-spec.ts b/test/document-async-retry.unit-spec.ts
 new file mode 100644
-index 00000000..571fd36b
+index 00000000..a93918f3
 --- /dev/null
 +++ b/test/document-async-retry.unit-spec.ts
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,185 @@
 +import { DocumentAsyncService } from '../src/documents/document-async.service';
++import { CandidateStoreService as CandidateStore } from '../src/documents/candidate-store.service';
++import type { SurrealService } from '../src/db/surreal.service';
 +import type { DocumentStoreService, StoredDocument } from '../src/documents/document-store.service';
 +import type { IndexerDispatchService } from '../src/documents/indexer-dispatch.service';
 +import type { CandidateCommitService } from '../src/documents/candidate-commit.service';
@@ -942,19 +1043,67 @@ index 00000000..571fd36b
 +      }),
 +    );
 +  });
++
++  it('marks a retry queued through a write conflict', async () => {
++    // Two retry requests for one document update the same run row at once;
++    // SurrealDB aborts one with a retryable conflict.
++    const query = jest
++      .fn()
++      .mockRejectedValueOnce(
++        new Error('Transaction conflict: Resource busy. This transaction can be retried'),
++      )
++      .mockResolvedValue([]);
++    const surreal = {
++      withCompany: async <T>(_companyId: string, fn: (db: unknown) => Promise<T>) => fn({ query }),
++    } as unknown as SurrealService;
++
++    await new CandidateStore(surreal).markRetryQueued('co_retry_unit', {
++      docId: 'source_document:conflict-unit',
++      packId: '_general',
++      packVersion: '3',
++    });
++
++    expect(query).toHaveBeenCalledTimes(2);
++  });
++
++  it('yields a failed run that another reader reopened during a write conflict', async () => {
++    // The nightly retry pass and a queued retry reopen one run at once: the
++    // loser's statement aborts, and its next look finds the run running.
++    const conflict = new Error(
++      'Transaction conflict: Resource busy. This transaction can be retried',
++    );
++    const query = jest
++      .fn()
++      .mockRejectedValueOnce(new Error('Database index `indexer_run_doc` already contains'))
++      .mockResolvedValueOnce([[{ id: 'indexer_run:a', status: 'failed' }]])
++      .mockRejectedValueOnce(conflict)
++      .mockResolvedValueOnce([[{ id: 'indexer_run:a', status: 'running', createdAt: new Date() }]]);
++    const surreal = {
++      withCompany: async <T>(_companyId: string, fn: (db: unknown) => Promise<T>) => fn({ query }),
++    } as unknown as SurrealService;
++
++    await expect(
++      new CandidateStore(surreal).createRun('co_retry_unit', {
++        docId: 'source_document:conflict-unit',
++        packId: '_general',
++        packVersion: '3',
++      }),
++    ).resolves.toEqual({ runId: 'indexer_run:a', created: false });
++  });
 +});
 diff --git a/test/document-retry.e2e-spec.ts b/test/document-retry.e2e-spec.ts
 new file mode 100644
-index 00000000..e08d42e2
+index 00000000..a9de9165
 --- /dev/null
 +++ b/test/document-retry.e2e-spec.ts
-@@ -0,0 +1,520 @@
+@@ -0,0 +1,581 @@
 +import { randomUUID } from 'node:crypto';
 +import { AppFixture, createApp } from './app-fixture';
 +import { CandidateStoreService } from '../src/documents/candidate-store.service';
 +import { CandidateCommitService } from '../src/documents/candidate-commit.service';
 +import { DocumentAsyncService } from '../src/documents/document-async.service';
 +import { DocumentStoreService } from '../src/documents/document-store.service';
++import { ExtractionBatchService } from '../src/documents/extraction-batch.service';
 +import { SurrealService } from '../src/db/surreal.service';
 +import { GENERAL_INDEXER_ID, GENERAL_INDEXER_VERSION } from '../src/indexers/candidate.types';
 +import type { JobContext } from '../src/jobs/worker-loop.service';
@@ -989,6 +1138,8 @@ index 00000000..e08d42e2
 +      companyId: 'co_document_retry_e2e',
 +      scopes: ['brain:read'],
 +      extraKeys: [{ scopes: ['brain:write'] }, { scopes: ['brain:write'], userId: 'retry-user-b' }],
++      // The real batch service: the nightly pass below must read the queue.
++      backgroundExtraction: true,
 +    });
 +    candidates = f.app.get(CandidateStoreService);
 +    documents = f.app.get(DocumentStoreService);
@@ -1467,17 +1618,78 @@ index 00000000..e08d42e2
 +    expect(whileRunning.status).toBe(202);
 +    expect(whileRunning.body.runs).toEqual([]);
 +    expect(await indexJobs(docId)).toHaveLength(queued);
++    // The refused retry leaves the running run alone.
++    const runs = await f.app.get(SurrealService).withCompany(f.companyId, async (db) => {
++      const [rows] = await db.query<[Array<{ status: string }>]>(
++        "SELECT status FROM indexer_run WHERE docId = type::record('source_document', $doc)",
++        { doc: docId.replace(/^source_document:/, '') },
++      );
++      return rows;
++    });
++    expect(runs.map((run) => run.status)).toEqual(['running']);
++  });
++
++  it('extracts once when the nightly retry pass takes a queued retry', async () => {
++    // No digit runs: PII redaction would rewrite them on ingest.
++    const marker = 'nightly overlap marker';
++    const { doc } = await documents.createOrGet(
++      f.companyId,
++      {
++        kind: 'markdown',
++        text: 'Document retry fixture ' + marker,
++        occurredAt: '2026-09-16T12:00:00.000Z',
++        contextRef: { vertical: 'document_retry_e2e' },
++      },
++      { channel: 'ingest_async', internal: undefined },
++    );
++    await seedRun(doc.id, {
++      packId: GENERAL_INDEXER_ID,
++      packVersion: GENERAL_INDEXER_VERSION,
++      status: 'failed',
++    });
++    const accepted = await f.http
++      .post(retryPath(doc.id))
++      .set(auth(writeKey()))
++      .send({ retryKey: 'nightly-overlap' });
++    expect(accepted.status).toBe(202);
++    const [queued] = await indexJobs(doc.id);
++
++    const extraction = jest.spyOn(f.extractor, 'extractBackground');
++    try {
++      // The 03:45 UTC sweep runs a retry pass before the queued job starts.
++      await f.app.get(ExtractionBatchService).runPass(f.companyId, { retry: 1, force: true });
++      const ofThisDoc = () => extraction.mock.calls.filter(([call]) => call.text.includes(marker));
++      expect(ofThisDoc()).toHaveLength(1);
++      const service = f.app.get(DocumentAsyncService) as unknown as {
++        handleIndexJob(ctx: JobContext): Promise<Record<string, unknown>>;
++      };
++      await service.handleIndexJob({
++        runId: 'job_run:nightly-overlap',
++        jobType: 'index_document',
++        companyId: f.companyId,
++        payload: queued?.payload ?? {},
++        attempts: 1,
++        abortSignal: new AbortController().signal,
++        workerId: 'retry-e2e',
++      });
++      expect(ofThisDoc()).toHaveLength(1);
++    } finally {
++      extraction.mockRestore();
++    }
 +  });
 +});
 diff --git a/test/document-write-origin.unit-spec.ts b/test/document-write-origin.unit-spec.ts
-index ded22ed7..47346898 100644
+index 7a1fb6e6..3cce3353 100644
 --- a/test/document-write-origin.unit-spec.ts
 +++ b/test/document-write-origin.unit-spec.ts
-@@ -43,6 +43,7 @@ function makeAsync(opts: {
+@@ -52,6 +52,10 @@ function makeAsync(opts: {
        };
      },
-     setStatus: async () => undefined,
-+    setStatusIfContentAvailable: async () => true,
+     setStatus: async (p: { status: string }) => void statuses.push(p.status),
++    setStatusIfContentAvailable: async (p: { status: string }) => {
++      statuses.push(p.status);
++      return true;
++    },
    };
    const dispatch = { selectDedicated: async () => [], planExternal: async () => [] };
    const candidates = { ensureRunPending: async () => undefined };
@@ -1580,10 +1792,10 @@ index 00000000..391f16c1
 +  });
 +});
 diff --git a/test/openapi-doc.unit-spec.ts b/test/openapi-doc.unit-spec.ts
-index 6a086a44..599ca5cc 100644
+index e5485922..f0dd6547 100644
 --- a/test/openapi-doc.unit-spec.ts
 +++ b/test/openapi-doc.unit-spec.ts
-@@ -79,6 +79,7 @@ const PLATFORM_OPERATIONS: Array<[string, string]> = [
+@@ -93,6 +93,7 @@ const PLATFORM_OPERATIONS: Array<[string, string]> = [
    // Byte custody (MM-7, EVIDENCE_BLOB_UPLOAD_ENABLED — 404 until on).
    ['/v1/ingest/evidence-blob', 'post'],
    ['/v1/documents/{id}', 'get'],

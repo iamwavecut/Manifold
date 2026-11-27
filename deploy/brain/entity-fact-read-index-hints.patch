@@ -1,8 +1,8 @@
 diff --git a/src/entities/entities.service.ts b/src/entities/entities.service.ts
-index 62beede10..cba9f0b09 100644
+index 5e890004..3d4673b1 100644
 --- a/src/entities/entities.service.ts
 +++ b/src/entities/entities.service.ts
-@@ -321,8 +321,12 @@ export class EntitiesService {
+@@ -339,8 +339,12 @@ export class EntitiesService {
        const params: Record<string, unknown> = { rid: ref.id, ...asOfParams, ...user.params };
        const factRows = await queryRows<FactProfileRow>(
          db,
@@ -17,7 +17,7 @@ index 62beede10..cba9f0b09 100644
           ORDER BY recordedAt DESC
           LIMIT 100`,
 diff --git a/src/ingest/fact-expectation.ts b/src/ingest/fact-expectation.ts
-index b212e906f..396097dcf 100644
+index b212e906..396097dc 100644
 --- a/src/ingest/fact-expectation.ts
 +++ b/src/ingest/fact-expectation.ts
 @@ -106,15 +106,39 @@ export async function stampExpectation(args: {

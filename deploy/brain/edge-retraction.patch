@@ -1,18 +1,23 @@
 diff --git a/src/facts/facts.service.ts b/src/facts/facts.service.ts
-index 610c276..43d5321 100644
+index 0212c8ca..cfa5b237 100644
 --- a/src/facts/facts.service.ts
 +++ b/src/facts/facts.service.ts
-@@ -749,6 +749,9 @@ export class FactsService {
+@@ -790,6 +790,14 @@ export class FactsService {
    }
  
    async retract({ companyId, factId, dto, callerScopes }: RetractOptions): Promise<RetractResult> {
 +    if (factId.startsWith('knowledge_edge:')) {
-+      return this.retractEdge({ companyId, factId, dto, ...(callerScopes ? { callerScopes } : {}) });
++      return this.retractEdge({
++        companyId,
++        factId,
++        dto,
++        ...(callerScopes ? { callerScopes } : {}),
++      });
 +    }
      return this.surreal.withCompany(companyId, async (db) => {
        const ref = this.normalizeFactId(factId);
        const now = new Date();
-@@ -866,6 +869,80 @@ export class FactsService {
+@@ -907,6 +915,80 @@ export class FactsService {
      });
    }
  
@@ -94,10 +99,10 @@ index 610c276..43d5321 100644
     * Revive every fact whose `supersededBy` equals the just-retracted
     * fact AND whose retractionReason is exactly 'superseded' (the
 diff --git a/src/ingest/edge-writer.ts b/src/ingest/edge-writer.ts
-index 111c27b..a7fdb32 100644
+index ab3e53d9..81d94bdb 100644
 --- a/src/ingest/edge-writer.ts
 +++ b/src/ingest/edge-writer.ts
-@@ -6,6 +6,10 @@ interface EdgeIdRow {
+@@ -9,6 +9,10 @@ interface EdgeIdRow {
    id: unknown;
    validFrom?: unknown;
    validUntil?: unknown;
@@ -108,7 +113,7 @@ index 111c27b..a7fdb32 100644
  }
  
  /**
-@@ -146,6 +150,27 @@ export function edgeWidenStatements(
+@@ -149,6 +153,27 @@ export function edgeWidenStatements(
    return { stmts, params };
  }
  
@@ -136,7 +141,7 @@ index 111c27b..a7fdb32 100644
  /**
   * Create a knowledge_edge between two ALREADY-resolved entity IDs.
   * Idempotent within a scope: UNIQUE on (in, out, kind, scopeKey) —
-@@ -176,13 +201,18 @@ export async function createEdgeBetween(db: Surreal, p: EdgeWrite): Promise<stri
+@@ -186,13 +211,18 @@ export async function createEdgeBetween(db: Surreal, p: EdgeWrite): Promise<stri
      return edge ? String(edge.id) : null;
    } catch (err) {
      if (!isUniqueViolation(err)) throw err;
@@ -155,5 +160,5 @@ index 111c27b..a7fdb32 100644
 +      existing = (await reopenRetractedEdge(db, id)) ?? existing;
 +    }
      if (edgeTimingWidens(existing, p)) await widenEdgeTiming(db, id, p);
+     await addEdgeSupport(db, id, p.source);
      return id;
-   }

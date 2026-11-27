@@ -2,22 +2,21 @@
 
 Audited 2026-10-14 against upstream release pages and registries (previous
 audit 2026-10-02, whose selections are the baselines below). The matrix
-records stable releases available on that date, except for INITE Brain, which
-has published no release since v2.3.0 and is pinned to a `main` commit. It is
-a dated snapshot.
+records stable releases available on that date; the INITE Brain row was updated
+on 2026-11-27. It is a dated snapshot.
 
 ## Brain and graph storage
 
 | Surface | Baseline | Selected | Compatibility evidence |
 | --- | --- | --- | --- |
-| INITE Brain | v2.3.0, source `0f3d16db0d175794b79b73ef186351aa9f2da3c0` | `main` at `a567f6960c031b916549699fec7b89423c650d1e` (v2.3.0 plus 39 commits, the last on 2026-09-26) | [Commit log](https://github.com/inite-ai/inite-brain-service/compare/v2.3.0...a567f6960c031b916549699fec7b89423c650d1e); no later release exists. [Adapter and patch contracts](brain-patch.md). Adapter routes are unchanged. Migrations 0161-0167 come from upstream and 0168-0169 from Manifold's performance patches; all are one-way. Upstream's batched entity judge (#705) shortens document commits. |
-| SurrealDB | v3.3.0, image digest `sha256:681c6c22c287421b5c7d99e0fde79b6e0d32c36c1ddeaab2762a1661cb04cd20` | v3.3.5, image digest `sha256:3db515b88e79737aa828c05fbf1515748004ba57495ff89a013851cc3f1ad4b9` | [Release notes](https://surrealdb.com/releases/3.3). Security and stability patches within 3.3 (2026-11-27); same storage line, so `DATA_VERSION` stays 4. Its planner scans whole tables for `userId IS NONE` and for array `CONTAINS` on unindexed elements; see the performance patches in [brain-patch.md](brain-patch.md). |
+| INITE Brain | `main` at `a567f69` (v2.3.0 plus 39 commits) | v2.11.0, source `6ba986054a546c71c93c39e0e118e0f3dddc983f` | [Compare](https://github.com/inite-ai/inite-brain-service/compare/a567f69...v2.11.0). [Adapter and patch contracts](brain-patch.md). Adapter routes are unchanged. Upstream migrations 0168-0199 and Manifold's 9001-9003 are one-way. The image freezes upstream's flag defaults at the previous values. |
+| SurrealDB | v3.3.0, image digest `sha256:681c6c22c287421b5c7d99e0fde79b6e0d32c36c1ddeaab2762a1661cb04cd20` | v3.3.5, image digest `sha256:3db515b88e79737aa828c05fbf1515748004ba57495ff89a013851cc3f1ad4b9` | [Release notes](https://surrealdb.com/releases/3.3). Security and stability patches within 3.3 (2026-11-27); same storage line, so that change kept `DATA_VERSION` 4. Its planner scans whole tables for `userId IS NONE` and for array `CONTAINS` on unindexed elements; see the performance patches in [brain-patch.md](brain-patch.md). |
 
-Brain builds on Node 22 LTS (22.23.3, the same major line as its upstream
-Dockerfile) with the upstream frozen pnpm lockfile. Its dependency graph is taken as a tested upstream release; Manifold
+Brain builds on Node 24 (upstream's `node:24-slim` digest) with the upstream
+frozen pnpm lockfile. Its dependency graph is taken as a tested upstream release; Manifold
 does not independently rewrite that graph or substitute Node 26 beneath native
-bindings. Production activation crosses `DATA_VERSION` 4 and follows the
-[coordinated migration procedure](operations.md#data-version-4-migration).
+bindings. Production activation crosses `DATA_VERSION` 5 and follows the
+[coordinated migration procedure](operations.md#data-version-5-migration).
 
 ## Runtime and container images
 

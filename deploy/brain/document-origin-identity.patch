@@ -1,22 +1,27 @@
 diff --git a/src/documents/document-store.service.ts b/src/documents/document-store.service.ts
-index 57c9b9aee..c35ebd464 100644
+index 67a00dd9..24454c52 100644
 --- a/src/documents/document-store.service.ts
 +++ b/src/documents/document-store.service.ts
-@@ -152,8 +152,11 @@ export class DocumentStoreService {
-     // this caller's memory under THAT row's scope). Same-user re-posts
-     // still dedupe; two users asserting the same text stay independent
-     // origins for corroboration (0050) — scope-local facts anyway.
+@@ -176,12 +176,12 @@ export class DocumentStoreService {
+     // other's scope. No circle = the hash exactly as before.
+     const circles = actingCircleTags();
+     if (dto.userId !== undefined) await this.joinCircles(companyId, dto.userId, circles);
 -    const contentHash =
--      dto.userId === undefined ? sha256Hex(text) : userScopedContentHash(dto.userId, text);
+-      circles.length > 0
+-        ? sha256Hex(`circle\x1f${circles.join(',')}\x1f${dto.userId ?? ''}\x1f${text}`)
+-        : dto.userId === undefined
+-          ? sha256Hex(text)
+-          : userScopedContentHash(dto.userId, text);
 +    const contentHash = documentContentHash(text, {
 +      vertical: dto.contextRef.vertical,
 +      originUri: dto.originUri,
 +      userId: dto.userId,
++      circles,
 +    });
      // G9 write-anomaly signal (one increment per document body stored).
      this.metrics?.countIngestWrite('document');
      const chunks = chunkDocument(text, {
-@@ -402,6 +405,35 @@ export function userScopedContentHash(userId: string, text: string): string {
+@@ -450,6 +450,42 @@ export function userScopedContentHash(userId: string, text: string): string {
    return sha256Hex(`\u0000user-scope\u0000${userId}\u0000${text}`);
  }
  
@@ -31,6 +36,8 @@ index 57c9b9aee..c35ebd464 100644
 +    vertical: string;
 +    originUri?: string | undefined;
 +    userId?: string | undefined;
++    /** Acting trust circles; upstream hashes the same words apart per circle. */
++    circles?: readonly string[] | undefined;
 +  },
 +): string {
 +  const originUri = identity.originUri;
@@ -44,6 +51,11 @@ index 57c9b9aee..c35ebd464 100644
 +    canonicalManifoldOrigin === undefined
 +      ? text
 +      : `\u0000manifold-origin\u0000${canonicalManifoldOrigin}\u0000${text}`;
++  if (identity.circles && identity.circles.length > 0) {
++    return sha256Hex(
++      `circle\x1f${identity.circles.join(',')}\x1f${identity.userId ?? ''}\x1f${preimage}`,
++    );
++  }
 +  return identity.userId === undefined
 +    ? sha256Hex(preimage)
 +    : userScopedContentHash(identity.userId, preimage);
@@ -54,10 +66,10 @@ index 57c9b9aee..c35ebd464 100644
    return `doc:${contentHash}`;
 diff --git a/test/document-origin-identity.unit-spec.ts b/test/document-origin-identity.unit-spec.ts
 new file mode 100644
-index 000000000..10e03792b
+index 00000000..a11e7696
 --- /dev/null
 +++ b/test/document-origin-identity.unit-spec.ts
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,70 @@
 +import {
 +  documentContentHash,
 +  sha256Hex,
@@ -105,6 +117,26 @@ index 000000000..10e03792b
 +
 +    expect(documentContentHash(text, { ...identity, userId: 'user-1' })).not.toBe(
 +      documentContentHash(text, { ...identity, userId: 'user-2' }),
++    );
++  });
++
++  it('keeps the upstream circle hash for other verticals and salts Manifold circles too', () => {
++    const circles = ['circle:team'];
++    expect(documentContentHash(text, { vertical: 'meeting', userId: 'user-1', circles })).toBe(
++      sha256Hex(`circle\x1f${circles.join(',')}\x1fuser-1\x1f${text}`),
++    );
++    expect(
++      documentContentHash(text, {
++        vertical: 'manifold',
++        originUri: 'manifold://documents/first@r1',
++        circles,
++      }),
++    ).not.toBe(
++      documentContentHash(text, {
++        vertical: 'manifold',
++        originUri: 'manifold://documents/first@r2',
++        circles,
++      }),
 +    );
 +  });
 +});
