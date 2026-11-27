@@ -3,6 +3,9 @@ set -eu
 
 project=manifold-integration
 port=${MANIFOLD_PORT:-18080}
+# Every `compose up` below has to publish the same port, or a recreated
+# Manifold moves to the default one.
+export MANIFOLD_PORT="$port"
 url="http://127.0.0.1:${port}"
 api_key=${MANIFOLD_BOOTSTRAP_API_KEY:-replace-with-a-long-random-secret}
 compose_files="docker-compose.yml:docker-compose.integration.yml"
@@ -38,7 +41,7 @@ on_exit() {
 trap on_exit EXIT INT TERM
 cleanup
 
-MANIFOLD_PORT=$port compose up --detach --build --wait --wait-timeout 300
+compose up --detach --build --wait --wait-timeout 300
 
 curl --fail --silent --show-error "$url/openapi.yaml" >/dev/null
 curl --fail --silent --show-error "$url/app/" >/dev/null
