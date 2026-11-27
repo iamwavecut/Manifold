@@ -246,6 +246,20 @@ apply:
   `POST /v1/admin/documents/reindex` for the general indexer: both read old
   revisions again. Failed runs are still retried by the nightly sweep. A unit
   spec covers both settings.
+- [`bounded-name-scans.patch`](../deploy/brain/bounded-name-scans.patch) lets
+  at most four name scan statements run at once. A name scan reads every entity
+  of a type with its embedding, about 0.3 GiB in SurrealDB on 9,000 entities,
+  and a commit asks about every mention of a document at the same moment. On
+  production 37 statements overlapped and SurrealDB was killed at its 10 GiB
+  limit. Judge calls are not limited, and the same candidates reach them. A
+  large commit can take longer. A unit spec covers the bound and a failed
+  statement.
+- [`single-resolution-pass.patch`](../deploy/brain/single-resolution-pass.patch)
+  runs one fact resolution pass per tenant at a time. Every commit asks for a
+  pass (upstream #828), and passes that overlapped read the same oldest facts,
+  each holding about 1 GiB in SurrealDB. Requests made during a pass share the
+  one that follows it, so the facts of those commits are still judged. A unit
+  spec covers overlap, the following pass, and a failed pass.
 
 Manifold submits `POST /v1/ingest/document` with `mode: "async"`,
 `storeContent: true`, the general indexer, tenant context, and a canonical
