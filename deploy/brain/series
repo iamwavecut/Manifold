@@ -7,14 +7,9 @@ extraction-completion
 fatal-signal-default
 openai-chat-extra-body
 entity-fact-read-index-hints
-resolve-fact-entity-index
-selective-entity-fact-indexes
-derived-stale-cascade
 edge-retraction
 revive-superseded-index
-knn-empty-result-fallback
-hnsw-provision-early-tenants
 search-throttle-limit
 pool-stall-liveness
-provider-refusal
 predicate-vocabulary-refresh
+unindexed-tenant-vector-spec

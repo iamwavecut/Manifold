@@ -65,9 +65,9 @@ jobs:
       - run: python3 scripts/test-geta-release-request.py
       - run: git init -q /tmp/brain
       - run: git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
-      - run: git -C /tmp/brain fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
+      - run: git -C /tmp/brain fetch -q --depth 1 origin 6ba986054a546c71c93c39e0e118e0f3dddc983f
       - run: git -C /tmp/brain checkout -q FETCH_HEAD
-      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
+      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = 6ba986054a546c71c93c39e0e118e0f3dddc983f
       - run: scripts/brain-apply-patches.sh /tmp/brain
       - run: git -C /tmp/brain diff --check
 

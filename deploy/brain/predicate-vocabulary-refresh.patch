@@ -1,8 +1,8 @@
 diff --git a/src/ingest/memory-context.service.ts b/src/ingest/memory-context.service.ts
-index 1ab11063..6f744cb8 100644
+index 4449c65f..d17037a1 100644
 --- a/src/ingest/memory-context.service.ts
 +++ b/src/ingest/memory-context.service.ts
-@@ -26,6 +26,8 @@ const CONVERSATION_CACHE_MAX = 2000;
+@@ -28,6 +28,8 @@ const CONVERSATION_CACHE_MAX = 2000;
  const CONVERSATION_ENTITIES_MAX = 12;
  /** The tenant's predicate vocabulary changes slowly; one read per minute is plenty. */
  const PREDICATES_TTL_MS = 60_000;
@@ -10,8 +10,8 @@ index 1ab11063..6f744cb8 100644
 +const PREDICATES_REFRESH_MS = 10 * 60_000;
  const PREDICATES_CACHE_MAX = 512;
  
- export interface MemoryContextInput {
-@@ -66,6 +68,7 @@ export interface MemoryContextInput {
+ /**
+@@ -88,6 +90,7 @@ export interface MemoryContextInput {
  export class MemoryContextService {
    private readonly logger = new Logger(MemoryContextService.name);
    private readonly predicateCache = new Map<string, { at: number; predicates: string[] }>();
@@ -19,7 +19,7 @@ index 1ab11063..6f744cb8 100644
    /**
     * The entities the last turns of a conversation committed, keyed
     * `companyId|conversationId`. A subject the extractor filed a turn
-@@ -94,9 +97,16 @@ export class MemoryContextService {
+@@ -116,9 +119,16 @@ export class MemoryContextService {
     * predicate, for eleven turns, on the 2026-09-18 stand) — the young
     * tenant, whose vocabulary moves with every turn, is exactly the one
     * that needs it fresh; a quiet tenant keeps the cache.
@@ -37,7 +37,7 @@ index 1ab11063..6f744cb8 100644
      if (!conversationId || entityIds.length === 0) return;
      const key = `${companyId}|${conversationId}`;
      const prior = this.conversationEntities.get(key) ?? [];
-@@ -399,7 +409,31 @@ export class MemoryContextService {
+@@ -639,7 +649,31 @@ export class MemoryContextService {
  
    private async predicates(db: Surreal, companyId: string): Promise<string[]> {
      const hit = this.predicateCache.get(companyId);
@@ -68,12 +68,12 @@ index 1ab11063..6f744cb8 100644
 +  private async readPredicates(db: Surreal, companyId: string): Promise<string[]> {
      const [rows] = await db.query<[Array<{ predicate: string; n: number }>]>(
        `SELECT predicate, count() AS n FROM knowledge_fact
-         WHERE status = 'active' GROUP BY predicate ORDER BY n DESC LIMIT $k`,
+         WHERE status = 'active' GROUP BY predicate ORDER BY n DESC, predicate ASC LIMIT $k`,
 diff --git a/test/memory-context-service.unit-spec.ts b/test/memory-context-service.unit-spec.ts
-index 72d6d1cd..fc37d8d9 100644
+index 32291501..a716cc75 100644
 --- a/test/memory-context-service.unit-spec.ts
 +++ b/test/memory-context-service.unit-spec.ts
-@@ -254,6 +254,26 @@ describe('MemoryContextService.build', () => {
+@@ -383,6 +383,26 @@ describe('MemoryContextService.build', () => {
      expect(reads()).toBe(2);
    });
  

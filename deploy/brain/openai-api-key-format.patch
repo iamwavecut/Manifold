@@ -1,13 +1,13 @@
 diff --git a/src/common/env-validation.ts b/src/common/env-validation.ts
-index f524c16b3..acf722c30 100644
+index f24a6659..d8fba795 100644
 --- a/src/common/env-validation.ts
 +++ b/src/common/env-validation.ts
-@@ -32,7 +32,7 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
-   // extractor, generator, verifier, deriver, chat router and multi-hop
-   // planner all build an OpenAI client eagerly in their constructors, so a
-   // key-less boot fails there instead of here.
--  required({ env, name: 'OPENAI_API_KEY', errors, pattern: /^sk-/ });
-+  required({ env, name: 'OPENAI_API_KEY', errors });
+@@ -55,7 +55,7 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
+     }
+     env.OPENAI_API_KEY = HARNESS_PLACEHOLDER_KEY;
+   } else {
+-    required({ env, name: 'OPENAI_API_KEY', errors, pattern: /^sk-/ });
++    required({ env, name: 'OPENAI_API_KEY', errors });
+   }
  
    // ── Auth ─────────────────────────────────────────────────────────
-   // BRAIN_API_KEYS is required, but [] is acceptable in dev (no callers).

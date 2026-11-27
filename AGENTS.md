@@ -79,9 +79,9 @@ For changes to the pinned Brain integration, also verify:
 ```bash
 git init -q /tmp/brain
 git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
-git -C /tmp/brain fetch -q --depth 1 origin a567f6960c031b916549699fec7b89423c650d1e
+git -C /tmp/brain fetch -q --depth 1 origin 6ba986054a546c71c93c39e0e118e0f3dddc983f
 git -C /tmp/brain checkout -q FETCH_HEAD
-test "$(git -C /tmp/brain rev-parse HEAD)" = a567f6960c031b916549699fec7b89423c650d1e
+test "$(git -C /tmp/brain rev-parse HEAD)" = 6ba986054a546c71c93c39e0e118e0f3dddc983f
 scripts/brain-apply-patches.sh /tmp/brain
 ```
 
