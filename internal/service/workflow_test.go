@@ -668,6 +668,10 @@ func (g *workflowGraph) Search(context.Context, string, int, bool) ([]model.Sear
 	return nil, nil
 }
 
+func (g *workflowGraph) HasStoredResult(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (g *workflowGraph) IngestFact(context.Context, model.Fact, model.Entity) (string, string, error) {
 	return "", "", nil
 }

@@ -542,6 +542,10 @@ func (fakeGraphStore) IngestDocument(context.Context, upstream.GraphDocument) (u
 	return upstream.GraphIngestResult{}, nil
 }
 
+func (fakeGraphStore) HasStoredResult(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (fakeGraphStore) Search(context.Context, string, int, bool) ([]model.SearchHit, error) {
 	return nil, nil
 }

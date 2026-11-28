@@ -591,6 +591,8 @@ func (fakeGraph) Health(context.Context) error { return nil }
 func (fakeGraph) IngestDocument(context.Context, upstream.GraphDocument) (upstream.GraphIngestResult, error) {
 	return upstream.GraphIngestResult{DocumentID: "graph-document"}, nil
 }
+func (fakeGraph) HasStoredResult(context.Context, string, string) (bool, error) { return false, nil }
+
 func (fakeGraph) Search(context.Context, string, int, bool) ([]model.SearchHit, error) {
 	return nil, nil
 }

@@ -200,6 +200,12 @@ func (e *Engine) Seed(ctx context.Context, src SeedSource) error {
 			return err
 		}
 		err = src.SeedIngests(ctx, func(ingest SeedIngest) error {
+			// An empty projection comes from a release that kept the derived
+			// graph elsewhere, or from a revision that stated nothing. Without
+			// a stored result its next sync extracts it once.
+			if len(ingest.Result.Entities)+len(ingest.Result.Facts)+len(ingest.Result.Relations) == 0 {
+				return nil
+			}
 			encoded, err := encodeResult(ingest.Result)
 			if err != nil {
 				return err
