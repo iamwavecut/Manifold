@@ -119,6 +119,13 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	workers.Go(func() {
 		index.RunEmbedder(ctx)
 	})
+	// Data that an earlier release or an interrupted run left behind reaches
+	// the index and the public graph while Manifold already serves requests.
+	workers.Go(func() {
+		if err := svc.CatchUp(ctx); err != nil && ctx.Err() == nil {
+			logger.Warn("index catch-up is incomplete; the next start repeats it", "error", err)
+		}
+	})
 	serverError := make(chan error, 1)
 	go func() {
 		logger.Info("manifold listening", "address", cfg.Addr, "public_url", cfg.PublicURL, "version", version)

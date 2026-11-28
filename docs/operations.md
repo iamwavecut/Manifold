@@ -49,7 +49,9 @@ relation with its index ID, every live folder and document, and the projected
 graph of every `ready` document revision. It needs no model call. A repeated
 sync of a seeded revision (a retry, or a rename that touches every document)
 returns the stored result, so it neither calls the model nor changes the public
-projection. Entities created through the API keep no index ID; the seed finds
+projection. A revision whose projection is empty gets no stored result: the
+[catch-up pass](#upgrade-from-an-earlier-release) extracts it once. Entities
+created through the API keep no index ID; the seed finds
 them by name, as every API call about them does. `manifold.db` keeps fact
 statuses but not which fact superseded which, so the seed links each
 superseded value of `status`, `os_version` and `code_memory__default_value` to
@@ -181,38 +183,71 @@ Compose writes the log with the `local` driver: compressed, at most three
 A container keeps its log only while it exists; recreating it, as every
 deployment does, starts an empty log.
 
-## Data version 6 migration
+## Upgrade from an earlier release
 
-Data version 6 replaces OpenViking, INITE Brain and SurrealDB with the
-embedded index. `manifold.db` keeps its schema; the new release adds
-`index.db` beside it and never opens the `openviking-data`, `brain-cache` or
-`surrealdb-data` volumes. `DATA_VERSION=6` stops automatic deployment before
-the checkout or runtime changes.
+Every release from v0.2.0 on upgrades in place: start the current image on
+the existing `manifold-data` volume. Manifold migrates the data by itself; no
+step needs the API or a script.
 
-1. Confirm that no job is `indexing` or `extracting` and that the provider
-   account has credit. Record the counts in `GET /api/v1/status`.
-2. Stop the old stack and take the cold backup of all four old volumes with
-   the commands of the previous release. Verify the archive hashes.
-3. Replace the Compose project with the single `manifold` service of this
-   release. Keep `MANIFOLD_BOOTSTRAP_API_KEY` and the `OPENAI_*` provider
-   settings. `OPENAI_EMBEDDING_DIMENSIONS` is no longer read; the index uses
-   `MANIFOLD_EMBEDDING_DIMENSIONS`.
-4. Start Manifold. It logs `index seeded from the canonical database`, then
-   `index embedded` while the embedder fills the vectors. Check that the
-   status counts match step 1.
-5. Acceptance: once the embedder is idle, search and context return results
-   without `degraded_dependencies`. Write a small synthetic document, wait for
-   `ready`, check its entity and fact in graph search, update it and check that
-   the old fact disappears, then delete it.
-6. Keep the old volumes until acceptance holds for some days. Remove them
-   only on an explicit decision.
+1. Stop Manifold and back up `manifold-data` as in
+   [Data ownership](#data-ownership). A release before v0.3.0 also has the
+   `openviking-data`, `brain-cache` and `surrealdb-data` volumes. The current
+   release never opens them, so they stay as the rollback point.
+2. Update the checkout (`git pull --ff-only`) and keep `.env`.
+   `MANIFOLD_BOOTSTRAP_API_KEY`, `MANIFOLD_PUBLIC_URL` and the `OPENAI_*`
+   provider settings keep their meaning. Manifold ignores the variables of the
+   removed services (`OPENVIKING_*`, `BRAIN_*`, `SURREALDB_*`,
+   `FORGET_HMAC_KEY`) and `OPENAI_EMBEDDING_DIMENSIONS`;
+   `MANIFOLD_EMBEDDING_DIMENSIONS` (512 by default) sets the vector size. The
+   chat model must support `json_schema` structured output.
+3. Run `docker compose up -d --build --remove-orphans`. Compose removes the
+   containers of the removed services and keeps every volume.
+
+At start, Manifold then:
+
+- adds the tables and indexes that an earlier database lacks; earlier schemas
+  are a subset of the current one;
+- seeds `index.db` from `manifold.db` (see [Rebuild the index](#rebuild-the-index))
+  and embeds it in the background;
+- runs the catch-up pass. It runs at every start, and once the data is caught
+  up it changes nothing:
+  - Each live `ready` document whose current revision has no graph result in
+    the index gets an ordinary `document.sync` job. Releases before data
+    version 2 (v0.2.x) kept the derived graph in Brain, so all their documents
+    are extracted again from their current text, one provider call per
+    section of up to 12,000 characters. Later releases need this for few
+    documents or none. These jobs behave like any other:
+    `GET /api/v1/status` counts them in `pipeline.pending_jobs`, a provider
+    refusal blocks them until the provider recovers, and a restart continues
+    them.
+  - A fact or relation recorded through the API without an index ID, because
+    its graph call failed, gets one.
+  - A derived fact or relation that no live document claims any more, but that
+    an earlier retraction failed to withdraw, is retracted. Documents with a
+    waiting or running job are skipped until that job finishes. Public reads
+    already hid these records; the retraction also removes them from the
+    index ranking.
+
+  The log line `index catch-up finished` reports the counts of the pass.
+
+4. Acceptance: wait until `pipeline.pending_jobs` is 0. Documents that had
+   failed in the earlier release keep their status; read the stored error of
+   each job and retry it with `POST /api/v1/jobs/{id}/retry`. Check that search
+   and context answer without `degraded_dependencies`, then write, update and
+   delete a small synthetic document.
+5. Once acceptance has held for some days, remove the old volumes. List the
+   names with `docker volume ls` first; with the default project name they
+   are `manifold_openviking-data`, `manifold_brain-cache` and
+   `manifold_surrealdb-data`.
 
 Rollback: stop Manifold and start the previous release on the backed-up
-volumes. Documents written after the switch exist only in `manifold.db` and
-the new index; the previous release does not know them.
+volumes. Documents written after the upgrade exist only in the new
+`manifold.db` and index; the previous release does not know them.
 
-Earlier data-version procedures (versions 2–5) are in the v0.2.2 tree of this
-file.
+The production deployment broker stops at a `DATA_VERSION` boundary. There
+the operator installs the new runtime profile and adopts the release, see
+[Release and production deployment](#release-and-production-deployment); the
+data itself migrates as above.
 
 ## Local integration overrides
 

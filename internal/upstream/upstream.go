@@ -29,6 +29,9 @@ type DocumentStore interface {
 type GraphStore interface {
 	Health(context.Context) error
 	IngestDocument(context.Context, GraphDocument) (GraphIngestResult, error)
+	// HasStoredResult reports whether the graph holds the result of the
+	// document revision, so a repeated IngestDocument needs no extraction.
+	HasStoredResult(ctx context.Context, documentID, revision string) (bool, error)
 	Search(context.Context, string, int, bool) ([]model.SearchHit, error)
 	IngestFact(context.Context, model.Fact, model.Entity) (string, string, error)
 	IngestRelation(context.Context, model.Relation, model.Entity, model.Entity) (string, error)

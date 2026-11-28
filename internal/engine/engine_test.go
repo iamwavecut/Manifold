@@ -725,6 +725,56 @@ func TestSeedKeepsUpstreamIDsAndHistory(t *testing.T) {
 	}
 }
 
+// A release before data version 2 kept the derived graph outside Manifold,
+// so its ready revisions project nothing. The seed must leave them without a
+// stored result, so a later sync extracts them instead of replaying nothing.
+func TestSeedLeavesRevisionsWithoutAProjectionForExtraction(t *testing.T) {
+	model := &fakeModel{extractions: map[string]Extraction{"Redis": singleFact("Atlas", "uses", "Redis")}}
+	engine := openTestEngine(t, model)
+	source := seedSource{
+		entities: []SeedEntity{{Key: "knowledge_entity:atlas", UpstreamID: "knowledge_entity:atlas", Name: "Atlas", Kind: "project"}},
+		facts: []SeedFact{{UpstreamID: "knowledge_fact:1", EntityKey: "knowledge_entity:atlas", Predicate: "uses",
+			Object: "Postgres", Status: "active", Confidence: 0.7, ValidFrom: day, SourceDocumentID: "projected"}},
+		documents: []SeedDocument{
+			{URI: "viking://resources/manifold/projected.md", Content: "Atlas uses Postgres."},
+			{URI: "viking://resources/manifold/legacy.md", Content: "Atlas uses Redis."},
+		},
+		ingests: []SeedIngest{
+			{DocumentID: "projected", Revision: 1, Result: upstream.GraphIngestResult{
+				DocumentID: "projected", OriginURI: "manifold://documents/projected@r1", Revision: "r1",
+				FactIDs: []string{"knowledge_fact:1"},
+				Facts: []upstream.GraphFact{{BrainID: "knowledge_fact:1", EntityBrainID: "knowledge_entity:atlas",
+					Predicate: "uses", Object: "Postgres", Status: "active", Confidence: 0.7, ValidFrom: day}},
+			}},
+			{DocumentID: "legacy", Revision: 3, Result: upstream.GraphIngestResult{
+				DocumentID: "legacy", OriginURI: "manifold://documents/legacy@r3", Revision: "r3",
+			}},
+		},
+	}
+	if err := engine.Seed(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		document, revision string
+		want               bool
+	}{{"projected", "r1", true}, {"legacy", "r3", false}} {
+		stored, err := engine.Graph().HasStoredResult(t.Context(), check.document, check.revision)
+		if err != nil || stored != check.want {
+			t.Fatalf("%s@%s stored = %v, err = %v; want %v", check.document, check.revision, stored, err, check.want)
+		}
+	}
+	result, err := engine.Graph().IngestDocument(t.Context(), graphDocument("legacy", "r3", "Atlas uses Redis.", day))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.chatCalls.Load() != 1 || len(result.Facts) != 1 || result.Facts[0].Object != "Redis" {
+		t.Fatalf("legacy revision = %+v after %d model calls, want one extraction", result, model.chatCalls.Load())
+	}
+	if stored, err := engine.Graph().HasStoredResult(t.Context(), "legacy", "r3"); err != nil || !stored {
+		t.Fatalf("after extraction stored = %v, err = %v", stored, err)
+	}
+}
+
 // Manifold's database keeps statuses but not which fact superseded which.
 // The seed rebuilds that chain for single-valued predicates, so retracting
 // a seeded current value revives the value before it.

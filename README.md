@@ -98,6 +98,18 @@ curl --fail http://localhost:8080/api/v1/meta
 The stack is one container. It needs outbound access to the model provider and
 publishes only the API port.
 
+To upgrade an existing installation, including one from before the embedded
+index, back up the `manifold-data` volume, then run:
+
+```bash
+git pull --ff-only
+docker compose up -d --build --remove-orphans
+```
+
+Manifold migrates its data at start. See
+[Upgrade from an earlier release](docs/operations.md#upgrade-from-an-earlier-release)
+for what it does and how to check it.
+
 - Workbench: <http://localhost:8080/app/>
 - Interactive API docs: <http://localhost:8080/docs/api>
 - OpenAPI YAML: <http://localhost:8080/openapi.yaml>
@@ -328,9 +340,9 @@ metadata plus authenticated semantic retrieval, and rolls back the clean
 checkout if deep smoke fails. Tags publish multi-architecture GHCR images;
 production metadata is the source of truth for the running version and commit.
 Automatic deployment refuses changes across `DATA_VERSION` boundaries, where
-code-only rollback is unsafe. Moving from the Brain, SurrealDB and OpenViking
-stack to the embedded index (data version 6) follows the procedure in
-[docs/operations.md](docs/operations.md).
+code-only rollback is unsafe. The data itself migrates by itself from every
+release since v0.2.0, the Brain, SurrealDB and OpenViking stack included; see
+[Upgrade from an earlier release](docs/operations.md#upgrade-from-an-earlier-release).
 
 ## Built on
 

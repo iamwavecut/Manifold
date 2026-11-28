@@ -161,6 +161,22 @@ func (g *Graph) IngestDocument(ctx context.Context, document upstream.GraphDocum
 	return result, nil
 }
 
+// HasStoredResult reports whether the index holds the graph result of the
+// document revision, so a repeated ingest of it needs no model call.
+func (g *Graph) HasStoredResult(ctx context.Context, documentID, revision string) (bool, error) {
+	number, err := revisionNumber(revision)
+	if err != nil {
+		return false, err
+	}
+	var found int
+	err = g.e.db.QueryRowContext(ctx, `SELECT 1 FROM ingests WHERE document_id = ? AND revision = ?`,
+		documentID, number).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (g *Graph) storedResult(ctx context.Context, documentID string, revision int) (upstream.GraphIngestResult, bool, error) {
 	var encoded string
 	err := g.e.db.QueryRowContext(ctx, `SELECT result FROM ingests WHERE document_id = ? AND revision = ?`,
