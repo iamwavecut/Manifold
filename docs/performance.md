@@ -17,6 +17,30 @@ Brain and SurrealDB did this work, are in the v0.2.2 tree of this file.
 5. The background embedder gives the new chunks and facts vectors, 64 texts
    per provider call. The job does not wait for it.
 
+## Production after the data version 6 migration (2026-11-28)
+
+Measured on the production host right after the switch, with the OpenRouter
+provider (`deepseek/deepseek-v4.1-flash-1017` for extraction,
+`perplexity/pplx-embed-v1-0.6b` at 512 dimensions for embeddings). The corpus
+held 202 documents, 9,130 entities, 46,525 facts and 11,101 relations.
+
+| Measure | Result |
+| --- | --- |
+| Seed of a new `index.db` | 8.9 s |
+| Embedding backfill | 20,594 texts (1,315 chunks, 19,279 live facts) in about 95 s |
+| Container memory after the backfill | 47.8 MiB anonymous, 105 MiB with page cache (cgroup `memory.stat`) |
+| Container memory peak (seed and backfill, with page cache) | 225 MiB |
+| `index.db` | 52.5 MB, WAL 4 MB; `manifold.db` 98 MB |
+| Sync of a short new document, extraction included | 2.0 s |
+| Search on a copy of production, first query of a text | hybrid 261 ms (includes the query embedding call), semantic 67 ms, graph 71 ms |
+| Host memory in use | 11.0 GB before the switch, 5.1 GB after |
+
+The previous stack used 6.0 GiB at the moment of the switch (SurrealDB
+3.36 GiB, Brain 1.81 GiB, OpenViking 0.85 GiB, Manifold 20 MiB) and 4.3 GB of
+derived data on disk (SurrealDB 3.6 GB, Brain cache 622 MB, OpenViking 91 MB).
+The service was unavailable for 86 seconds, most of it the cold backup of the
+old volumes.
+
 ## Footprint on a production-sized corpus (2026-11-28)
 
 The corpus is synthetic, shaped like production on 2026-11-28: 214 documents
