@@ -71,6 +71,11 @@ func (p Principal) Has(required ...string) bool {
 // maxVerifiedSecrets bounds the verified-secret cache; it is cleared when full.
 const maxVerifiedSecrets = 1024
 
+// maxConcurrentVerifications bounds the argon2id checks that run at once.
+// Each one allocates 64 MiB, and any client can trigger one by sending an
+// unknown bearer token.
+const maxConcurrentVerifications = 2
+
 type Manager struct {
 	store  *store.Store
 	verify func(secret, encoded string) bool
@@ -80,6 +85,8 @@ type Manager struct {
 	// the key record it matched. argon2id costs about 100 ms per call, and
 	// every authenticated request used to pay it.
 	verified map[[sha256.Size]byte]verifiedKey
+	// checks holds one slot per argon2id check in progress.
+	checks chan struct{}
 }
 
 type verifiedKey struct {
@@ -88,7 +95,10 @@ type verifiedKey struct {
 }
 
 func NewManager(s *store.Store) *Manager {
-	return &Manager{store: s, verify: VerifySecret, verified: map[[sha256.Size]byte]verifiedKey{}}
+	return &Manager{
+		store: s, verify: VerifySecret, verified: map[[sha256.Size]byte]verifiedKey{},
+		checks: make(chan struct{}, maxConcurrentVerifications),
+	}
 }
 
 func (m *Manager) Bootstrap(ctx context.Context, secret string) error {
@@ -131,6 +141,12 @@ func (m *Manager) Authenticate(ctx context.Context, secret string) (Principal, e
 				return principalFor(key), nil
 			}
 		}
+	}
+	select {
+	case m.checks <- struct{}{}:
+		defer func() { <-m.checks }()
+	case <-ctx.Done():
+		return Principal{}, ctx.Err()
 	}
 	for _, key := range keys {
 		if m.verify(secret, key.SecretHash) {

@@ -165,7 +165,14 @@ The index runs in the Manifold process. Compose limits the container to
 `MANIFOLD_GOMEMLIMIT` (384 MiB): the Go runtime collects garbage harder as the
 heap nears that value. Each SQLite connection keeps a page cache of at most
 4 MB. A vector takes `MANIFOLD_EMBEDDING_DIMENSIONS` bytes (512 by default).
-See [performance](performance.md) for measured figures.
+
+An API key check runs Argon2id with 64 MiB of memory. Manifold runs it once
+per key and process, then remembers the result; an unknown bearer token runs
+it on every request. At most two checks run at once, so a flood of invalid
+tokens costs at most 128 MiB and two checks' worth of CPU; other requests with
+unknown tokens wait, and stop waiting when their client disconnects. After the
+first check the Go runtime keeps up to about 130 MiB for a few minutes before
+it returns the memory. See [performance](performance.md) for measured figures.
 
 ## Container logs
 

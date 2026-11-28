@@ -1,8 +1,13 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/iamwavecut/Manifold/internal/store"
 )
@@ -75,6 +80,84 @@ func TestAuthenticateRunsArgon2OncePerSecret(t *testing.T) {
 	if verifications != 3 {
 		t.Fatalf("a rejected secret must be verified every time: argon2id ran %d times, want 3", verifications)
 	}
+}
+
+func TestAuthenticateBoundsConcurrentArgon2Checks(t *testing.T) {
+	t.Parallel()
+
+	db := openAuthStore(t)
+	createKey(t, db, "reader", "a-long-cryptographically-random-reader-key", []string{ReadDocuments})
+	manager := NewManager(db)
+	var active, peak atomic.Int32
+	manager.verify = func(string, string) bool {
+		now := active.Add(1)
+		for {
+			old := peak.Load()
+			if now <= old || peak.CompareAndSwap(old, now) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		active.Add(-1)
+		return false
+	}
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			if _, err := manager.Authenticate(t.Context(), fmt.Sprintf("wrong-secret-%d", i)); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("wrong secret: err = %v, want ErrNotFound", err)
+			}
+		})
+	}
+	wg.Wait()
+	// Each check allocates 64 MiB; unbounded checks of random bearer tokens
+	// could exhaust the container's memory.
+	if got := peak.Load(); got > maxConcurrentVerifications {
+		t.Fatalf("%d argon2id checks ran at once, want at most %d", got, maxConcurrentVerifications)
+	}
+}
+
+func TestAuthenticateStopsWaitingForACheckWhenTheRequestEnds(t *testing.T) {
+	t.Parallel()
+
+	db := openAuthStore(t)
+	createKey(t, db, "reader", "a-long-cryptographically-random-reader-key", []string{ReadDocuments})
+	manager := NewManager(db)
+	started, release := make(chan struct{}, maxConcurrentVerifications), make(chan struct{})
+	manager.verify = func(string, string) bool {
+		started <- struct{}{}
+		<-release
+		return false
+	}
+	var wg sync.WaitGroup
+	for range maxConcurrentVerifications {
+		wg.Go(func() { _, _ = manager.Authenticate(t.Context(), "wrong-secret-holding-a-slot") })
+	}
+	for range maxConcurrentVerifications {
+		<-started
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, err := manager.Authenticate(ctx, "wrong-secret-waiting")
+		result <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("waiting check: err = %v, want context.Canceled", err)
+		}
+		close(release)
+	case <-time.After(time.Second):
+		t.Error("a request that ended still waited for a free argon2id slot")
+		close(release)
+		<-result
+	}
+	wg.Wait()
 }
 
 func TestAuthenticateRejectsRevokedAndReplacedKeys(t *testing.T) {

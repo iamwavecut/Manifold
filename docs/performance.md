@@ -35,6 +35,15 @@ held 202 documents, 9,130 entities, 46,525 facts and 11,101 relations.
 | Search on a copy of production, first query of a text | hybrid 261 ms (includes the query embedding call), semantic 67 ms, graph 71 ms |
 | Host memory in use | 11.0 GB before the switch, 5.1 GB after |
 
+After a restart with an existing `index.db` (release `f726d1a`), Manifold
+listened within a second and skipped the seed. The first authenticated
+request ran the Argon2id key check (64 MiB), and the Go heap stayed at about
+100 MiB for about five minutes; then it fell to 7 MiB, with 39 MiB of
+anonymous memory for the whole process. A canonicalized search hit used to
+copy its document's full text twice; it reads only the metadata now, which
+cut the allocations of a search and a context request on the synthetic corpus
+from 25 MB to 5.5 MB.
+
 The previous stack used 6.0 GiB at the moment of the switch (SurrealDB
 3.36 GiB, Brain 1.81 GiB, OpenViking 0.85 GiB, Manifold 20 MiB) and 4.3 GB of
 derived data on disk (SurrealDB 3.6 GB, Brain cache 622 MB, OpenViking 91 MB).
