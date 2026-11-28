@@ -11,11 +11,11 @@ import (
 	"time"
 )
 
-// A document whose extraction Brain finishes while Manifold is not watching
-// must converge on the same revision: one job that reaches ready, one fact,
-// no second extraction. The script holds the provider so Brain stays busy,
-// then restarts Manifold (restart_*), or lets Manifold give up on the wait and
-// retries the job after Brain finished (finished_retry_*).
+// A document whose extraction is interrupted must converge on the same
+// revision: one job that reaches ready, one fact, two entities. The script
+// holds the provider so the extraction stays in flight, then restarts
+// Manifold (restart_*), or lets the extraction time out and retries the job
+// once the provider answers again (finished_retry_*).
 type convergenceState struct {
 	JobID    string  `json:"job_id"`
 	Facts    float64 `json:"facts"`
@@ -48,8 +48,8 @@ func TestFinishedRevisionRetryVerify(t *testing.T) {
 	verifyConverged(t, "finished_retry_verify", "finished-retry", true)
 }
 
-// submitHeld writes a document Brain cannot finish yet, and leaves Manifold
-// either waiting for it or, when terminal, after it gave up waiting.
+// submitHeld writes a document whose extraction cannot finish yet, and leaves
+// Manifold either waiting for it or, when terminal, after it gave up waiting.
 func submitHeld(t *testing.T, phase string, tc convergenceCase) {
 	t.Helper()
 	if os.Getenv("MANIFOLD_INTEGRATION_PHASE") != phase {
@@ -67,12 +67,10 @@ func submitHeld(t *testing.T, phase string, tc convergenceCase) {
 	if tc.terminal {
 		job := waitForTerminalJob(t, ctx, c, before.JobID)
 		if got := stringField(t, job, "status"); got != "partially_ready" {
-			t.Fatalf("job status while Brain is busy = %q, want partially_ready; body=%s", got, mustJSON(job))
+			t.Fatalf("job status while the provider is held = %q, want partially_ready; body=%s", got, mustJSON(job))
 		}
 	} else {
 		awaitExtracting(t, ctx, c, tc.id)
-		// The Brain document ID is persisted right after the submit returns.
-		time.Sleep(3 * time.Second)
 	}
 	data, err := json.Marshal(before)
 	if err != nil {
@@ -101,8 +99,7 @@ func verifyConverged(t *testing.T, phase, id string, retry bool) {
 	defer cancel()
 
 	if retry {
-		c.expectStatus(t, ctx, http.MethodPost, "/api/v1/jobs/"+before.JobID+"/retry", nil,
-			"integration-"+id+"-retry", "", http.StatusAccepted)
+		retryUnlessRecovered(t, ctx, c, before.JobID, "integration-"+id+"-retry")
 	}
 	waitForJob(t, ctx, c, before.JobID, "ready")
 	after := graphCounts(t, ctx, c)
@@ -118,8 +115,8 @@ func verifyConverged(t *testing.T, phase, id string, retry bool) {
 	waitForJob(t, ctx, c, nestedStringField(t, deleted.Body, "job", "id"), "ready")
 }
 
-// awaitExtracting waits until Manifold has handed the document to Brain; the
-// job itself stays `indexing` while it runs.
+// awaitExtracting waits until Manifold has sent the document to extraction;
+// the job itself stays `indexing` while it runs.
 func awaitExtracting(t *testing.T, ctx context.Context, c *client, id string) {
 	t.Helper()
 	ticker := time.NewTicker(500 * time.Millisecond)

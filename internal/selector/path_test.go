@@ -36,3 +36,25 @@ func TestValidateGlobRejectsShellSpecificSyntax(t *testing.T) {
 		t.Fatalf("valid glob was rejected: %v", err)
 	}
 }
+
+func TestLiteralPrefixKeepsTheLeadingExactSegments(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{pattern: "projects/ngbot/**", want: "projects/ngbot/"},
+		{pattern: "/projects/*/notes/", want: "projects/"},
+		{pattern: "shared/agent-practice/memory-practice", want: "shared/agent-practice/memory-practice"},
+		{pattern: "tasks/incident-4?", want: "tasks/"},
+		{pattern: "**", want: ""},
+		{pattern: "*/notes", want: ""},
+		{pattern: "", want: ""},
+	}
+	for _, test := range tests {
+		if got := LiteralPrefix(test.pattern); got != test.want {
+			t.Errorf("LiteralPrefix(%q) = %q, want %q", test.pattern, got, test.want)
+		}
+	}
+}

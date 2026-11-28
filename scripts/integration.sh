@@ -17,10 +17,6 @@ compose() {
 }
 state_file=
 
-has_degraded_dependencies() {
-	printf '%s\n' "$1" | tr -d '\n' | grep -Eq '"degraded_dependencies"[[:space:]]*:[[:space:]]*\[[[:space:]]*"'
-}
-
 cleanup() {
 	if [ -n "$state_file" ]; then
 		rm -f "$state_file"
@@ -38,6 +34,30 @@ on_exit() {
 	exit "$status"
 }
 
+run_phase() {
+	MANIFOLD_URL=$url \
+		MANIFOLD_API_KEY=$api_key \
+		MANIFOLD_INTEGRATION_PHASE=$1 \
+		MANIFOLD_INTEGRATION_STATE=$state_file \
+		go test -tags=integration -count=1 -v ./test/integration
+}
+
+wait_for_manifold() {
+	attempt=0
+	until curl --fail --silent "$url/health" >/dev/null; do
+		attempt=$((attempt + 1))
+		if [ "$attempt" -ge 60 ]; then
+			echo "Manifold did not become healthy" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+}
+
+provider_control() {
+	compose exec -T provider /usr/local/bin/provider control "$1" "$2"
+}
+
 trap on_exit EXIT INT TERM
 cleanup
 
@@ -49,57 +69,6 @@ curl --fail --silent --show-error "$url/app/" >/dev/null
 MANIFOLD_URL=$url \
 MANIFOLD_API_KEY=$api_key \
 	go test -tags=integration -count=1 -v ./test/integration
-
-# The derived-memory test deleted the only document that stated where Mira
-# Chen works. Brain itself must stop serving those facts, not only Manifold's
-# canonicalized search.
-# shellcheck disable=SC2016 # expanded inside the Manifold container
-brain_search=$(compose exec -T manifold sh -c 'wget -qO- \
-	--header "Authorization: Bearer $BRAIN_API_KEY" --header "Content-Type: application/json" \
-	--post-data "{\"query\":\"Mira Chen works at\",\"limit\":20,\"searchMode\":\"hybrid\"}" \
-	http://brain:3000/v1/search')
-case "$brain_search" in
-	*'"results"'*) ;;
-	*)
-		echo "Brain search returned an incomplete response" >&2
-		exit 1
-		;;
-esac
-case "$brain_search" in
-	*'"object":"Meridian Labs"'* | *'"object":"Borealis Labs"'*)
-		echo "Brain still serves facts of a deleted document" >&2
-		exit 1
-		;;
-esac
-
-# Brain builds its HNSW index when it first opens the tenant, and the
-# vector leg must then answer from it: on SurrealDB 3.3 a KNN query that
-# finds no usable index returns no rows instead of failing.
-surreal_pass=$(sed -n 's/^SURREALDB_PASSWORD=//p' .env.example)
-attempt=0
-until printf '%s\n' 'INFO FOR INDEX fact_embedding_hnsw ON knowledge_fact;' |
-	compose exec -T surrealdb /surreal sql --endpoint http://127.0.0.1:8000 \
-		--user root --pass "$surreal_pass" --ns manifold --db co_manifold --hide-welcome --json 2>/dev/null |
-	grep -q '"status":"ready"'; do
-	attempt=$((attempt + 1))
-	if [ "$attempt" -ge 60 ]; then
-		echo "Brain did not build a ready fact_embedding_hnsw index" >&2
-		exit 1
-	fi
-	sleep 1
-done
-# shellcheck disable=SC2016 # expanded inside the Manifold container
-vector_search=$(compose exec -T manifold sh -c 'wget -qO- \
-	--header "Authorization: Bearer $BRAIN_API_KEY" --header "Content-Type: application/json" \
-	--post-data "{\"query\":\"integration note\",\"limit\":5,\"searchMode\":\"vector\"}" \
-	http://brain:3000/v1/search')
-case "$vector_search" in
-	*'"results":[{'*) ;;
-	*)
-		echo "Brain vector search returned no results with a ready HNSW index" >&2
-		exit 1
-		;;
-esac
 
 skill_result=$(MANIFOLD_URL=$url \
 	MANIFOLD_API_KEY=$api_key \
@@ -128,251 +97,59 @@ case "$skill_tree" in
 		;;
 esac
 
+# A new, empty index file is seeded from the canonical database at start.
+# The rest of the run uses that seeded index.
+export MANIFOLD_INTEGRATION_INDEX_PATH=/var/lib/manifold/index-reseeded.db
+compose up --detach --no-deps --wait manifold
+wait_for_manifold
+run_phase reseed_verify
+
 # A provider that refuses extraction for lack of credit: Manifold names the
 # cause and, once the provider accepts again, finishes the document by itself.
-provider_refuse() {
-	compose exec -T provider wget -qO- --header "Content-Type: application/json" \
-		--post-data "{\"status\":$1}" http://127.0.0.1:8081/control/refuse >/dev/null
-}
 state_file=$(mktemp)
-for phase in provider_refusal provider_recovery; do
-	if [ "$phase" = provider_refusal ]; then
-		provider_refuse 402
-	else
-		provider_refuse 0
-	fi
-	MANIFOLD_URL=$url \
-		MANIFOLD_API_KEY=$api_key \
-		MANIFOLD_INTEGRATION_PHASE=$phase \
-		MANIFOLD_INTEGRATION_STATE=$state_file \
-		go test -tags=integration -count=1 -v ./test/integration
-done
+provider_control refuse 402
+run_phase provider_refusal
+provider_control refuse 0
+run_phase provider_recovery
 rm -f "$state_file"
-state_file=
 
-# Brain's search above proves the tenant database exists.
-surreal_query() {
-	printf '%s\n' "$1" |
-		compose exec -T surrealdb /surreal sql --endpoint http://127.0.0.1:8000 \
-			--user root --pass "$surreal_pass" --ns manifold --db co_manifold --hide-welcome --json 2>/dev/null
-}
-# Every document Manifold sent was read: a generalist run kept raw would end
-# `skipped` while the document still reached ready.
-runs=$(surreal_query "SELECT status, count() FROM indexer_run WHERE packId = '_general' GROUP BY status;")
-case "$runs" in
-	*'"skipped"'*)
-		echo "Brain skipped a generalist run: $runs" >&2
-		exit 1
-		;;
-	*'"succeeded"'*) ;;
-	*)
-		echo "Brain recorded no succeeded generalist run: $runs" >&2
-		exit 1
-		;;
-esac
-
-provider_hold() {
-	compose exec -T provider wget -qO- --header "Content-Type: application/json" \
-		--post-data "{\"hold\":$1}" http://127.0.0.1:8081/control/hold >/dev/null
-}
-run_phase() {
-	MANIFOLD_URL=$url \
-		MANIFOLD_API_KEY=$api_key \
-		MANIFOLD_INTEGRATION_PHASE=$1 \
-		MANIFOLD_INTEGRATION_STATE=$state_file \
-		go test -tags=integration -count=1 -v ./test/integration
-}
-wait_for_manifold() {
-	attempt=0
-	until curl --fail --silent "$url/health" >/dev/null; do
-		attempt=$((attempt + 1))
-		if [ "$attempt" -ge 60 ]; then
-			echo "Manifold did not become healthy" >&2
-			exit 1
-		fi
-		sleep 1
-	done
-}
-wait_for_brain_runs() {
-	attempt=0
-	while :; do
-		open=$(surreal_query "SELECT count() FROM indexer_run WHERE status IN ['pending','running'] GROUP ALL;")
-		case "$open" in
-			*'"count":0}'*) break ;;
-		esac
-		attempt=$((attempt + 1))
-		if [ "$attempt" -ge 120 ]; then
-			echo "Brain runs did not finish: $open" >&2
-			exit 1
-		fi
-		sleep 1
-	done
-}
-
-# Manifold restarts while Brain still reads the document.
+# Manifold restarts while the provider still holds the extraction.
 state_file=$(mktemp)
-provider_hold true
+provider_control hold true
 run_phase restart_submit
 compose restart manifold
 wait_for_manifold
-provider_hold false
+provider_control hold false
 run_phase restart_verify
 
-# Manifold gives up waiting, Brain finishes the revision, and the retry
-# converges on it without a second extraction.
-provider_hold true
+# The extraction times out while the provider holds it; once the provider
+# answers again, the retry converges on the same revision.
+provider_control hold true
 export MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT=15s
 compose up --detach --no-deps --wait manifold
 unset MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT
 run_phase finished_retry_submit
-provider_hold false
-wait_for_brain_runs
+provider_control hold false
 compose up --detach --no-deps --wait manifold
 wait_for_manifold
 run_phase finished_retry_verify
-retried_runs=$(surreal_query "SELECT count() FROM indexer_run WHERE docId.originUri = 'manifold://documents/finished-retry@r1' GROUP ALL;")
-case "$retried_runs" in
-	*'"count":1}'*) ;;
-	*)
-		echo "Brain read the retried revision more than once: $retried_runs" >&2
-		exit 1
-		;;
-esac
+rm -f "$state_file"
+
+# The provider goes away: the job keeps its semantic error across a Manifold
+# restart and completes once the provider is back.
+state_file=$(mktemp)
+compose stop provider
+run_phase create_failure
+compose restart manifold
+wait_for_manifold
+run_phase verify_failure
+compose up --detach --no-deps --wait --wait-timeout 120 provider
+run_phase recover_failure
 rm -f "$state_file"
 state_file=
-
-# Keep Brain running while SurrealDB restarts. Its scoped pool must restore
-# authentication rather than remaining connected as an anonymous session.
-compose restart surrealdb
-attempt=0
-while :; do
-	recovery_search=$(MANIFOLD_URL=$url \
-		MANIFOLD_API_KEY=$api_key \
-		sh skills/manifold/scripts/manifold --json search "scoped session recovery" 2>/dev/null || true)
-	case "$recovery_search" in
-		*'"items"'*)
-			if ! has_degraded_dependencies "$recovery_search"; then
-				break
-			fi
-			;;
-	esac
-	attempt=$((attempt + 1))
-	if [ "$attempt" -ge 60 ]; then
-		echo "Brain did not recover its scoped SurrealDB session" >&2
-		exit 1
-	fi
-	sleep 1
-done
-recovery_context=$(MANIFOLD_URL=$url \
-	MANIFOLD_API_KEY=$api_key \
-	sh skills/manifold/scripts/manifold --json context "scoped session recovery")
-if has_degraded_dependencies "$recovery_context"; then
-	echo "Context remained degraded after SurrealDB restart" >&2
-	exit 1
-fi
-case "$recovery_context" in
-	*'"context"'*) ;;
-	*)
-		echo "Context recovery response was incomplete" >&2
-		exit 1
-		;;
-esac
-
-# A Brain process that stops serving must be replaced, and fatal signals must
-# terminate it instead of starting a graceful shutdown that keeps it alive.
-brain_container=$(compose ps --quiet brain)
-brain_exec() {
-	compose exec -T brain sh -c "$1"
-}
-brain_restarts() {
-	docker inspect --format '{{.RestartCount}}' "$brain_container"
-}
-# Health status survives a restart, so require a successful probe that began
-# after the signal in addition to a higher restart count.
-wait_for_brain_replacement() {
-	previous=$1
-	signalled=$2
-	attempt=0
-	while :; do
-		probes=$(docker inspect --format \
-			'{{range .State.Health.Log}}{{if eq .ExitCode 0}}{{.Start.Unix}} {{end}}{{end}}' \
-			"$brain_container")
-		probed=0
-		for probe in $probes; do
-			if [ "$probe" -gt "$signalled" ]; then
-				probed=1
-			fi
-		done
-		if [ "$(brain_restarts)" -gt "$previous" ] && [ "$probed" -eq 1 ]; then
-			return 0
-		fi
-		attempt=$((attempt + 1))
-		if [ "$attempt" -ge 180 ]; then
-			echo "Brain was not replaced after $3" >&2
-			exit 1
-		fi
-		sleep 1
-	done
-}
-# shellcheck disable=SC2016 # expanded inside the Brain container
-caught=$(brain_exec 'pid=$(cat /proc/1/task/1/children); grep "^SigCgt:" /proc/${pid%% *}/status')
-caught=${caught##*[[:space:]]}
-# Nest's all-signal hooks add SIGILL, SIGBUS and SIGFPE (signals 4, 7 and 8)
-# together with SIGSEGV. Node itself already catches SIGSEGV for its
-# WebAssembly trap handler, so that case is checked by delivering it below.
-if [ $((0x$caught & 0xc8)) -ne 0 ]; then
-	echo "Brain intercepts fatal signals: SigCgt=$caught" >&2
-	exit 1
-fi
-restarts=$(brain_restarts)
-signalled=$(date +%s)
-# shellcheck disable=SC2016
-brain_exec 'kill -STOP $(cat /proc/1/task/1/children)'
-wait_for_brain_replacement "$restarts" "$signalled" "it stopped serving"
-restarts=$(brain_restarts)
-signalled=$(date +%s)
-# shellcheck disable=SC2016
-brain_exec 'kill -SEGV $(cat /proc/1/task/1/children)'
-wait_for_brain_replacement "$restarts" "$signalled" "a fatal signal"
-
-compose stop brain
-state_file=$(mktemp)
-MANIFOLD_URL=$url \
-	MANIFOLD_API_KEY=$api_key \
-	MANIFOLD_INTEGRATION_PHASE=create_failure \
-	MANIFOLD_INTEGRATION_STATE=$state_file \
-	go test -tags=integration -count=1 -v ./test/integration
-
-compose restart manifold
-
-attempt=0
-until curl --fail --silent --show-error "$url/health" >/dev/null; do
-	attempt=$((attempt + 1))
-	if [ "$attempt" -ge 60 ]; then
-		compose logs --no-color manifold
-		exit 1
-	fi
-	sleep 1
-done
-
-MANIFOLD_URL=$url \
-	MANIFOLD_API_KEY=$api_key \
-	MANIFOLD_INTEGRATION_PHASE=verify_failure \
-	MANIFOLD_INTEGRATION_STATE=$state_file \
-	go test -tags=integration -count=1 -v ./test/integration
-
-compose up --detach --no-deps --wait --wait-timeout 120 brain
-MANIFOLD_URL=$url \
-	MANIFOLD_API_KEY=$api_key \
-	MANIFOLD_INTEGRATION_PHASE=recover_failure \
-	MANIFOLD_INTEGRATION_STATE=$state_file \
-	go test -tags=integration -count=1 -v ./test/integration
 
 curl --fail --silent --show-error \
 	-H "Authorization: Bearer $api_key" \
 	"$url/api/v1/documents/integration-note-renamed" >/dev/null
 
-MANIFOLD_URL=$url \
-MANIFOLD_API_KEY=$api_key \
-MANIFOLD_INTEGRATION_PHASE=cleanup \
-	go test -tags=integration -count=1 -v ./test/integration
+run_phase cleanup

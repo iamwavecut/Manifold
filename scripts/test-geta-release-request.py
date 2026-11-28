@@ -22,7 +22,6 @@ class ReleaseRequestTests(unittest.TestCase):
             'DEPLOY_OPERATION': 'deploy',
             'DEPLOY_SHA': 'a' * 40,
             'MANIFOLD_IMAGE_DIGEST': 'sha256:' + 'b' * 64,
-            'BRAIN_IMAGE_DIGEST': 'sha256:' + 'c' * 64,
         }
 
     def test_immutable_release_and_profile_change(self):
@@ -31,10 +30,10 @@ class ReleaseRequestTests(unittest.TestCase):
             environment = self.fixture(root)
             before = release.release_payload(environment, root, lambda: 'synthetic-token')
             self.assertEqual(before['data_version'], '4')
-            self.assertEqual(set(before['images']), {'brain', 'manifold'})
+            self.assertEqual(set(before['images']), {'manifold'})
             self.assertNotIn('project', before)
             self.assertNotIn('operation', before)
-            (root / release.PROFILE_FILES[1]).write_text('changed\n')
+            (root / release.PROFILE_FILES[0]).write_text('changed\n')
             after = release.release_payload(environment, root, lambda: 'synthetic-token')
             self.assertNotEqual(before['profile_digest'], after['profile_digest'])
 
@@ -42,7 +41,7 @@ class ReleaseRequestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             environment = self.fixture(root)
-            environment['BRAIN_IMAGE_DIGEST'] = 'latest'
+            environment['MANIFOLD_IMAGE_DIGEST'] = 'latest'
             with self.assertRaises(ValueError):
                 release.release_payload(environment, root, lambda: self.fail('token requested before validation'))
 
@@ -58,7 +57,7 @@ class ReleaseRequestTests(unittest.TestCase):
         self.assertNotIn('scp ', source)
         self.assertNotIn('/tmp/manifold-deploy-', source)
         self.assertIn('MANIFOLD_IMAGE_DIGEST:', source)
-        self.assertIn('BRAIN_IMAGE_DIGEST:', source)
+        self.assertNotIn('BRAIN_IMAGE_DIGEST', source)
 
 
 if __name__ == '__main__':

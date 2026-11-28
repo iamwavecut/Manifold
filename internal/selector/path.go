@@ -39,6 +39,23 @@ func ValidateGlob(pattern string) error {
 	return nil
 }
 
+// LiteralPrefix returns the leading segments of a glob that contain no
+// wildcard, so every path the glob matches starts with it. It ends with a
+// slash when wildcard segments follow and is empty when the first segment
+// has a wildcard.
+func LiteralPrefix(pattern string) string {
+	segments := strings.Split(NormalizePath(pattern), "/")
+	for i, segment := range segments {
+		if strings.ContainsAny(segment, "*?") {
+			if i == 0 {
+				return ""
+			}
+			return strings.Join(segments[:i], "/") + "/"
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
 func Match(pattern, value string) bool {
 	pattern = NormalizePath(pattern)
 	value = NormalizePath(value)

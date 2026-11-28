@@ -21,7 +21,7 @@ Every entry is returned as `application/problem+json`. `request_id` is an XID su
 | `stale_rename_plan` | 409 | State changed after preview. | Create and review a fresh preview. |
 | `unrewritable_reference` | 409 | A binary document blocks safe rewrite. | Manually update every item in `blockers`, then re-preview. |
 | `cannot_revoke_current_key` | 409 | The current admin key tried to revoke itself. | Authenticate with another admin key. |
-| `dependency_unavailable` | 503 | OpenViking, Brain, or the provider is unavailable. | Inspect `/api/v1/status`; honor `retry_after`. |
+| `dependency_unavailable` | 503 | The index or the model provider is unavailable. | Inspect `/api/v1/status`; honor `retry_after`. |
 | `provider_credits_exhausted` | 503 | The model provider refused extraction: its account or key has no credit. Stored on the job. | Add credit. Manifold retries blocked documents itself; watch `pipeline.blocked_documents` in `/api/v1/status`. |
 | `storage_unavailable` | 503 | SQLite cannot safely serve state. | Restore volume access before retrying. |
 | `job_failed` | 500 | A durable worker operation failed. | Inspect the job's stored remediation and retry only after correction. |

@@ -294,11 +294,11 @@ func TestVerifyDependencyFailure(t *testing.T) {
 	c := newClient(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	job := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/jobs/"+string(data), nil,
-		"", "", http.StatusOK).Body
-	if got := stringField(t, job, "status"); got != "partially_ready" {
-		t.Fatalf("persisted dependency job status = %q, want partially_ready; body=%s", got, mustJSON(job))
-	}
+	// Provider recovery retries the job while the provider is away, so a read
+	// can land inside an attempt; every attempt ends partially_ready again.
+	job := awaitJob(t, ctx, c, string(data), func(job map[string]any) bool {
+		return job["status"] == "partially_ready"
+	})
 	assertDependencyProblem(t, job)
 }
 
@@ -325,6 +325,24 @@ func (c *client) expectStatus(
 	idempotencyKey string,
 	ifMatch string,
 	want int,
+) response {
+	t.Helper()
+	got := c.do(t, ctx, method, path, body, idempotencyKey, ifMatch)
+	if got.Status != want {
+		t.Fatalf("%s %s status = %d, want %d; body=%s", method, path, got.Status, want, mustJSON(got.Body))
+	}
+	return got
+}
+
+// do sends one request and returns its response whatever the status.
+func (c *client) do(
+	t *testing.T,
+	ctx context.Context,
+	method string,
+	path string,
+	body any,
+	idempotencyKey string,
+	ifMatch string,
 ) response {
 	t.Helper()
 	var encoded io.Reader
@@ -366,11 +384,23 @@ func (c *client) expectStatus(
 			t.Fatalf("%s %s: decode status %d response %q: %v", method, path, res.StatusCode, data, err)
 		}
 	}
-	if res.StatusCode != want {
-		t.Fatalf("%s %s status = %d, want %d; body=%s",
-			method, path, res.StatusCode, want, mustJSON(decoded))
-	}
 	return response{Status: res.StatusCode, Header: res.Header.Clone(), Body: decoded}
+}
+
+// retryUnlessRecovered retries a blocked job through the API. Manifold's own
+// provider recovery may retry it first; then the API answers that the job is
+// no longer retryable, and the job still has to reach ready.
+func retryUnlessRecovered(t *testing.T, ctx context.Context, c *client, jobID, idempotencyKey string) {
+	t.Helper()
+	job := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/jobs/"+jobID, nil, "", "", http.StatusOK).Body
+	if job["status"] == "partially_ready" || job["status"] == "failed" {
+		retried := c.do(t, ctx, http.MethodPost, "/api/v1/jobs/"+jobID+"/retry", nil, idempotencyKey, "")
+		if retried.Status != http.StatusAccepted &&
+			(retried.Status != http.StatusConflict || retried.Body["code"] != "invalid_state_transition") {
+			t.Fatalf("retry status = %d; body=%s", retried.Status, mustJSON(retried.Body))
+		}
+	}
+	awaitJob(t, ctx, c, jobID, func(job map[string]any) bool { return job["status"] == "ready" })
 }
 
 func waitForTerminalJob(t *testing.T, ctx context.Context, c *client, id string) map[string]any {

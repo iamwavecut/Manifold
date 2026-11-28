@@ -2,21 +2,20 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/iamwavecut/Manifold/internal/engine"
 	"github.com/iamwavecut/Manifold/internal/identity"
+	"github.com/iamwavecut/Manifold/internal/llm"
 	"github.com/iamwavecut/Manifold/internal/model"
 	"github.com/iamwavecut/Manifold/internal/store"
 	"github.com/iamwavecut/Manifold/internal/upstream"
@@ -105,59 +104,14 @@ func TestSearchModesAndScopeGlobUseCanonicalPaths(t *testing.T) {
 	}
 }
 
-func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
-	var recovered atomic.Bool
-	var writes, snapshots, ingests int
-	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/content/write":
-			writes++
-			if writes > 1 {
-				http.Error(w, `{"error":"resource already exists"}`, http.StatusConflict)
-				return
-			}
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
-		case "/api/v1/snapshot/commit":
-			snapshots++
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-retry"}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer openViking.Close()
-
-	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveEmptyBrainResult(w, r, "brain-retry", "retry-memory") {
-			return
-		}
-		if r.URL.Path != "/v1/ingest/document" {
-			http.NotFound(w, r)
-			return
-		}
-		ingests++
-		if !recovered.Load() {
-			http.Error(w, `{"error":"provider unavailable"}`, http.StatusServiceUnavailable)
-			return
-		}
-		_, _ = w.Write([]byte(`{"documentId":"brain-retry","committed":{"entityIds":[],"factIds":[],"edgeIds":[]}}`))
-	}))
-	defer brain.Close()
-
+func TestDocumentRetryResumesAfterIndexCheckpoint(t *testing.T) {
 	db, err := store.Open(t.Context(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	svc := New(
-		db,
-		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client()),
-		"https://memory.example.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		time.Millisecond,
-	)
-	svc.SetBrainExtractionTimeout(25 * time.Millisecond)
-	svc.brainPollInterval = time.Millisecond
+	model0 := &testModel{chatErr: &llm.Error{Operation: "chat completion", Status: http.StatusBadRequest}, failChats: 1}
+	svc, documents := newEngineService(t, db, newTestEngine(t, model0))
 	_, job, err := svc.CreateDocument(t.Context(), model.Document{
 		ID: "retry-memory", Title: "Retry memory", Format: "markdown", Content: "Resume from the durable checkpoint.",
 	})
@@ -165,19 +119,18 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.processOne(t.Context()); err == nil {
-		t.Fatal("initial sync unexpectedly succeeded while Brain was unavailable")
+		t.Fatal("initial sync unexpectedly succeeded while extraction failed")
 	}
 	partiallyReady, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || partiallyReady.Status != model.JobPartiallyReady {
+	if err != nil || partiallyReady.Status != model.JobPartiallyReady || partiallyReady.Error == nil ||
+		partiallyReady.Error.Code != "dependency_unavailable" {
 		t.Fatalf("initial job = %#v, err = %v", partiallyReady, err)
 	}
 	revision, err := db.GetRevision(t.Context(), "retry-memory", 1)
-	if err != nil || revision.SnapshotOID != "snapshot-retry" {
+	if err != nil || !strings.HasPrefix(revision.SnapshotOID, "local:") {
 		t.Fatalf("checkpoint revision = %#v, err = %v", revision, err)
 	}
 
-	recovered.Store(true)
-	svc.SetBrainExtractionTimeout(time.Second)
 	if err := db.RetryJob(t.Context(), job.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -189,73 +142,24 @@ func TestDocumentRetryResumesAfterOpenVikingCheckpoint(t *testing.T) {
 		t.Fatalf("retried job = %#v, err = %v", completed, err)
 	}
 	document, err := db.GetDocument(t.Context(), "retry-memory", true)
-	if err != nil || document.Status != model.JobReady || document.BrainID != "brain-retry" {
+	if err != nil || document.Status != model.JobReady || document.BrainID != "retry-memory" {
 		t.Fatalf("retried document = %#v, err = %v", document, err)
 	}
-	if writes != 1 || snapshots != 1 || ingests < 2 {
-		t.Fatalf("upstream calls: writes=%d snapshots=%d ingests=%d", writes, snapshots, ingests)
+	_, writes, snapshots := documents.recorded()
+	if len(writes) != 1 || snapshots != 1 || model0.chatCalls.Load() != 2 {
+		t.Fatalf("calls: writes=%v snapshots=%d extractions=%d", writes, snapshots, model0.chatCalls.Load())
 	}
 }
 
 func TestDocumentRetryReconcilesCreateBeforeCheckpoint(t *testing.T) {
-	var writeModes []string
-	snapshotAttempts := 0
-	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/content/write":
-			var body struct {
-				Mode string `json:"mode"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Error(err)
-				return
-			}
-			writeModes = append(writeModes, body.Mode)
-			if len(writeModes) == 2 {
-				http.Error(w, `{"error":"resource already exists"}`, http.StatusConflict)
-				return
-			}
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
-		case "/api/v1/fs/stat":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"uri":"viking://resources/manifold/retry-before-checkpoint.md"}}`))
-		case "/api/v1/snapshot/commit":
-			snapshotAttempts++
-			if snapshotAttempts == 1 {
-				http.Error(w, `{"error":"snapshot unavailable"}`, http.StatusServiceUnavailable)
-				return
-			}
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-reconciled"}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer openViking.Close()
-
-	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveEmptyBrainResult(w, r, "brain-reconciled", "retry-before-checkpoint") {
-			return
-		}
-		if r.URL.Path != "/v1/ingest/document" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"documentId":"brain-reconciled","committed":{"entityIds":[],"factIds":[],"edgeIds":[]}}`))
-	}))
-	defer brain.Close()
-
 	db, err := store.Open(t.Context(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	svc := New(
-		db,
-		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client()),
-		"https://memory.example.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		time.Millisecond,
-	)
+	index := newTestEngine(t, &testModel{})
+	svc, documents := newEngineService(t, db, index)
+	documents.snapshotFailures = 1
 	_, job, err := svc.CreateDocument(t.Context(), model.Document{
 		ID: "retry-before-checkpoint", Title: "Retry before checkpoint", Format: "markdown",
 		Content: "The canonical body must win when create is reconciled.",
@@ -281,95 +185,34 @@ func TestDocumentRetryReconcilesCreateBeforeCheckpoint(t *testing.T) {
 	if err != nil || completed.Status != model.JobReady {
 		t.Fatalf("retried job = %#v, err = %v", completed, err)
 	}
-	if !slices.Equal(writeModes, []string{"create", "create", "replace"}) {
-		t.Fatalf("write modes = %#v, want create/create/replace reconciliation", writeModes)
+	_, writes, snapshots := documents.recorded()
+	if !slices.Equal(writes, []string{"create", "create", "replace"}) {
+		t.Fatalf("write modes = %#v, want create/create/replace reconciliation", writes)
 	}
-	if snapshotAttempts != 2 {
-		t.Fatalf("snapshot attempts = %d, want 2", snapshotAttempts)
+	if snapshots != 2 {
+		t.Fatalf("snapshot attempts = %d, want 2", snapshots)
 	}
 }
 
-func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
-	var openVikingMoves []string
-	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/health":
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		case "/api/v1/content/write", "/api/v1/fs/mkdir":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
-		case "/api/v1/fs/mv":
-			var body struct {
-				From string `json:"from_uri"`
-				To   string `json:"to_uri"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Error(err)
-				return
-			}
-			openVikingMoves = append(openVikingMoves, body.From+" -> "+body.To)
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
-		case "/api/v1/snapshot/commit":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot-1"}}`))
-		case "/api/v1/search/find":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"resources":[{"uri":"viking://resources/manifold/old-memory.md","score":0.8,"overview":"Canonical retention evidence"},{"uri":"viking://resources/manifold/.overview.md","score":0.99,"overview":"Internal index metadata"}]}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer openViking.Close()
+func retentionExtraction() engine.Extraction {
+	return engine.Extraction{
+		Entities: []engine.ExtractedEntity{{Name: "Retention", Type: "topic"}},
+		Facts: []engine.ExtractedFact{{
+			Entity: 0, Predicate: "retention", Value: "canonical", Confidence: 1, Evidence: "decision is canonical",
+		}},
+	}
+}
 
-	var brainFixtureMu sync.Mutex
-	brainSourceID, brainRevision := "old-memory", "r1"
-	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		brainFixtureMu.Lock()
-		defer brainFixtureMu.Unlock()
-		switch r.URL.Path {
-		case "/health":
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		case "/v1/ingest/document":
-			var input struct {
-				Meta struct {
-					ID       string `json:"manifold_id"`
-					Revision string `json:"revision"`
-				} `json:"meta"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Error(err)
-				return
-			}
-			brainSourceID, brainRevision = input.Meta.ID, input.Meta.Revision
-			_, _ = w.Write([]byte(`{"documentId":"brain-doc-1","committed":{"entityIds":["entity-1"],"factIds":["fact-1"],"edgeIds":[]}}`))
-		case "/v1/documents/brain-doc-1":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "brain-doc-1", "status": "committed",
-				"meta": map[string]string{"manifold_id": brainSourceID, "revision": brainRevision},
-				"runs": []any{map[string]string{"runId": "run-1", "packId": "_general", "status": "succeeded"}},
-			})
-		case "/v1/documents/brain-doc-1/candidates":
-			_, _ = w.Write([]byte(`{"candidates":[{"id":"candidate-entity","runId":"run-1","chunkSeq":0,"kind":"entity","status":"committed","commitRef":"entity-1","payload":{"entityIndex":0,"name":"Retention","type":"concept"}},{"id":"candidate-fact","runId":"run-1","chunkSeq":0,"kind":"fact","status":"committed","commitRef":"fact-1","payload":{"entityIndex":0,"predicate":"retention","object":"canonical"}}]}`))
-		case "/v1/entities/entity-1":
-			_, _ = w.Write([]byte(`{"entityId":"entity-1","type":"concept","canonicalName":"Retention","facts":[{"factId":"fact-1"}]}`))
-		case "/v1/entities/entity-1/connections":
-			_, _ = w.Write([]byte(`{"edges":[]}`))
-		case "/v1/facts/fact-1":
-			_, _ = w.Write([]byte(`{"factId":"fact-1","aspect":"retention","statement":"canonical","confidence":1,"validFrom":"2026-09-16T00:00:00Z","retracted":false}`))
-		case "/v1/search":
-			_, _ = w.Write([]byte(`{"results":[{"entityId":"entity-1","entityType":"concept","canonicalName":"Retention","score":0.9,"facts":[{"factId":"fact-1","predicate":"retention","object":"canonical","score":0.9,"sourceKey":"manifold:_general"}]}]}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer brain.Close()
-
+func TestPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "manifold.db")
 	db, err := store.Open(t.Context(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	documents := upstream.NewOpenViking(openViking.URL, "", openViking.Client())
-	graph := upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client())
-	svc := New(db, documents, graph, "https://memory.example.test", logger, time.Millisecond)
+	index := newTestEngine(t, &testModel{extractions: map[string]engine.Extraction{
+		"decision is canonical": retentionExtraction(),
+	}})
+	svc, documents := newEngineService(t, db, index)
 
 	_, initialJob, err := svc.CreateDocument(t.Context(), model.Document{
 		ID: "old-memory", Title: "Old memory", Format: "markdown",
@@ -385,9 +228,8 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	if err != nil || completed.Status != model.JobReady {
 		t.Fatalf("initial job = %#v, err = %v", completed, err)
 	}
-	revision, err := db.GetRevision(t.Context(), "old-memory", 1)
-	if err != nil || revision.SnapshotOID != "snapshot-1" {
-		t.Fatalf("revision = %#v, err = %v", revision, err)
+	if _, err := index.EmbedPending(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 
 	search, err := svc.Search(t.Context(), SearchRequest{
@@ -409,6 +251,13 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 		if hit.Kind == "fact" && (!identity.IsXID(hit.ID) || hit.CanonicalRef != "manifold://facts/"+hit.ID) {
 			t.Fatalf("fact mapping = %#v", hit)
 		}
+	}
+	semantic, err := svc.Search(t.Context(), SearchRequest{Query: "old-memory decision", Mode: model.SearchSemantic, Limit: 10})
+	if err != nil || len(semantic.DegradedDependencies) != 0 {
+		t.Fatalf("semantic search = %#v, %v", semantic, err)
+	}
+	if !slices.ContainsFunc(semantic.Items, func(hit model.SearchHit) bool { return hit.Kind == "document" && hit.ID == "old-memory" }) {
+		t.Fatalf("semantic search did not find the document by its vector: %#v", semantic.Items)
 	}
 	contextPack, degraded, err := svc.Context(t.Context(), SearchRequest{
 		Query: "canonical", Mode: model.SearchHybrid, Limit: 10,
@@ -459,7 +308,8 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	if err != nil || resumedJob.Status != model.JobAccepted {
 		t.Fatalf("recovered job = %#v, err = %v", resumedJob, err)
 	}
-	resumed := New(recovered, documents, graph, "https://memory.example.test", logger, time.Millisecond)
+	resumed := New(recovered, documents, index.Graph(), "https://memory.example.test",
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
 	if err := resumed.processOne(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -476,58 +326,28 @@ func TestHTTPPipelineAndInterruptedRenameResumeEndToEnd(t *testing.T) {
 	if err != nil || appliedPlan.Status != "applied" {
 		t.Fatalf("rename plan = %#v, err = %v", appliedPlan, err)
 	}
+	moves, _, _ := documents.recorded()
 	stageDocument := "viking://resources/manifold/.manifold-renames/" + plan.ID + "/documents/0.md"
 	for _, expected := range []string{
 		"viking://resources/manifold/old-memory.md -> " + stageDocument,
 		stageDocument + " -> viking://resources/manifold/new-memory.md",
 	} {
-		if !slices.Contains(openVikingMoves, expected) {
-			t.Fatalf("OpenViking moves = %#v, missing %q", openVikingMoves, expected)
+		if !slices.Contains(moves, expected) {
+			t.Fatalf("index moves = %#v, missing %q", moves, expected)
 		}
 	}
-	if len(openVikingMoves) != 2 {
-		t.Fatalf("resumed rename repeated completed upstream moves: %#v", openVikingMoves)
+	if len(moves) != 2 {
+		t.Fatalf("resumed rename repeated completed index moves: %#v", moves)
+	}
+	if exists, _ := index.Documents().Exists(t.Context(), "viking://resources/manifold/new-memory.md"); !exists {
+		t.Fatal("renamed document is missing from the index")
 	}
 	if !identity.IsXID(renameJob.ID) {
 		t.Fatalf("rename job ID = %q, want XID", renameJob.ID)
 	}
 }
 
-func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
-	var moves []string
-	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/fs/mkdir":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
-		case "/api/v1/fs/mv":
-			var body struct {
-				From string `json:"from_uri"`
-				To   string `json:"to_uri"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Error(err)
-				return
-			}
-			moves = append(moves, body.From+" -> "+body.To)
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
-		case "/api/v1/content/write":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"semantic_status":"complete","vector_status":"complete"}}`))
-		case "/api/v1/snapshot/commit":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{"commit_oid":"snapshot"}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer openViking.Close()
-	brain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/ingest/document" {
-			http.Error(w, `{"private":"provider detail"}`, http.StatusBadRequest)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer brain.Close()
-
+func TestRenameDependencyFailureRestoresIDsAndIndexPath(t *testing.T) {
 	db, err := store.Open(t.Context(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -545,17 +365,13 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 	if err := db.SetJobStatus(t.Context(), initialJob.ID, model.JobReady, nil); err != nil {
 		t.Fatal(err)
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := New(
-		db,
-		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		upstream.NewBrain(brain.URL, "brain-key", brain.Client(), brain.Client()),
-		"https://memory.example.test",
-		logger,
-		time.Millisecond,
-	)
-	svc.SetBrainExtractionTimeout(100 * time.Millisecond)
-	svc.brainPollInterval = 5 * time.Millisecond
+	index := newTestEngine(t, &testModel{
+		chatErr: &llm.Error{Operation: "chat completion", Status: http.StatusBadRequest}, failChats: 1 << 20,
+	})
+	if err := index.Documents().Write(t.Context(), "viking://resources/manifold/old-memory.md", "old-memory", true); err != nil {
+		t.Fatal(err)
+	}
+	svc, documents := newEngineService(t, db, index)
 	plan, err := svc.CreateRenamePlan(t.Context(), []model.RenameOperation{{
 		ResourceType: "document", From: "old-memory", To: "new-memory",
 	}})
@@ -567,7 +383,7 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.processOne(t.Context()); err == nil {
-		t.Fatal("rename unexpectedly succeeded while Brain was unavailable")
+		t.Fatal("rename unexpectedly succeeded while extraction failed")
 	}
 	if _, err := db.GetDocument(t.Context(), "old-memory", true); err != nil {
 		t.Fatalf("old document was not restored: %v", err)
@@ -595,6 +411,7 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 		failedJob.Error.Code != "dependency_unavailable" {
 		t.Fatalf("failed job = %#v, err = %v", failedJob, err)
 	}
+	moves, _, _ := documents.recorded()
 	stageDocument := "viking://resources/manifold/.manifold-renames/" + plan.ID + "/documents/0.md"
 	for _, expected := range []string{
 		"viking://resources/manifold/old-memory.md -> " + stageDocument,
@@ -606,55 +423,27 @@ func TestRenameDependencyFailureRestoresIDsAndUpstreamURI(t *testing.T) {
 			t.Fatalf("moves = %#v, missing %q", moves, expected)
 		}
 	}
+	if exists, _ := index.Documents().Exists(t.Context(), "viking://resources/manifold/old-memory.md"); !exists {
+		t.Fatal("rollback did not restore the index path")
+	}
 }
 
-func TestEmptyFolderSwapUsesTwoPhaseOpenVikingMoves(t *testing.T) {
-	var moves []string
-	openViking := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/fs/mkdir":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
-		case "/api/v1/fs/mv":
-			var body struct {
-				From string `json:"from_uri"`
-				To   string `json:"to_uri"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Error(err)
-				return
-			}
-			moves = append(moves, body.From+" -> "+body.To)
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
-		case "/api/v1/fs":
-			_, _ = w.Write([]byte(`{"status":"ok","result":{}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer openViking.Close()
-
+func TestEmptyFolderSwapUsesTwoPhaseIndexMoves(t *testing.T) {
 	db, err := store.Open(t.Context(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	index := newTestEngine(t, &testModel{})
+	svc, documents := newEngineService(t, db, index)
 	for _, folder := range []model.Folder{
 		{ID: "alpha", Name: "Alpha"},
 		{ID: "beta", Name: "Beta"},
 	} {
-		if _, err := db.CreateFolder(t.Context(), folder); err != nil {
+		if _, err := svc.CreateFolder(t.Context(), folder); err != nil {
 			t.Fatal(err)
 		}
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := New(
-		db,
-		upstream.NewOpenViking(openViking.URL, "", openViking.Client()),
-		fakeGraphStore{},
-		"https://memory.example.test",
-		logger,
-		time.Millisecond,
-	)
 	plan, err := svc.CreateRenamePlan(t.Context(), []model.RenameOperation{
 		{ResourceType: "folder", From: "alpha", To: "beta"},
 		{ResourceType: "folder", From: "beta", To: "alpha"},
@@ -683,6 +472,7 @@ func TestEmptyFolderSwapUsesTwoPhaseOpenVikingMoves(t *testing.T) {
 	if alpha.Name != "Beta" || beta.Name != "Alpha" {
 		t.Fatalf("folder swap did not preserve row identities: alpha=%#v beta=%#v", alpha, beta)
 	}
+	moves, _, _ := documents.recorded()
 	stagePrefix := "viking://resources/manifold/.manifold-renames/" + plan.ID
 	for _, expected := range []string{
 		"viking://resources/manifold/alpha/ -> " + stagePrefix + "/0/",
@@ -694,39 +484,33 @@ func TestEmptyFolderSwapUsesTwoPhaseOpenVikingMoves(t *testing.T) {
 			t.Fatalf("moves = %#v, missing %q", moves, expected)
 		}
 	}
+	for _, uri := range []string{"viking://resources/manifold/alpha/", "viking://resources/manifold/beta/"} {
+		if exists, _ := index.Documents().Exists(t.Context(), uri); !exists {
+			t.Fatalf("folder %s is missing after the swap", uri)
+		}
+	}
 }
 
-func TestDeleteFolderRecursivelyRetriesOpenVikingDerivedEntryLocks(t *testing.T) {
+func TestDeleteFolderRemovesItsIndexPath(t *testing.T) {
 	db, err := store.Open(t.Context(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.CreateFolder(t.Context(), model.Folder{
-		ID: "release-evidence", Name: "Release evidence",
-	}); err != nil {
+	index := newTestEngine(t, &testModel{})
+	svc, _ := newEngineService(t, db, index)
+	if _, err := svc.CreateFolder(t.Context(), model.Folder{ID: "release-evidence", Name: "Release evidence"}); err != nil {
 		t.Fatal(err)
 	}
-	documents := &recordingDocumentStore{conflictsRemaining: 2}
-	svc := New(
-		db,
-		documents,
-		fakeGraphStore{},
-		"https://memory.example.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		time.Millisecond,
-	)
-
+	uri := "viking://resources/manifold/release-evidence/"
+	if exists, _ := index.Documents().Exists(t.Context(), uri); !exists {
+		t.Fatal("created folder is missing from the index")
+	}
 	if err := svc.DeleteFolder(t.Context(), "release-evidence"); err != nil {
 		t.Fatal(err)
 	}
-	if documents.deletedURI != "viking://resources/manifold/release-evidence/" || !documents.recursive {
-		t.Fatalf("OpenViking delete = (%q, recursive=%t), want the empty folder recursively removed",
-			documents.deletedURI, documents.recursive)
-	}
-	if documents.deleteCalls != 3 {
-		t.Fatalf("OpenViking delete calls = %d, want two path-lock conflicts followed by success",
-			documents.deleteCalls)
+	if exists, _ := index.Documents().Exists(t.Context(), uri); exists {
+		t.Fatal("deleted folder remained in the index")
 	}
 	if _, err := db.GetFolder(t.Context(), "release-evidence"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleted folder remained in the control plane: %v", err)
@@ -736,27 +520,6 @@ func TestDeleteFolderRecursivelyRetriesOpenVikingDerivedEntryLocks(t *testing.T)
 type fakeGraphStore struct{}
 
 type fakeDocumentStore struct{}
-
-type recordingDocumentStore struct {
-	fakeDocumentStore
-	deletedURI         string
-	recursive          bool
-	deleteCalls        int
-	conflictsRemaining int
-}
-
-func (r *recordingDocumentStore) Delete(_ context.Context, uri string, recursive bool) error {
-	r.deletedURI = uri
-	r.recursive = recursive
-	r.deleteCalls++
-	if r.conflictsRemaining > 0 {
-		r.conflictsRemaining--
-		return &upstream.DependencyError{
-			Dependency: "openviking", Operation: "delete folder", Status: http.StatusConflict,
-		}
-	}
-	return nil
-}
 
 func (fakeDocumentStore) Health(context.Context) error                      { return nil }
 func (fakeDocumentStore) Exists(context.Context, string) (bool, error)      { return false, nil }
@@ -795,22 +558,42 @@ func (fakeGraphStore) RetractFact(context.Context, string, string) ([]string, er
 	return nil, nil
 }
 
-func (fakeGraphStore) GetEntity(context.Context, string) (map[string]any, error) {
-	return map[string]any{}, nil
+// scopeRecordingDocuments records the scope of every document index search.
+type scopeRecordingDocuments struct {
+	fakeDocumentStore
+	mu     sync.Mutex
+	scopes []string
 }
 
-func serveEmptyBrainResult(w http.ResponseWriter, r *http.Request, brainID, documentID string) bool {
-	switch r.URL.Path {
-	case "/v1/documents/" + brainID:
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": brainID, "status": "committed",
-			"meta": map[string]string{"manifold_id": documentID, "revision": "r1"},
-			"runs": []any{map[string]string{"packId": "_general", "status": "succeeded"}},
-		})
-	case "/v1/documents/" + brainID + "/candidates":
-		_, _ = w.Write([]byte(`{"candidates":[]}`))
-	default:
-		return false
+func (d *scopeRecordingDocuments) Search(_ context.Context, _ string, scope string, _ int) ([]model.SearchHit, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.scopes = append(d.scopes, scope)
+	return nil, nil
+}
+
+func TestScopeGlobNarrowsTheSemanticDocumentSearch(t *testing.T) {
+	db, err := store.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return true
+	defer db.Close()
+	documents := &scopeRecordingDocuments{}
+	svc := New(db, documents, fakeGraphStore{}, "https://memory.example.test",
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	for _, request := range []SearchRequest{
+		{Query: "deploy", Mode: model.SearchSemantic, ScopeGlob: "projects/ngbot/**"},
+		{Query: "deploy", Mode: model.SearchSemantic, ScopeGlob: "**/notes"},
+		{Query: "deploy", Mode: model.SearchSemantic, ScopeGlob: "projects/**", Scope: "viking://resources/manifold/explicit/"},
+	} {
+		if _, err := svc.Search(t.Context(), request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{
+		"viking://resources/manifold/projects/ngbot/", "", "viking://resources/manifold/explicit/",
+	}
+	if !slices.Equal(documents.scopes, want) {
+		t.Fatalf("document index scopes = %q, want %q", documents.scopes, want)
+	}
 }

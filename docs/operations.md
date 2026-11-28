@@ -2,97 +2,104 @@
 
 ## Data ownership
 
-Persist all four named volumes:
+Manifold keeps all state in the `manifold-data` volume:
 
-- `manifold-data`: SQLite public identity and workflow state.
-- `openviking-data`: canonical content, indexes, and snapshots.
-- `brain-cache`: Brain model/cache and baseline state.
-- `surrealdb-data`: graph data.
+- `manifold.db`: canonical documents and revisions, public IDs, jobs,
+  idempotency records, rename plans, API-key hashes, sessions, and the public
+  graph projection. It is the source of truth.
+- `index.db`: the derived index. It holds document chunks, extracted entities,
+  facts and relations, the FTS5 tables, the int8 vectors, and the extraction
+  result of each document revision. Manifold can rebuild it from
+  `manifold.db`; see [Rebuild the index](#rebuild-the-index).
 
-The volumes form one logical backup set. Quiesce external writers and stop all
-four services before a cold backup; do not archive a running RocksDB database.
-These commands assume the default Compose project name `manifold`; verify the
-actual volume names with `docker volume ls` first.
+Both files use SQLite WAL mode, so each has `-wal` and `-shm` companions. Copy
+them only while Manifold is stopped. The image has no shell; use a throwaway
+container for the archive. These commands assume the default Compose project
+name `manifold`; check the volume name with `docker volume ls` first.
 
 ```bash
 install -d -m 700 backups
-docker compose stop manifold brain openviking surrealdb
+docker compose stop manifold
 docker run --rm -v manifold_manifold-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
   tar -C /source -czf /backup/manifold-data.tgz .
-docker run --rm -v manifold_openviking-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
-  tar -C /source -czf /backup/openviking-data.tgz .
-docker run --rm -v manifold_surrealdb-data:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
-  tar -C /source -czf /backup/surrealdb-data.tgz .
-docker run --rm -v manifold_brain-cache:/source:ro -v "$PWD/backups":/backup alpine:3.24.2 \
-  tar -C /source -czf /backup/brain-cache.tgz .
-docker compose start surrealdb openviking brain manifold
+docker compose start manifold
 ```
 
-Use a fresh backup directory for each migration and record hashes of the four
-archives with the source commit and image identities. Restrict backup access:
-they contain private documents and graph data. Provider credentials and `.env`
-belong in a separate secret backup, never in the archives.
+Record the archive hash with the source commit and image digest. Restrict
+access to backups: they contain private documents. Keep provider credentials
+and `.env` in a separate secret backup, never in the archive.
 
 ## Restore
 
-1. Stop the stack.
-2. Restore each archive into an empty volume with the same logical role.
+1. Stop Manifold.
+2. Restore the archive into an empty `manifold-data` volume.
 3. Restore the matching `.env`.
-4. Start `surrealdb`, then `openviking` and `brain`, then `manifold`.
-5. Verify `/ready`, `/api/v1/status`, representative documents/revisions, graph queries, and one new document job.
+4. Start Manifold and verify `/ready`, `/api/v1/status`, representative
+   documents and revisions, graph queries, and one new document job.
 
-Do not restore only SQLite over newer OpenViking or Brain state. Public mappings and derived state can diverge.
+Restoring `manifold.db` without `index.db` is safe: Manifold seeds a new index
+at start. Restoring an `index.db` that is newer than its `manifold.db` is not:
+remove that `index.db` instead.
+
+## Rebuild the index
+
+When `index.db` is missing, Manifold seeds a new index from `manifold.db`
+before it serves requests. The seed copies every mapped entity, fact and
+relation with its index ID, every live folder and document, and the projected
+graph of every `ready` document revision. It needs no model call. A repeated
+sync of a seeded revision (a retry, or a rename that touches every document)
+returns the stored result, so it neither calls the model nor changes the public
+projection. Entities created through the API keep no index ID; the seed finds
+them by name, as every API call about them does. `manifold.db` keeps fact
+statuses but not which fact superseded which, so the seed links each
+superseded value of `status`, `os_version` and `code_memory__default_value` to
+the next newer value of the same entity: retracting a seeded current value
+makes the value before it current again.
+
+The background embedder then gives every chunk and fact a vector, 64 texts per
+provider call. Until it finishes, document search (`semantic`) returns only
+documents that already have vectors; lexical document search and graph
+full-text search work at once. The embedder logs `index embedded` with the row
+count of each pass. A search request with `scope` (a locator prefix) compares
+the query with every chunk under that prefix. Without `scope`, the exact
+leading segments of `scope_glob` (`projects/ngbot` in `projects/ngbot/**`)
+narrow it the same way, and the whole glob then filters the hits. With
+neither, the index returns the nearest chunks of the whole corpus.
+
+To rebuild on purpose, stop Manifold, move `index.db`, `index.db-wal` and
+`index.db-shm` out of the volume, and start Manifold. A change of
+`OPENAI_EMBEDDING_MODEL` or `MANIFOLD_EMBEDDING_DIMENSIONS` keeps the graph and
+re-embeds only the vectors.
 
 ## Durable jobs
 
-Jobs in `indexing` or `extracting` are returned to `accepted` when Manifold restarts. Completed semantic errors persist in SQLite. After a dependency recovers:
+Jobs in `indexing` or `extracting` return to `accepted` when Manifold
+restarts. Completed semantic errors persist in SQLite.
 
-Ordinary dependency requests use `MANIFOLD_HTTP_TIMEOUT` (30 seconds by
-default). OpenViking writes use `MANIFOLD_OPENVIKING_WRITE_TIMEOUT` (5 minutes)
-with `wait: true`; an HTTP 200 response is accepted only when semantic and
-vector indexing report completion or an intentional skip. The wait also covers
-the summary refresh of every ancestor folder up to the root, so it can outlive
-the deadline while the document itself is stored. OpenViking exposes no
-per-write operation ID. After an HTTP 504 or the write client's deadline,
-Manifold reads the content back; if it matches, the sync continues and logs
-`openviking indexing outlived the write wait; continuing`. OpenViking search
-returns the new revision once its queue finishes. Any other failure, or a
-mismatched read-back, fails the job and it retries. The deadline now bounds how
-long a sync waits for indexing, not whether the sync succeeds; keep the 5-minute
-default unless measurements call for more.
+A document sync writes the revision to the index, stores a snapshot
+checkpoint, then extracts the revision:
 
-Brain receives an asynchronous submission with a bounded request timeout
-`MANIFOLD_BRAIN_INGEST_TIMEOUT` (2 minutes). The worker checks the extraction
-state after 250 ms, then waits twice as long each time up to
-`MANIFOLD_BRAIN_POLL_INTERVAL` (2 seconds). Its returned document ID is stored
-privately in the job before polling. `MANIFOLD_BRAIN_EXTRACTION_TIMEOUT`
-(30 minutes) bounds each polling attempt. Retry resumes the same operation
-after a timeout or restart. Increase these limits to match measured provider
-latency; do not disable deadlines. The skill's two-minute default wait is
-independent: use `remember --wait-timeout 20m` for longer jobs, or keep polling
-the existing job ID after a client wait timeout.
+- The text is split into sections of at most 12,000 characters at headings,
+  blank lines and code fences. Up to `MANIFOLD_EXTRACTION_CONCURRENCY` sections
+  (4 by default, 1–16) go to the chat model at once, each as one
+  `json_schema` request named `extraction`.
+- A section whose answer is not valid JSON is extracted again as two halves,
+  at most twice.
+- Every fact must be grounded: its evidence or value has to appear in the
+  section. Ungrounded facts, invalid indexes and empty predicates are dropped.
+- Entities resolve by normalized name, then by alias, preferring the same
+  kind. A known fact stated again keeps its ID and the higher confidence.
+- `status`, `os_version` and `code_memory__default_value` hold one current
+  value per entity: the statement with the latest `valid_from` wins and the
+  others become `superseded`. Every other predicate keeps all its values.
 
-Brain's provider request has its own deadline. Compose sets
-`BRAIN_OPENAI_TIMEOUT_MS=300000` and `BRAIN_OPENAI_MAX_RETRIES=1` (one SDK retry)
-so extraction can outlast the upstream default 30-second interactive deadline.
-The production provider exceeded that old deadline even for a 1,469-character
-document. These bounds remain inside the normal 30-minute Manifold extraction
-attempt; the durable job checkpoint survives a later retry. Brain validates
-`BRAIN_OPENAI_MAX_RETRIES` as a positive integer: zero prevents startup.
-The September 16 production deployment overrides the per-request timeout to
-900000 ms after repeated provider timeouts; see the deployment evidence below.
-
-Document extraction uses `BRAIN_EXTRACTOR_MAX_COMPLETION_TOKENS=16384`
-(valid range 1–65536). Incomplete model output fails the run; an empty graph
-is successful only after a valid completed extraction. Private Brain request
-buckets default to 600 requests per minute (`BRAIN_THROTTLE_LIMIT` and
-`BRAIN_THROTTLE_EXPENSIVE_LIMIT`) so per-candidate hydration fits the extraction
-deadline. Brain's search route has its own limit, 600 searches per minute by
-default (`BRAIN_THROTTLE_SEARCH_LIMIT`; upstream hardcodes 10). Every Manifold
-search and context request makes one Brain search with the same key; above the
-limit Brain answers `429` and Manifold returns Brain in
-`degraded_dependencies`. Authentication, tenant checks, and other
-endpoint-specific limits remain.
+`MANIFOLD_PROVIDER_TIMEOUT` (3 minutes) bounds one provider call.
+`MANIFOLD_EXTRACTION_TIMEOUT` (30 minutes) bounds the extraction of one
+revision. A call that fails with HTTP 429, a 5xx status or a network error is
+repeated up to three attempts; `Retry-After` is honored up to 30 seconds. The
+skill's two-minute default wait is independent: use
+`remember --wait-timeout 20m` for longer jobs, or keep polling the existing
+job ID after a client wait timeout.
 
 ```bash
 curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
@@ -100,11 +107,13 @@ curl -X POST "$MANIFOLD_URL/api/v1/jobs/$JOB_ID/retry" \
   -H "Idempotency-Key: retry-$JOB_ID-1"
 ```
 
-Retry only `failed` or `partially_ready` jobs. Other states return `invalid_state_transition`.
+Retry only `failed` or `partially_ready` jobs. Other states return
+`invalid_state_transition`.
 
-`status.state` and `status.components` describe component probes. Inspect
-`status.pipeline` for current document states; historical failed job counts are
-not a current read outage.
+`status.state` and `status.components` describe component probes: `sqlite`,
+`index`, and `provider` (`unknown` before the first call, then `ready` or
+`degraded` after the last one). Inspect `status.pipeline` for current document
+states; historical failed job counts are not a current read outage.
 
 When the model provider refuses extraction, the job stores
 `provider_credits_exhausted` (no credit) or `dependency_unavailable` (key, rate
@@ -113,32 +122,27 @@ limit, outage), and `status.pipeline` reports `blocked_documents` and
 Every `MANIFOLD_PROVIDER_RETRY_INTERVAL` (15 minutes, `0` turns it off)
 Manifold retries the longest-blocked document as a probe. After one sync
 succeeds it retries all blocked documents. You do not need to retry them by
-hand. Search can still report `degraded_dependencies` while the provider
-refuses embedding or rerank requests.
+hand. Search reports `semantic` in `degraded_dependencies` while the provider
+refuses query embeddings; graph search then falls back to full-text matching.
 
-`deploy/openviking/ov.conf` caps OpenViking completions with `vlm.max_tokens`
-(32768). Without a cap, OpenRouter reserves credit for the model's largest
-possible answer and refuses requests while the balance could still pay for
-them. Lower the value for a model whose output
-limit is smaller.
+After a failed embedding pass the embedder waits one minute, doubling up to 30
+minutes. The next call the provider answers, such as an extraction or a query
+embedding, ends the wait.
 
-A failed pre-snapshot write marks the current
-document `failed`; a preserved canonical snapshot with incomplete extraction
-is `partially_ready`. Jobs for older revisions cannot mark a newer revision
-ready. Inspect the stored error and exact revision before selecting retries.
+A failed pre-snapshot write marks the current document `failed`; a preserved
+snapshot with incomplete extraction is `partially_ready`. Jobs for older
+revisions cannot mark a newer revision ready. Inspect the stored error and
+exact revision before selecting retries.
 
 Rename work also checkpoints each affected document revision. A retryable
-upstream failure preserves the applying plan, its slug reservations and saved
-Brain operations; retry the same job after recovery. Document/folder/entity
-creates and document updates/deletes are checked transactionally against those
-reservations. A terminal failure is compensated and rolled back; follow its
-remediation and create a fresh reviewed plan rather than assuming the old
-rolled-back plan can resume.
+failure preserves the applying plan and its slug reservations; retry the same
+job after recovery. Document, folder and entity creates and document updates
+and deletes are checked transactionally against those reservations. A terminal
+failure is compensated and rolled back; follow its remediation and create a
+fresh reviewed plan rather than assuming the old rolled-back plan can resume.
 
-Async Brain extraction retains normalized source chunks. Deleting a Manifold
-document withdraws it from current public retrieval and retracts its unshared
-Brain facts and relations, but it does not purge those private Brain chunks. Review the [retention boundary](brain-patch.md) before
-production migration; the service key is not granted administrator scope.
+Deleting a document removes its text and chunks from the index and retracts
+the facts and relations that no other live document states.
 
 ## Job concurrency
 
@@ -148,352 +152,69 @@ one at a time, in the order they were created. A `rename.apply` job runs only
 when no other job runs, and jobs created after it wait until it finishes. Set
 the value to 1 to run every job in sequence.
 
-A document sync holds the derived-graph phase shared from its Brain submission
-until its graph projection is stored. The retraction of facts and relations
-that a document no longer states holds the phase exclusively. A retraction
-therefore sees the claims of every Brain commit in flight and does not withdraw
-a fact that another document is about to claim. The cost: a retraction waits
-for the extractions in flight, and a sync that reaches its Brain submission
-while a retraction waits also waits.
+A document sync holds the derived-graph phase shared from its extraction until
+its graph projection is stored. The retraction of facts and relations that a
+document no longer states holds the phase exclusively, so it does not withdraw
+a fact that another document is about to claim. The index serializes its write
+transactions; reads run on up to four connections beside them.
 
-A retraction sends up to four Brain calls at a time. A retryable Brain failure
-(`429`, `5xx`, a network error) is repeated up to six attempts, with the delay
-that Brain's `Retry-After` asks for or else a random delay from the upper half
-of the poll backoff (250 ms doubling to `MANIFOLD_BRAIN_POLL_INTERVAL`).
-Concurrent retractions make SurrealDB abort about one Brain call in ten with
-`Transaction conflict: Resource busy` (HTTP 500), sometimes several times in a
-row; with three attempts and equal delays this failed eight document syncs
-between 2026-11-11 and 2026-11-23. Facts that a retraction revives join the
-next round.
+## Memory and disk
 
-## Brain liveness
-
-Compose reports an unhealthy container but never restarts it. Brain's
-healthcheck (`deploy/brain/healthcheck.sh`) therefore acts as a watchdog: once
-the current Brain process has answered `/health`, `BRAIN_HEALTH_RESTART_FAILURES`
-consecutive failures (default 20, five minutes at the 15-second interval) send
-it `SIGTERM`, and a further failure sends `SIGKILL`. `restart: unless-stopped`
-then replaces the container. Failures before the first successful probe are
-not counted, so a slow startup or migration is left to `compose up --wait`.
-Brain's `/health` stays successful while SurrealDB is unreachable, so the
-watchdog reacts to a wedged process rather than to a dependency outage. The
-log of the restarted container contains the watchdog line, and its restart
-count increases; investigate both instead of treating the restart as recovery.
-
-A wedged process includes one whose SurrealDB connection pool leaked. With
-surrealdb-js 2.0.8 (Brain before v2.11.0), a SurrealDB restart reconnected the
-sockets but never settled the queries that were in flight, so their pool leases
-were never released. surrealdb-js 2.2.0 rejects such queries; a lost network
-path can still leave them waiting.
-`pool-stall-liveness.patch` makes `/health` answer `503` with
-`state: "pool_stalled"` once a pool has had no idle connection and no
-successful acquire for `SURREALDB_POOL_STALL_MS` (2 minutes) while acquires
-time out. The watchdog replaces the process about seven minutes after the
-leak, and Manifold's `status` reports Brain as not ready meanwhile. Brain's log
-shows the leak as repeated `Surreal root pool acquire timed out` warnings.
-Before this patch the 2026-11-21 SurrealDB OOM kill left every root lease
-leaked for two days: each Manifold search and context request waited for its
-30-second Brain deadline, nightly compaction could not be enqueued, and
-`/health` answered `ok`. To recover a process without the patch, restart only
-the Brain container.
-
-Any Brain restart, by the watchdog or an operator, interrupts the extraction
-pass in flight. That document's Brain run stays `running`: the pass reads only
-`pending` runs, and Brain marks a run `failed` only in its nightly sweep at
-03:45 UTC, once the run is older than 30 minutes. The Manifold job meanwhile
-holds a worker and the shared graph phase, and document updates that retract
-facts wait behind it, until `MANIFOLD_BRAIN_EXTRACTION_TIMEOUT` (30 minutes)
-ends the job as `partially_ready`. Retry that job only after the sweep; an earlier retry waits
-on the same run for another 30 minutes. Before a planned restart of Brain or
-SurrealDB, check `manifold jobs` for `document.sync` jobs in `indexing`.
-
-## SurrealDB memory
-
-Without a container limit SurrealDB 3.3 sizes its RocksDB block cache from
-host memory: half of it minus 1 GiB, 11.5 GB of 23.5 GB on the production
-host, plus up to eight 128 MiB memtables. Between 03:05 and 03:51 UTC Brain's
-nightly jobs (recompose at 03:05, compaction at 03:17, and several sweeps) run
-statements over `knowledge_fact` that take 10-80 seconds each. On 2026-11-13
-and 2026-11-21 SurrealDB reached 17 GB during that window and the kernel's
-global OOM killer stopped it, with every other service on the host under the
-same memory pressure.
-
-Compose therefore limits the container (`SURREALDB_MEMORY_LIMIT`, `10g`), sets
-the RocksDB cache explicitly (`SURREALDB_BLOCK_CACHE_SIZE`, 3 GiB in bytes;
-SurrealDB silently ignores a value that is not a plain byte count), and sets
-`SURREAL_MEMORY_THRESHOLD` (`SURREALDB_MEMORY_THRESHOLD`, `8GiB`): above it
-SurrealDB refuses new requests instead of growing until the limit. The
-threshold counts the Rust heap and the RocksDB caches but not table readers,
-compaction buffers, or open write batches, so keep it below the container
-limit. Confirm the effective values in the startup log:
-
-```bash
-docker compose logs surrealdb | grep -E 'Memory threshold|Memory manager'
-docker inspect -f '{{.HostConfig.Memory}}' manifold-surrealdb-1
-```
-
-An OOM kill inside the limit stops only SurrealDB. Brain then loses its
-in-flight queries; see [Brain liveness](#brain-liveness).
-
-On 2026-11-27 SurrealDB reached the 10 GiB limit three times during document
-commits: Brain ran a scan over all entities of a type for every mention at
-once, and fact resolution passes overlapped. The `bounded-name-scans` and
-`single-resolution-pass` [Brain patches](brain-patch.md) limit both. These
-statements grow with the graph, so check the restart count after a large
-import (`docker inspect -f '{{.RestartCount}}' manifold-surrealdb-1`).
-
-## Brain vector index and slow-query log
-
-Compose sets `SEARCH_HNSW_ENABLED=1` for Brain (`BRAIN_SEARCH_HNSW_ENABLED`).
-The search vector leg then reads `fact_embedding_hnsw` instead of every
-`knowledge_fact` row with its 1,536-value embedding; on 2026-10-25 that read
-took 5-6 s per search at 13,054 facts. Brain builds `fact_embedding_hnsw` and
-`segment_embedding_hnsw` itself, `CONCURRENTLY`, when it first opens the
-tenant after a start, which for the `manifold` tenant happens during startup
-(13,400 facts: 6 s on a copy of the production graph), and again in its
-nightly reconciliation if one is missing. Until an
-index reports `ready`, the leg serves the exact scan. Provisioning follows the
-search flag; set `BRAIN_HNSW_PROVISION_ENABLED=1` with
-`BRAIN_SEARCH_HNSW_ENABLED=0` to build the indexes before the leg uses them.
-To return to the exact scan, set `BRAIN_SEARCH_HNSW_ENABLED=0` and recreate
-the Brain container; the indexes stay and cost one update per embedded write.
-
-SurrealDB logs every statement slower than
-`SURREALDB_SLOW_QUERY_LOG_THRESHOLD` (250 ms by default) at `WARN` with its
-text and duration. The parameter allow list names no parameter, so bound
-values such as document text and embeddings are not logged. Read it with
-`docker compose logs surrealdb | grep slowlog`.
+The index runs in the Manifold process. Compose limits the container to
+`MANIFOLD_MEMORY_LIMIT` (1 GiB) and sets `GOMEMLIMIT` to
+`MANIFOLD_GOMEMLIMIT` (384 MiB): the Go runtime collects garbage harder as the
+heap nears that value. Each SQLite connection keeps a page cache of at most
+4 MB. A vector takes `MANIFOLD_EMBEDDING_DIMENSIONS` bytes (512 by default).
+See [performance](performance.md) for measured figures.
 
 ## Container logs
 
-Compose writes every service's log with the `local` driver: compressed, at
-most three 10 MB files per container. Docker's default `json-file` driver keeps
-logs without a limit. `docker compose logs` reads both. A container keeps its
-log only while it exists; recreating it, as every deployment does, starts an
-empty log.
+Compose writes the log with the `local` driver: compressed, at most three
+10 MB files. Docker's default `json-file` driver keeps logs without a limit.
+A container keeps its log only while it exists; recreating it, as every
+deployment does, starts an empty log.
 
-## SurrealDB 3.3.5
+## Data version 6 migration
 
-Compose moved SurrealDB from v3.3.0 to v3.3.5 on 2026-11-27. The release line
-and storage format are the same, so `DATA_VERSION` stays 4. On a copy of a
-graph with about 50,000 facts v3.3.5 opened the data with the HNSW index
-`ready`, and v3.3.0 opened the same files again afterwards. Take a cold copy
-of the volume before changing the image anyway:
+Data version 6 replaces OpenViking, INITE Brain and SurrealDB with the
+embedded index. `manifold.db` keeps its schema; the new release adds
+`index.db` beside it and never opens the `openviking-data`, `brain-cache` or
+`surrealdb-data` volumes. `DATA_VERSION=6` stops automatic deployment before
+the checkout or runtime changes.
 
-```bash
-docker compose stop brain surrealdb
-docker run --rm -v manifold_surrealdb-data:/data:ro -v "$PWD:/backup" \
-  alpine:3.24.2 tar -C /data -cf /backup/surrealdb-data.tar .
-docker compose up -d surrealdb brain
-```
+1. Confirm that no job is `indexing` or `extracting` and that the provider
+   account has credit. Record the counts in `GET /api/v1/status`.
+2. Stop the old stack and take the cold backup of all four old volumes with
+   the commands of the previous release. Verify the archive hashes.
+3. Replace the Compose project with the single `manifold` service of this
+   release. Keep `MANIFOLD_BOOTSTRAP_API_KEY` and the `OPENAI_*` provider
+   settings. `OPENAI_EMBEDDING_DIMENSIONS` is no longer read; the index uses
+   `MANIFOLD_EMBEDDING_DIMENSIONS`.
+4. Start Manifold. It logs `index seeded from the canonical database`, then
+   `index embedded` while the embedder fills the vectors. Check that the
+   status counts match step 1.
+5. Acceptance: once the embedder is idle, search and context return results
+   without `degraded_dependencies`. Write a small synthetic document, wait for
+   `ready`, check its entity and fact in graph search, update it and check that
+   the old fact disappears, then delete it.
+6. Keep the old volumes until acceptance holds for some days. Remove them
+   only on an explicit decision.
 
-## Data version 5 migration
+Rollback: stop Manifold and start the previous release on the backed-up
+volumes. Documents written after the switch exist only in `manifold.db` and
+the new index; the previous release does not know them.
 
-This release moves INITE Brain from commit `a567f69` (v2.3.0 plus 39 commits)
-to release v2.11.0. SurrealDB stays at v3.3.5 and OpenViking at v0.5.0.
-`DATA_VERSION=5` stops automatic deployment before the checkout or runtime
-changes. The only rollback is a restore of the cold backup with the old images;
-never start the old Brain on migrated data.
-
-On the first start:
-
-- Earlier Manifold builds recorded their own migrations as 0168–0170. The
-  migrator deletes those ledger rows by file name
-  ([`ledger-release.patch`](brain-patch.md)), then applies upstream's
-  0168–0199 and the local 9001–9004 (the `settle_fact` index hint, removal of
-  the per-user indexes plus element indexes on `aliases` and `nameKeys`, the
-  `derivedFrom` element index with removal of the `fact_staleness` event, and
-  removal of `fact_derived_version_idx`). All of them are one-way.
-- Migration 0177 updates facts one subquery at a time: on 51,000 facts it ran
-  for about 15 minutes. Brain reports `unhealthy` meanwhile and
-  `docker compose up --wait` fails; the container is not restarted, so wait for
-  `Nest application successfully started`.
-- Upstream's hourly data migrations (minute 23, UTC) then back-fill edge fields
-  in batches of 500 rows per tenant until each `data_migration` row reports
-  done. They change stored data.
-- Upstream v2.11.0 would read every stored revision again at start, including
-  superseded ones. The image turns that walk off
-  ([`opt-in-boot-reread.patch`](brain-patch.md)); documents keep what the
-  previous Brain read from them.
-- The image keeps the previous flag defaults (`deploy/brain/flags/defaults.env`),
-  and Compose sets `DECISIONS_LANES` to an empty string.
-- Brain's nightly sweep (03:45 UTC) now also retries failed runs.
-- `docker-compose.yml` changed, so the fingerprint of the deployment runtime
-  profile changes. Review the profile, add the new Brain environment, confirm
-  that the Brain service sets no `command` (the image command loads the frozen
-  flag defaults), and update the fingerprint before the new commit reaches the
-  host.
-
-Follow steps 1–3 of the
-[data version 2 procedure](#brain-v2--data-version-2-migration), with these
-additions:
-
-1. Rehearse on a copy of the data first, without a provider network: every
-   tenant database applies all migrations, a second start applies none, the
-   counts of facts, entities, and edges do not drop, the hourly data migrations
-   report done, and `EXPLAIN` of the `settle_fact` candidate query uses
-   `fact_entity_idx`.
-2. Before stopping services, confirm that no indexing job is active and that
-   the model provider account has credit.
-3. Take the cold backup of all four volumes and verify the archive hashes
-   before any new image opens the volumes.
-4. After the start, check the running commit and component readiness, and that
-   Brain's log has no migration or environment validation error.
-   `INFO FOR TABLE knowledge_fact` lists `fact_derived_from_el_idx` and
-   neither `fact_user_idx` nor `fact_derived_version_idx`.
-5. Acceptance: write a small synthetic document, wait for `ready`, and confirm
-   that the entity and fact counts in `GET /api/v1/status` grew. Update it,
-   delete it, and check search and context without `degraded_dependencies`.
-6. Watch the next 03:45 UTC sweep and one day of provider token spend, and
-   compare them with the week before.
-
-## Data version 4 migration
-
-This release moves INITE Brain from v2.3.0 to upstream commit `a567f69`
-(`main` after v2.3.0) and OpenViking from v0.4.22 to v0.5.0. SurrealDB stays at
-v3.3.0. Brain applies migrations 0161-0170 on startup: 0161-0167 come from
-upstream, 0168-0170 from Manifold's [performance patches](brain-patch.md).
-None can be undone by starting older images, so `DATA_VERSION=4` stops
-automatic deployment before the checkout or runtime changes. Follow the steps
-of the [data version 2 procedure](#brain-v2--data-version-2-migration) and the
-differences listed under [data version 3](#data-version-3-migration), with
-these changes:
-
-- The cold four-volume backup is the only rollback path. Verify the archive
-  hashes before any new image opens the volumes. On a copy of the production
-  graph (3,500 facts) the nine migrations took under one second.
-- Brain `main` reads a new document in a batched pass: it remembers the
-  document at once and a separate `extract_documents` job extracts it after a
-  gathering window (upstream default 20 seconds). Manifold submits one document
-  per job and waits, so the window is dead time. Compose sets
-  `EXTRACTION_BATCH_WINDOW_SECONDS` from `BRAIN_EXTRACTION_BATCH_WINDOW_SECONDS`
-  (1 by default; the effective minimum is one second).
-- Brain's job loops sleep `WORKER_LOOP_POLL_MS` after every claim attempt and
-  `WORKER_LOOP_EMPTY_BACKOFF_MS` more when the queue is empty (upstream: 1000
-  and 5000 ms), so a new job waited up to six seconds for a worker. Compose
-  sets 250 and 750 ms (`BRAIN_WORKER_LOOP_POLL_MS`,
-  `BRAIN_WORKER_LOOP_EMPTY_BACKOFF_MS`). The price is one claim query per job
-  type each second while idle.
-- Migration 0169 removes the per-user indexes `fact_user_idx` and
-  `entity_user_idx` and adds element indexes on `aliases` and `nameKeys`.
-  Migration 0170 removes the write-time `fact_staleness` event; derived
-  summaries turn stale at the nightly drain. Both are described in the patch
-  notes, together with the commands that restore the old shape.
-- The general indexer's pack version moved from `0` to `3`. A failed or
-  `partially_ready` run recorded under version `0` reports
-  `skipped_version_mismatch` from `POST /v1/documents/:id/retry` and from the
-  Manifold retry action. Recover those documents with a same-content update
-  that uses the current ETag and a fresh idempotency key; each update creates
-  a new revision and a new extraction.
-- OpenViking v0.5.0 logs deprecation warnings for `agfs.path` and
-  `vectordb.path` defaults; Manifold's configuration sets neither. Search
-  scores and ordering differ from v0.4.22. Manifold fuses by rank and
-  canonicalizes hits through SQLite.
-- `MANIFOLD_BRAIN_POLL_INTERVAL` (new, 2 seconds) caps the wait between status
-  checks.
-- Acceptance: write a small synthetic document, wait for `ready`, and confirm
-  that the job finished in seconds, that `INFO FOR TABLE knowledge_fact`
-  lists no `fact_user_idx`, and that the entity and fact counts in
-  `GET /api/v1/status` grew by the document's extracted graph. Then update it
-  and delete it.
-
-## Data version 3 migration
-
-This release moves Brain v2.2.0 to v2.3.0, SurrealDB v3.2.4 to v3.3.0 and
-OpenViking v0.4.20 to v0.4.22. Brain applies migrations 0130–0160 on startup
-and SurrealDB 3.3 rewrites its storage on first open; neither can be undone by
-starting older images. `DATA_VERSION=3` therefore stops automatic deployment
-before the checkout or runtime changes. Follow the steps of the
-[data version 2 procedure](#brain-v2--data-version-2-migration) with these
-differences:
-
-- The cold four-volume backup in step 2 is the only rollback path. Verify the
-  archive hashes before any new image opens the volumes.
-- Brain v2.3 changes these defaults, which the Compose file sets explicitly:
-  `EXTRACTOR_SC_PASSES` (three extraction samples per document,
-  `BRAIN_EXTRACTOR_SC_PASSES`), and `EPISODE_SUBSTRATE_ENABLED=0`, because
-  Manifold sends documents rather than conversational turns.
-- `scoped-session-recovery.patch` is gone: v2.3 re-authenticates scoped
-  SurrealDB sessions itself. The integration run still restarts SurrealDB under
-  a running Brain to prove it.
-- With an OpenRouter-compatible `OPENAI_BASE_URL`, set
-  `OPENAI_CHAT_EXTRA_BODY` (see `.env.example`) before starting the stack.
-  Brain merges it into its chat calls, and OpenViking's start renders it into
-  `vlm.extra_request_body` (`deploy/openviking/render-config.py`, because the
-  template must stay valid JSON before placeholder expansion); OpenViking's own `thinking: false` only reaches
-  DashScope endpoints. Without it, hybrid reasoning models spend the small
-  output budgets of rerank and classification calls on hidden reasoning and
-  return no JSON, and OpenViking's semantic summaries run long enough for
-  waited writes to hit their 300-second timeout.
-- Provider choice matters as much. On 2026-10-02 OpenRouter routed
-  `deepseek/deepseek-v4.1-flash` summaries to `open-inference/fp4`, which
-  produced about 1,600 tokens at roughly 8 tokens/s (~180 s per summary) and
-  ignored length instructions, even with `sort: "throughput"`. The same
-  request on Together or DeepInfra took 0.7–1.5 s and about 80 tokens. The
-  production value therefore adds `"ignore":["open-inference"]` and
-  `"sort":"throughput"`. Re-measure when changing the model: provider slugs
-  come from `https://openrouter.ai/api/v1/models/<model>/endpoints`.
-- After acceptance, recover documents that are `partially_ready` from the
-  September 30 Brain outage through their jobs' retry action, one at a time.
-
-## Brain v2 / data version 2 migration
-
-This release moves Brain v0.8.1 to v2.2.0, SurrealDB v3.1.5 to v3.2.4 and
-OpenViking v0.4.10 to v0.4.20. Brain applies its versioned migrations on startup.
-The upgrade must not use a code-only downgrade after new services open the
-volumes. `DATA_VERSION=2` makes automatic deployment refuse the transition
-from older releases (which implicitly have data version 1) before checkout or
-runtime mutation. Deployments within the same data version retain the existing
-automatic rollback behavior.
-
-After the operator authorizes the production migration:
-
-1. Record the exact running commit, container image digests, Compose project
-   name, current document/revision counts and pending jobs. Build the reviewed
-   target images in a separate checkout and run the full deterministic suite.
-   Keep existing embedding provider, model and dimensions; changing embedding
-   spaces is a separate migration.
-2. Quiesce clients, stop all services, and create and verify the four-volume
-   cold backup above plus a protected configuration backup. Rehearse restoring
-   this backup into isolated volumes before opening production data with the
-   new dependencies. Do not print private payloads during validation.
-3. Advance the clean source checkout to the approved exact commit. Add the new
-   timeout values if defaults are unsuitable, preserve secrets, and validate
-   `docker compose --env-file .env config --quiet`. Start SurrealDB, then Brain
-   and OpenViking. Verify their migrations and readiness before starting
-   Manifold. Keep the old images and full backup until acceptance.
-4. Check public build identity, current canonical content and old revision
-   snapshots. Write a small approved synthetic document; wait for terminal
-   `ready`, verify extracted entity/fact/relation and canonical provenance in
-   graph search, update it and verify stale evidence disappears, then delete
-   it. Restart Manifold and verify completed data plus an interrupted job's
-   checkpoint recovery. Health alone does not meet acceptance.
-5. Recover current failed/partial jobs individually after reviewing their
-   stored errors. Existing `ready` documents are not silently re-extracted:
-   backfill them through reviewed same-content updates with current ETags and
-   fresh idempotency keys. Each update creates an auditable new revision and
-   fills the public graph. Check per-document completion and provider cost
-   before proceeding to the next batch.
-6. If acceptance fails after migration, stop every service and restore **all
-   four** backup volumes into clean replacement volumes, the matching protected
-   config and the recorded old code/images. Keep the failed migrated set for
-   investigation. Verify document/revision counts and representative retrieval
-   before reopening clients. Never start old Brain against migrated SurrealDB
-   data or restore only SQLite.
-
-Execute these production steps only with explicit deployment authorization.
-The September 16 authorized migration is recorded in
-[deployment verification](deployment-verification.md).
+Earlier data-version procedures (versions 2–5) are in the v0.2.2 tree of this
+file.
 
 ## Local integration overrides
 
 `make integration` owns only the `manifold-integration` Compose project and
 removes that project's test volumes on exit. An optional
 `MANIFOLD_INTEGRATION_COMPOSE_OVERRIDE=/absolute/path/override.yml` appends a
-local Compose override. This supports explicit, non-overlapping test subnets
-when a host's automatic Docker address pool is invalid, without modifying the
-daemon or production Compose networks. Keep credentials and production volumes
-out of integration overrides.
+local Compose override, for example explicit test subnets when a host's
+automatic Docker address pool is invalid. Keep credentials and production
+volumes out of integration overrides.
 
 ## Release and production deployment
 
@@ -502,46 +223,48 @@ commit, API major, protocol revision, and advertised feature names. Use it to
 compare a remote deployment with its skill before authentication or mutation.
 
 The `Deploy production` workflow runs after successful push CI on `main` (or
-an explicit manual dispatch). It builds Manifold and patched Brain for the exact
-immutable commit **on the GitHub runner**, publishes their digests to the existing
-public GHCR package, and submits them to the host's restricted deployment broker.
+an explicit manual dispatch). It builds the Manifold image for the exact
+immutable commit **on the GitHub runner**, publishes its digest to the existing
+public GHCR package, and submits it to the host's restricted deployment broker.
 No host script is uploaded or executed, and the CI user has no shell, sudo, or
-Docker socket access. The old `scripts/deploy-production.sh` is a legacy operator
-procedure, not the production CI entrypoint.
+Docker socket access. The old `scripts/deploy-production.sh` is a legacy
+operator procedure, not the production CI entrypoint.
 
 The host independently verifies the short-lived GitHub Actions OIDC identity
-(audience `geta-deploy`, repository ID, main workflow ref, production environment)
-and successful main-push CI for the target commit. Its operator-owned runtime
-profile fixes image repositories, service names, mounts, networks, and settings.
-Only the two image digests change. The broker uses Compose without `down`,
-without builds and without recreating dependencies, and preserves named volumes.
-It checks container health, public readiness/build identity, authenticated
+(audience `geta-deploy`, repository ID, main workflow ref, production
+environment) and successful main-push CI for the target commit. Its
+operator-owned runtime profile fixes the image repository, service name,
+mounts, networks, and settings. Only the image digest changes. The broker uses
+Compose without `down` and without builds, and preserves named volumes. It
+checks container health, public readiness and build identity, authenticated
 component status, and scoped semantic retrieval without degraded dependencies.
 
-A failed rollout restores the previously recorded pinned images and returns a
-failure to GitHub. Manual dispatch with `operation: rollback` restores the previous
-compatible release. Data-version changes require a coordinated operator migration;
-changes to the Compose/OpenViking runtime-profile fingerprint require explicit
-operator review and profile update. Neither is silently accepted from CI.
-A green CI run, published GHCR image, GitHub release, and live deployment remain
-distinct states; report their SHAs separately.
+A failed rollout restores the previously recorded pinned image and returns a
+failure to GitHub. Manual dispatch with `operation: rollback` restores the
+previous compatible release. Data-version changes require a coordinated
+operator migration; changes to the `docker-compose.yml` runtime-profile
+fingerprint require explicit operator review and profile update. Neither is
+silently accepted from CI. A green CI run, published GHCR image, GitHub
+release, and live deployment remain distinct states; report their SHAs
+separately.
 
 The GitHub `production` environment holds `MANIFOLD_DEPLOY_SSH_KEY` and pinned
 `MANIFOLD_DEPLOY_KNOWN_HOSTS` secrets, plus `MANIFOLD_DEPLOY_HOST`,
-`MANIFOLD_DEPLOY_USER=deploy`, and `MANIFOLD_PUBLIC_URL` variables. OIDC is minted
-only for the request and passed over SSH stdin, never printed or placed in an
-SSH command argument. Production API credentials remain in root-only host
-configuration, never in GitHub Actions. Privileged broker source/configuration
-updates use a separate, administrator-reviewed private infrastructure repository.
+`MANIFOLD_DEPLOY_USER=deploy`, and `MANIFOLD_PUBLIC_URL` variables. OIDC is
+minted only for the request and passed over SSH stdin, never printed or placed
+in an SSH command argument. Production API credentials remain in root-only host
+configuration, never in GitHub Actions. Privileged broker source and
+configuration updates use a separate, administrator-reviewed private
+infrastructure repository.
 
 ## Key rotation
 
-Create a new admin key, verify it, switch clients, then revoke the old key from the new credential. Manifold refuses self-revocation to prevent accidental lockout.
-
-`OPENVIKING_API_KEY` is the root key for the internal trusted deployment and must match in both the Manifold and OpenViking containers. Rotate it during a controlled stack restart.
-
-Brain uses a SHA-256 registry because it is an internal pinned dependency. Regenerate `BRAIN_API_KEYS_JSON` with `scripts/brain-key-hash.sh` whenever `BRAIN_API_KEY` rotates.
+Create a new admin key, verify it, switch clients, then revoke the old key from
+the new credential. Manifold refuses self-revocation to prevent accidental
+lockout. Rotate `OPENAI_API_KEY` with a Manifold restart.
 
 ## Scale boundary
 
-Version 1 is one tenant and one Manifold replica. SQLite worker leasing protects restart recovery but is not a multi-replica coordination contract. Do not place two Manifold replicas over the same database.
+Version 1 is one tenant and one Manifold replica. SQLite worker leasing
+protects restart recovery but is not a multi-replica coordination contract. Do
+not place two Manifold replicas over the same database.

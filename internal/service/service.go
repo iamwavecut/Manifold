@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,33 +22,25 @@ import (
 )
 
 type Service struct {
-	store                  *store.Store
-	documents              upstream.DocumentStore
-	graph                  upstream.GraphStore
-	publicURL              string
-	logger                 *slog.Logger
-	workerTick             time.Duration
-	brainExtractionTimeout time.Duration
-	brainPollInterval      time.Duration
-	build                  buildinfo.Info
+	store             *store.Store
+	documents         upstream.DocumentStore
+	graph             upstream.GraphStore
+	publicURL         string
+	logger            *slog.Logger
+	workerTick        time.Duration
+	extractionTimeout time.Duration
+	providerHealth    func() string
+	build             buildinfo.Info
 
 	// graphPhase orders the derived-graph work of concurrent jobs. A document
-	// sync holds it shared from its Brain submission until its projection is
+	// sync holds it shared from its extraction until its projection is
 	// stored, and a retraction holds it exclusively. A retraction then sees the
-	// claims of every Brain commit in flight, and does not withdraw a fact that
+	// claims of every extraction in flight, and does not withdraw a fact that
 	// another document is about to claim.
 	graphPhase sync.RWMutex
 }
 
-const defaultBrainExtractionTimeout = 15 * time.Minute
-
-// Brain finishes small documents within seconds, so polling starts at
-// initialBrainPollInterval and doubles up to the configured ceiling instead of
-// sleeping the ceiling before every check.
-const (
-	defaultBrainPollInterval = 2 * time.Second
-	initialBrainPollInterval = 250 * time.Millisecond
-)
+const defaultExtractionTimeout = 30 * time.Minute
 
 type Status struct {
 	Service          string            `json:"service"`
@@ -117,40 +108,22 @@ func New(s *store.Store, documents upstream.DocumentStore, graph upstream.GraphS
 	return &Service{
 		store: s, documents: documents, graph: graph, publicURL: publicURL,
 		logger: logger, workerTick: workerTick,
-		brainExtractionTimeout: defaultBrainExtractionTimeout,
-		brainPollInterval:      defaultBrainPollInterval,
-		build:                  build,
+		extractionTimeout: defaultExtractionTimeout,
+		build:             build,
 	}
 }
 
-func (s *Service) SetBrainExtractionTimeout(timeout time.Duration) {
+// SetExtractionTimeout bounds the graph extraction of one document.
+func (s *Service) SetExtractionTimeout(timeout time.Duration) {
 	if timeout > 0 {
-		s.brainExtractionTimeout = timeout
+		s.extractionTimeout = timeout
 	}
 }
 
-func (s *Service) SetBrainPollInterval(interval time.Duration) {
-	if interval > 0 {
-		s.brainPollInterval = interval
-	}
-}
-
-// brainPollDelay is the wait before the next status check after the given
-// number of checks: initialBrainPollInterval, doubling, capped at the
-// configured poll interval.
-func (s *Service) brainPollDelay(polls int) time.Duration {
-	ceiling := s.brainPollInterval
-	if ceiling <= 0 {
-		ceiling = defaultBrainPollInterval
-	}
-	delay := initialBrainPollInterval
-	for range polls {
-		if delay >= ceiling {
-			break
-		}
-		delay *= 2
-	}
-	return min(delay, ceiling)
+// SetProviderHealth reports the model provider in status. health returns
+// "ready", "degraded" or "unknown" and must not call the provider.
+func (s *Service) SetProviderHealth(health func() string) {
+	s.providerHealth = health
 }
 
 func (s *Service) Store() *store.Store {
@@ -166,25 +139,22 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Service: s.build.Service, Version: s.build.Version, Commit: s.build.Commit,
 		APIMajor: s.build.APIMajor, ProtocolRevision: s.build.ProtocolRevision,
 		Features: s.build.Features, State: "ready",
-		Components: map[string]string{"sqlite": "ready", "openviking": "unknown", "brain": "unknown"},
+		Components: map[string]string{"sqlite": "ready", "index": "ready", "provider": "unknown"},
 	}
 	if err := s.store.Ping(ctx); err != nil {
 		status.Components["sqlite"] = "failed"
 		status.State = "failed"
 	}
-	if err := s.documents.Health(ctx); err != nil {
-		status.Components["openviking"] = "degraded"
-		status.State = "degraded"
-	} else {
-		status.Components["openviking"] = "ready"
-	}
-	if err := s.graph.Health(ctx); err != nil {
-		status.Components["brain"] = "degraded"
+	if errors.Join(s.documents.Health(ctx), s.graph.Health(ctx)) != nil {
+		status.Components["index"] = "degraded"
 		if status.State == "ready" {
 			status.State = "degraded"
 		}
-	} else {
-		status.Components["brain"] = "ready"
+	}
+	// The provider is external: its refusals block documents, which the
+	// pipeline reports, so it does not change the component state.
+	if s.providerHealth != nil {
+		status.Components["provider"] = s.providerHealth()
 	}
 	counts, err := s.store.Metrics(ctx)
 	if err != nil {
@@ -246,31 +216,8 @@ func (s *Service) DeleteFolder(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	uri := "viking://resources/manifold" + path + "/"
-	for attempt := range 6 {
-		err = s.documents.Delete(ctx, uri, true)
-		if err == nil {
-			break
-		}
-		var dependency *upstream.DependencyError
-		if !errors.As(err, &dependency) || dependency.Dependency != "openviking" {
-			return err
-		}
-		if dependency.Status == http.StatusNotFound {
-			break
-		}
-		if dependency.Status != http.StatusConflict {
-			return err
-		}
-		dependency.Retryable = true
-		if attempt == 5 {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
+	if err := s.documents.Delete(ctx, "viking://resources/manifold"+path+"/", true); err != nil {
+		return err
 	}
 	return s.store.DeleteFolder(ctx, id)
 }
@@ -436,16 +383,23 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (SearchResp
 		}
 		lists = append(lists, canonical)
 	}
+	// A glob's exact leading segments narrow the document index search, so
+	// documents outside the glob do not crowd out the ones inside it. The
+	// glob itself still filters every hit below.
+	scope := request.Scope
+	if prefix := selector.LiteralPrefix(request.ScopeGlob); scope == "" && prefix != "" {
+		scope = "viking://resources/manifold/" + prefix
+	}
 	if request.Mode == model.SearchHybrid || request.Mode == model.SearchSemantic {
 		wg.Go(func() {
-			hits, err := s.documents.Search(ctx, request.Query, request.Scope, request.Limit*2)
-			results <- sourceResult{name: "openviking", hits: hits, err: err}
+			hits, err := s.documents.Search(ctx, request.Query, scope, request.Limit*2)
+			results <- sourceResult{name: "semantic", hits: hits, err: err}
 		})
 	}
 	if request.Mode == model.SearchHybrid || request.Mode == model.SearchSemantic || request.Mode == model.SearchGraph {
 		wg.Go(func() {
 			hits, err := s.graph.Search(ctx, request.Query, request.Limit*2, request.IncludeHistory)
-			results <- sourceResult{name: "brain", hits: hits, err: err}
+			results <- sourceResult{name: "graph", hits: hits, err: err}
 		})
 	}
 	go func() {
@@ -505,7 +459,7 @@ func (s *Service) canonicalizeSearchHits(
 func (s *Service) canonicalizeDocumentHit(ctx context.Context, hit model.SearchHit) (model.SearchHit, bool, error) {
 	var doc model.Document
 	var err error
-	if hit.Source == "openviking" {
+	if hit.Source == "semantic" {
 		doc, err = s.store.GetDocumentByOVURI(ctx, hit.ID)
 	} else {
 		doc, err = s.store.GetDocument(ctx, hit.ID, false)
@@ -568,16 +522,9 @@ func (s *Service) Context(ctx context.Context, request SearchRequest, budget int
 	}, search.DegradedDependencies, nil
 }
 
-// writeDocument writes canonical content to OpenViking. A write whose content
-// is stored but whose indexing outlived the wait counts as complete: the wait
-// also covers summaries of every ancestor folder, and retrying would repeat it.
+// writeDocument writes canonical content to the document index.
 func (s *Service) writeDocument(ctx context.Context, uri, content string, create bool) error {
-	err := s.documents.Write(ctx, uri, content, create)
-	if errors.Is(err, upstream.ErrWriteIndexingPending) {
-		s.logger.Warn("openviking indexing outlived the write wait; continuing")
-		return nil
-	}
-	return err
+	return s.documents.Write(ctx, uri, content, create)
 }
 
 func (s *Service) deleteDocument(ctx context.Context, job model.Job) error {
@@ -588,7 +535,7 @@ func (s *Service) deleteDocument(ctx context.Context, job model.Job) error {
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return err
 	}
-	// Retract first: a retry after a Brain failure then repeats only
+	// Retract first: a retry after a failure then repeats only
 	// idempotent steps, and the deleted document's claims are already
 	// outside the current graph.
 	if err := s.retractOrphanedDerivedGraph(ctx, job.ResourceID); err != nil {
@@ -708,10 +655,6 @@ func (s *Service) syncRenamedDocuments(
 	job model.Job,
 	after []model.Document,
 ) error {
-	checkpoints, err := decodeRenameDocumentCheckpoints(job.Payload)
-	if err != nil {
-		return err
-	}
 	for _, doc := range after {
 		current, err := s.store.GetDocument(ctx, doc.ID, true)
 		if errors.Is(err, store.ErrNotFound) {
@@ -764,76 +707,7 @@ func (s *Service) syncRenamedDocuments(
 			OriginURI: "manifold://documents/" + doc.ID + "@" + doc.Revision,
 			Revision:  doc.Revision, OccurredAt: revision.CreatedAt.Format(time.RFC3339),
 		}
-		graphCtx, cancel := context.WithTimeout(ctx, s.brainExtractionTimeout)
-		if async, ok := s.graph.(upstream.AsyncGraphStore); ok {
-			key := renameDocumentCheckpointKey(doc.ID, doc.Revision)
-			brainDocumentID := checkpoints.BrainDocumentIDs[key]
-			if brainDocumentID == "" {
-				brainDocumentID, err = s.submitBrainDocument(graphCtx, async, graphDocument)
-				if err == nil && brainDocumentID == "" {
-					err = errors.New("Brain accepted renamed document without returning a document ID")
-				}
-				if err == nil {
-					err = s.persistRenameBrainDocumentID(ctx, job.ID, &checkpoints, doc.ID, doc.Revision, brainDocumentID)
-				}
-				if err != nil {
-					cancel()
-					return err
-				}
-			}
-			state, stateErr := s.fetchBrainDocumentState(graphCtx, async, brainDocumentID, doc.ID, doc.Revision)
-			if stateErr == nil {
-				state, stateErr = s.waitForBrainDocument(graphCtx, async, brainDocumentID, doc.ID, doc.Revision, state)
-			}
-			if stateErr != nil {
-				cancel()
-				return stateErr
-			}
-			ingest := state.Result
-			if ingest.DocumentID == "" {
-				ingest.DocumentID = brainDocumentID
-			}
-			if ingest.OriginURI == "" {
-				ingest.OriginURI = graphDocument.OriginURI
-			}
-			if ingest.Revision == "" {
-				ingest.Revision = graphDocument.Revision
-			}
-			switch state.Status {
-			case upstream.GraphDocumentReady:
-				if err := s.materializeGraphDocument(graphCtx, doc, ingest, nil); err != nil {
-					cancel()
-					return err
-				}
-				if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobReady, ingest.DocumentID, snapshot); err != nil {
-					cancel()
-					return err
-				}
-			case upstream.GraphDocumentPartial:
-				if err := s.materializeGraphDocument(graphCtx, doc, ingest, nil); err != nil {
-					cancel()
-					return err
-				}
-				if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobPartiallyReady, ingest.DocumentID, snapshot); err != nil {
-					cancel()
-					return err
-				}
-				cancel()
-				return terminalBrainDocumentError(state)
-			case upstream.GraphDocumentFailed:
-				if err := s.store.SetDocumentSyncForRevision(ctx, doc.ID, doc.Revision, model.JobExtracting, ingest.DocumentID, snapshot); err != nil {
-					cancel()
-					return err
-				}
-				cancel()
-				return terminalBrainDocumentError(state)
-			default:
-				cancel()
-				return fmt.Errorf("Brain returned unsupported document state %q", state.Status)
-			}
-			cancel()
-			continue
-		}
+		graphCtx, cancel := context.WithTimeout(ctx, s.extractionTimeout)
 		ingest, graphErr := s.graph.IngestDocument(graphCtx, graphDocument)
 		cancel()
 		if graphErr != nil {

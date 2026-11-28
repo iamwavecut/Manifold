@@ -11,9 +11,9 @@ search does not indicate a service outage.
 ## What it provides
 
 - Semantic ASCII slugs for human-facing resources; compact XIDs for event-like resources.
-- OpenViking-backed canonical folders, documents, content, and snapshots.
-- INITE Brain extraction projected into public entities, facts, relations and provenance.
-- A SQLite control plane for public IDs, upstream mappings, jobs, revisions, idempotency, rename plans, API-key hashes, and UI sessions.
+- A SQLite control plane for canonical documents and revisions, public IDs, jobs, idempotency, rename plans, API-key hashes, and UI sessions.
+- An embedded index in a second SQLite file: model-extracted entities, facts and relations with supersession, full-text search, and int8 vector search over facts and document chunks.
+- One container with no database server or sidecar: the index lives in-process and needs only an OpenAI-compatible chat and embedding provider.
 - Hybrid retrieval with reciprocal-rank fusion and token-budgeted evidence packs.
 - Canonical search hits that expose public slugs, revisions, paths, and `manifold://` references instead of upstream IDs.
 - Atomic document creation by nested `folder_path`, plus slash-aware glob browsing across folders and documents.
@@ -49,20 +49,15 @@ Deploy:
    system package changes.
 2. Clone or fast-forward the repository into a stable server path. Never reset
    or delete an existing deployment or its named volumes.
-3. On first install, create .env from .env.example. Generate independent,
-   cryptographically random values for MANIFOLD_BOOTSTRAP_API_KEY,
-   OPENVIKING_API_KEY, BRAIN_API_KEY, FORGET_HMAC_KEY, SURREALDB_PASSWORD, and
-   SURREALDB_SCOPED_PASS. Set MANIFOLD_PUBLIC_URL to the externally reachable
-   URL and set the supplied OpenAI-compatible provider values.
-4. Derive BRAIN_API_KEYS_JSON from BRAIN_API_KEY as documented. Do not require
-   Python: use a standard SHA-256 utility or a temporary container. Keep .env
-   mode 0600, never commit it, and never print secrets into logs or chat.
-5. Run `docker compose --env-file .env config --quiet`, then
-   `docker compose up -d --build`. Keep OpenViking, Brain, and SurrealDB on the
-   private data network. OpenViking and Brain also need the un-published
-   provider network for outbound model API access. Publish only Manifold.
-6. Put Manifold behind the server's HTTPS reverse proxy when one is available.
-   Do not weaken the firewall or expose dependency ports.
+3. On first install, create .env from .env.example. Generate a
+   cryptographically random MANIFOLD_BOOTSTRAP_API_KEY. Set
+   MANIFOLD_PUBLIC_URL to the externally reachable URL and set the supplied
+   OpenAI-compatible provider values. Keep .env mode 0600, never commit it,
+   and never print secrets into logs or chat.
+4. Run `docker compose --env-file .env config --quiet`, then
+   `docker compose up -d --build`.
+5. Put Manifold behind the server's HTTPS reverse proxy when one is available.
+   Do not weaken the firewall.
 
 Verify before reporting success:
 1. Wait for every Compose healthcheck and inspect failing service logs if a
@@ -73,10 +68,8 @@ Verify before reporting success:
    poll its job to a terminal state, read the document, then delete the test
    document. Treat a dependency or provider error as a deployment failure and
    follow its semantic remediation.
-4. Restart only the Manifold container and verify the authenticated status
-   again to prove SQLite persistence.
-5. Confirm with `docker compose ps` that no OpenViking, Brain, or SurrealDB port
-   is published.
+4. Restart the Manifold container and verify the authenticated status again
+   to prove SQLite persistence.
 
 Return the public Manifold URL, deployed commit, architecture, service health,
 verification results, and backup/restore command location. Deliver the
@@ -93,16 +86,7 @@ Requirements: Docker with Compose and an OpenAI-compatible chat and embedding pr
 cp .env.example .env
 ```
 
-Replace every placeholder in `.env`. If `BRAIN_API_KEY` changes, regenerate the matching hash-only Brain registry:
-
-```bash
-set -a
-source .env
-set +a
-scripts/brain-key-hash.sh
-```
-
-Copy the printed `BRAIN_API_KEYS_JSON=...` line into `.env`, then start the stack:
+Replace every placeholder in `.env`, then start Manifold:
 
 ```bash
 docker compose up -d --build
@@ -111,9 +95,8 @@ curl --fail http://localhost:8080/health
 curl --fail http://localhost:8080/api/v1/meta
 ```
 
-Only Manifold is published to the host. OpenViking, Brain, and SurrealDB share
-an internal data network; OpenViking and Brain also have outbound provider
-access on an un-published network.
+The stack is one container. It needs outbound access to the model provider and
+publishes only the API port.
 
 - Workbench: <http://localhost:8080/app/>
 - Interactive API docs: <http://localhost:8080/docs/api>
@@ -130,23 +113,25 @@ second key; revoke and replace the key if the original response was lost.
 flowchart LR
     Agent["Agents / Manifold skill"] -->|"REST + OpenAPI"| API["Manifold Go binary"]
     Browser["Mithril workbench"] -->|"HttpOnly session + CSRF"| API
-    API --> SQLite["SQLite control plane"]
-    API --> OV["OpenViking v0.5.0\ncanonical content + snapshots"]
-    API -->|"submit + durable poll"| Brain["INITE Brain v2.11.0\nfacts + relations + provenance"]
-    Brain --> Surreal["SurrealDB v3.3.5"]
-    Brain -->|"committed graph + source revision"| SQLite
-    OV --> Provider["OpenAI-compatible provider"]
-    Brain --> Provider
+    API --> SQLite["manifold.db\ncanonical documents, revisions,\npublic IDs, jobs"]
+    API --> Index["index.db\nentities, facts, relations,\nFTS5 + int8 vectors"]
+    SQLite -->|"seed when index.db is new"| Index
+    API --> Provider["OpenAI-compatible provider\nextraction + embeddings"]
 ```
 
-SQLite is authoritative for Manifold public identity and workflow state. OpenViking is authoritative for canonical content and snapshots. Brain is authoritative for derived graph knowledge. Upstream IDs remain private opaque mappings and never become Manifold IDs.
+`manifold.db` is authoritative for content, public identity and workflow state.
+`index.db` is derived: the worker extracts each document revision into
+entities, facts and relations with one structured chat call per section,
+embeds facts and document chunks in the background, and serves full-text and
+vector search from the same file. When `index.db` is missing, Manifold seeds a
+new one from `manifold.db` at start, without model calls for revisions it has
+already extracted; vectors follow in the background. Index IDs remain private
+opaque mappings and never become Manifold IDs.
 
-Document jobs retain their exact source revision, OpenViking snapshot and Brain
-operation checkpoint. Completed extraction is projected into public entities,
-facts and relations; current retrieval excludes superseded or deleted source
-revisions. Component health and the current document pipeline are reported
-separately. See [the architecture review](docs/architecture-review.md) for the
-failure analysis and the scope of the Brain upgrade.
+Document jobs retain their exact source revision and index checkpoint.
+Completed extraction is projected into public entities, facts and relations;
+current retrieval excludes superseded or deleted source revisions. Component
+health and the current document pipeline are reported separately.
 
 One process serves the API and UI and runs the durable worker. Version 1 is intentionally single-tenant, single-replica, and self-hosted.
 
@@ -188,9 +173,8 @@ missing folders are committed atomically. `folder_id` remains available for
 callers that already know the direct parent; do not send both selectors.
 
 Search results are canonicalized through SQLite before they leave Manifold.
-Internal OpenViking overview resources and unmapped Brain/OpenViking IDs are
-discarded; each returned document includes its public `id`, `path`, `revision`,
-and immutable `canonical_ref`. `scope_glob` uses `*` and `?` within a segment
+Unmapped index IDs are discarded; each returned document includes its public
+`id`, `path`, `revision`, and immutable `canonical_ref`. `scope_glob` uses `*` and `?` within a segment
 and a whole `**` segment for recursive matching.
 
 The generated contract covers:
@@ -249,7 +233,7 @@ Renames are explicit:
 2. Review the immutable preview.
 3. `POST /api/v1/rename-plans/{xid}/apply` applies it only if the state version is unchanged.
 
-The SQLite phase is transactional and supports batches, swaps, and cycles via reserved temporary IDs. Foreign keys cascade. OpenViking folder and document moves use durable two-phase staging, so a restart resumes instead of repeating a completed move. Active UTF-8 documents receive token-bounded replacements in content, titles, metadata, and tags plus a new revision. Historical revisions remain exact audit evidence. Binary blockers stop the plan before apply. Old slugs are immediately reusable; Manifold creates neither aliases nor redirects. A later lookup can report an unambiguous rename-audit destination without redirecting.
+The SQLite phase is transactional and supports batches, swaps, and cycles via reserved temporary IDs. Foreign keys cascade. Index folder and document moves use durable two-phase staging, so a restart resumes instead of repeating a completed move. Active UTF-8 documents receive token-bounded replacements in content, titles, metadata, and tags plus a new revision. Historical revisions remain exact audit evidence. Binary blockers stop the plan before apply. Old slugs are immediately reusable; Manifold creates neither aliases nor redirects. A later lookup can report an unambiguous rename-audit destination without redirecting.
 
 ## Agent skill
 
@@ -344,20 +328,17 @@ metadata plus authenticated semantic retrieval, and rolls back the clean
 checkout if deep smoke fails. Tags publish multi-architecture GHCR images;
 production metadata is the source of truth for the running version and commit.
 Automatic deployment refuses changes across `DATA_VERSION` boundaries, where
-code-only rollback is unsafe. The Brain v2 upgrade requires the coordinated
-migration procedure in [docs/operations.md](docs/operations.md).
+code-only rollback is unsafe. Moving from the Brain, SurrealDB and OpenViking
+stack to the embedded index (data version 6) follows the procedure in
+[docs/operations.md](docs/operations.md).
 
 ## Built on
 
-Manifold is an integration layer built on the original projects:
-
-- [OpenViking](https://github.com/volcengine/OpenViking) v0.5.0
-- [INITE Brain](https://github.com/inite-ai/inite-brain-service) v2.11.0
-- [SurrealDB](https://github.com/surrealdb/surrealdb)
+- [SQLite](https://sqlite.org) through [modernc.org/sqlite](https://gitlab.com/cznic/sqlite), with FTS5 and the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension
 - [Huma](https://github.com/danielgtaylor/huma)
 - [Mithril.js](https://github.com/MithrilJS/mithril.js)
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [docs/brain-patch.md](docs/brain-patch.md) for version, license, and patch details.
+Releases up to v0.2.2 integrated [OpenViking](https://github.com/volcengine/OpenViking), [INITE Brain](https://github.com/inite-ai/inite-brain-service) and [SurrealDB](https://github.com/surrealdb/surrealdb). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for version and license details.
 
 ## License
 

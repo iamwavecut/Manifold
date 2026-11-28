@@ -48,7 +48,7 @@ func newTestServer(t *testing.T, documents upstream.DocumentStore) testServer {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.Config{
 		PublicURL: "http://manifold.test", MaxBodyBytes: 5 << 20,
-		HTTPTimeout: time.Second, WorkerInterval: time.Millisecond,
+		WorkerInterval: time.Millisecond,
 	}
 	if documents == nil {
 		documents = fakeDocuments{}
@@ -131,7 +131,7 @@ func TestBuildAndProtocolMetadataStayConsistent(t *testing.T) {
 	if !ok || len(features) != 5 {
 		t.Fatalf("meta features = %#v", meta["features"])
 	}
-	for _, privateField := range []string{"components", "counts", "state", "openviking", "brain"} {
+	for _, privateField := range []string{"components", "counts", "state", "index", "provider"} {
 		if _, exists := meta[privateField]; exists {
 			t.Fatalf("public metadata exposed %q: %#v", privateField, meta)
 		}
@@ -292,7 +292,7 @@ func TestAPIKeySecretIsNeverPersistedOrReplayed(t *testing.T) {
 
 func TestFailedJobKeepsStructuredDependencyError(t *testing.T) {
 	documents := fakeDocuments{writeErr: &upstream.DependencyError{
-		Dependency: "openviking", Operation: "write", Retryable: true, Cause: errors.New("test outage"),
+		Dependency: "index", Operation: "write", Retryable: true, Cause: errors.New("test outage"),
 	}}
 	server := newTestServer(t, documents)
 	create := request(t, server.handler, http.MethodPost, "/api/v1/documents", adminSecret, "create-failing-document",
@@ -589,18 +589,15 @@ type fakeGraph struct{}
 
 func (fakeGraph) Health(context.Context) error { return nil }
 func (fakeGraph) IngestDocument(context.Context, upstream.GraphDocument) (upstream.GraphIngestResult, error) {
-	return upstream.GraphIngestResult{DocumentID: "brain-document"}, nil
+	return upstream.GraphIngestResult{DocumentID: "graph-document"}, nil
 }
 func (fakeGraph) Search(context.Context, string, int, bool) ([]model.SearchHit, error) {
 	return nil, nil
 }
 func (fakeGraph) IngestFact(context.Context, model.Fact, model.Entity) (string, string, error) {
-	return "brain-fact", "active", nil
+	return "graph-fact", "active", nil
 }
 func (fakeGraph) IngestRelation(context.Context, model.Relation, model.Entity, model.Entity) (string, error) {
-	return "brain-relation", nil
+	return "graph-relation", nil
 }
 func (fakeGraph) RetractFact(context.Context, string, string) ([]string, error) { return nil, nil }
-func (fakeGraph) GetEntity(context.Context, string) (map[string]any, error) {
-	return map[string]any{}, nil
-}

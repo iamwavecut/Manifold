@@ -82,22 +82,6 @@ jobs:
             COMMIT=${{ env.DEPLOY_SHA }}
           cache-from: type=gha,scope=manifold-production
           cache-to: type=gha,scope=manifold-production,mode=max
-      - name: Build and publish patched Brain
-        if: env.DEPLOY_OPERATION == 'deploy'
-        id: brain
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/brain/Dockerfile
-          platforms: linux/amd64
-          push: true
-          # Reuse the existing public package; no registry credentials on the host.
-          tags: ghcr.io/iamwavecut/manifold:brain-${{ env.DEPLOY_SHA }}
-          labels: |
-            org.opencontainers.image.revision=${{ env.DEPLOY_SHA }}
-            io.geta-deploy.data-version=${{ env.DATA_VERSION }}
-          cache-from: type=gha,scope=manifold-brain-production
-          cache-to: type=gha,scope=manifold-brain-production,mode=max
       - name: Configure pinned SSH identity
         env:
           SSH_PRIVATE_KEY: ${{ secrets.MANIFOLD_DEPLOY_SSH_KEY }}
@@ -115,7 +99,6 @@ jobs:
       - name: Request restricted deployment with GitHub identity
         env:
           MANIFOLD_IMAGE_DIGEST: ${{ steps.manifold.outputs.digest }}
-          BRAIN_IMAGE_DIGEST: ${{ steps.brain.outputs.digest }}
         run: |
           set -euo pipefail
           if [[ "$DEPLOY_OPERATION" == deploy ]]; then

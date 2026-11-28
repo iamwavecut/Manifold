@@ -279,7 +279,7 @@ func TestRememberRefusesToMutateWhenSemanticDiscoveryIsDegraded(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/v1/search" {
-			_, _ = w.Write([]byte(`{"items":[],"degraded_dependencies":["openviking"]}`))
+			_, _ = w.Write([]byte(`{"items":[],"degraded_dependencies":["semantic"]}`))
 			return
 		}
 		if r.Method == http.MethodPost {

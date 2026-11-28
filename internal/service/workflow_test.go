@@ -97,27 +97,6 @@ func TestPipelineStatusSeparatesHistoricalFailedJobFromCurrentReadyDocument(t *t
 	}
 }
 
-func TestDocumentSyncContinuesWhenOnlyOpenVikingIndexingOutlivedTheWait(t *testing.T) {
-	docs := &workflowDocuments{writeErr: upstream.ErrWriteIndexingPending}
-	db, svc := newWorkflowService(t, ":memory:", docs, &workflowGraph{})
-	_, job, err := svc.CreateDocument(t.Context(), model.Document{
-		ID: "indexing-pending", Title: "Indexing pending", Format: "markdown", Content: "stored content",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.processOne(t.Context()); err != nil {
-		t.Fatalf("stored write with pending indexing failed the sync: %v", err)
-	}
-	finished, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || finished.Status != model.JobReady || finished.Attempts != 1 {
-		t.Fatalf("sync job = %#v, err = %v; want ready after one attempt", finished, err)
-	}
-	if len(docs.writes) != 1 || docs.snapshots != 1 {
-		t.Fatalf("writes = %d, snapshots = %d; want one write and its snapshot", len(docs.writes), docs.snapshots)
-	}
-}
-
 func TestSupersededQueuedDocumentSyncDoesNotIndexNewerRevision(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "workflow.db")
 	db, svc := newWorkflowService(t, dbPath, &workflowDocuments{}, &workflowGraph{})
@@ -344,313 +323,6 @@ func TestDocumentSyncRestartResumesStoredCheckpoint(t *testing.T) {
 	}
 }
 
-func TestAsyncDocumentSyncTimeoutPersistsIDAndRestartResumesWithoutResubmit(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "async-restart.db")
-	docs := &workflowDocuments{}
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
-	db, err := store.Open(t.Context(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := New(db, docs, graph, "https://memory.example.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
-	svc.brainPollInterval = time.Millisecond
-	svc.SetBrainExtractionTimeout(15 * time.Millisecond)
-	doc, job, err := svc.CreateDocument(t.Context(), model.Document{
-		ID: "async-restart", Title: "Async restart", Format: "markdown", Content: "body",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	graph.setBeforeRetryStates(upstream.GraphDocumentState{Status: upstream.GraphDocumentPending})
-	if err := svc.processOne(t.Context()); err == nil {
-		t.Fatal("async document sync unexpectedly completed while Brain stayed pending")
-	}
-	interrupted, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || interrupted.Status != model.JobPartiallyReady {
-		t.Fatalf("timed out async job = %#v, err = %v", interrupted, err)
-	}
-	assertWorkflowPayloadField(t, interrupted.Payload, "brain_document_id", "brain-async")
-	partialDoc, err := db.GetDocument(t.Context(), doc.ID, false)
-	if err != nil || partialDoc.Status != model.JobPartiallyReady {
-		t.Fatalf("document after poll timeout = %#v, err = %v", partialDoc, err)
-	}
-	if graph.submitCount() != 1 || docs.snapshotCount() != 1 || len(docs.writeCalls()) != 1 {
-		t.Fatalf("initial async work = submits:%d writes:%d snapshots:%d, want 1 each",
-			graph.submitCount(), len(docs.writeCalls()), docs.snapshotCount())
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	recovered, err := store.Open(t.Context(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := recovered.Close(); err != nil {
-			t.Errorf("close recovered async store: %v", err)
-		}
-	}()
-	if err := recovered.RetryJob(t.Context(), job.ID); err != nil {
-		t.Fatal(err)
-	}
-	graph.setBeforeRetryStates(upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentReady,
-		Result: upstream.GraphIngestResult{
-			DocumentID: "brain-async", OriginURI: "manifold://documents/async-restart@r1", Revision: "r1",
-		},
-	})
-	resumed := New(recovered, docs, graph, "https://memory.example.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
-	resumed.brainPollInterval = time.Millisecond
-	resumed.SetBrainExtractionTimeout(time.Second)
-	if err := resumed.processOne(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := recovered.GetJob(t.Context(), job.ID)
-	if err != nil || completed.Status != model.JobReady {
-		t.Fatalf("restarted async job = %#v, err = %v", completed, err)
-	}
-	assertWorkflowPayloadField(t, completed.Payload, "brain_document_id", "brain-async")
-	if graph.submitCount() != 1 || graph.retryCount() != 0 {
-		t.Fatalf("restart submitted/retried Brain work again: submits=%d retries=%d", graph.submitCount(), graph.retryCount())
-	}
-	if docs.snapshotCount() != 1 || len(docs.writeCalls()) != 1 {
-		t.Fatalf("restart discarded the OpenViking checkpoint: writes=%d snapshots=%d", len(docs.writeCalls()), docs.snapshotCount())
-	}
-}
-
-func TestAsyncDocumentSyncRetries429PollingWithinDeadline(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}, pollErrors: []error{
-		&upstream.DependencyError{Dependency: "brain", Operation: "GET document result", Status: 429, Retryable: true},
-	}}
-	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
-	svc.brainPollInterval = time.Millisecond
-	svc.SetBrainExtractionTimeout(time.Second)
-	doc, job, err := svc.CreateDocument(t.Context(), model.Document{
-		ID: "async-429", Title: "Async 429", Format: "markdown", Content: "body",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	graph.setBeforeRetryStates(upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentReady,
-		Result: upstream.GraphIngestResult{
-			DocumentID: "brain-async", OriginURI: "manifold://documents/async-429@r1", Revision: "r1",
-		},
-	})
-	if err := svc.processOne(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || completed.Status != model.JobReady {
-		t.Fatalf("job after transient poll 429 = %#v, err = %v", completed, err)
-	}
-	if got := graph.pollCount(); got != 2 {
-		t.Fatalf("Brain result polls = %d, want retry after the first 429", got)
-	}
-	current, err := db.GetDocument(t.Context(), doc.ID, false)
-	if err != nil || current.Status != model.JobReady {
-		t.Fatalf("document after transient poll 429 = %#v, err = %v", current, err)
-	}
-}
-
-func TestAsyncDocumentSyncDeadlinePreservesRetryableBrainFailure(t *testing.T) {
-	brainFailure := &upstream.DependencyError{
-		Dependency: "brain", Operation: "GET document result", Status: 503, Retryable: true,
-	}
-	pollErrors := make([]error, 128)
-	for index := range pollErrors {
-		pollErrors[index] = brainFailure
-	}
-	graph := &workflowAsyncGraph{
-		workflowGraph:            &workflowGraph{},
-		pollErrors:               pollErrors,
-		firstPollError:           make(chan struct{}, 1),
-		blockAfterFirstPollError: true,
-	}
-	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
-	svc.brainPollInterval = time.Millisecond
-	svc.SetBrainExtractionTimeout(time.Second)
-	_, job, err := svc.CreateDocument(t.Context(), model.Document{
-		ID: "async-brain-timeout", Title: "Async Brain timeout", Format: "markdown", Content: "body",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	processed := make(chan error, 1)
-	go func() { processed <- svc.processOne(t.Context()) }()
-	select {
-	case <-graph.firstPollError:
-	case err := <-processed:
-		t.Fatalf("document sync returned before observing the known Brain 503: %v", err)
-	case <-time.After(3 * time.Second):
-		t.Fatal("document sync did not observe a Brain poll error")
-	}
-	select {
-	case err := <-processed:
-		if err == nil {
-			t.Fatal("document sync unexpectedly succeeded while Brain returned repeated 503 responses")
-		}
-	case <-time.After(4 * time.Second):
-		t.Fatal("document sync did not stop at the extraction deadline")
-	}
-
-	failedJob, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || failedJob.Status != model.JobPartiallyReady {
-		t.Fatalf("timed-out document sync job = %#v, err = %v", failedJob, err)
-	}
-	if failedJob.Error == nil || failedJob.Error.Code != "dependency_unavailable" || !failedJob.Error.Retryable {
-		t.Fatalf("timed-out document sync error = %#v, want retryable dependency_unavailable", failedJob.Error)
-	}
-}
-
-func TestRenameBrainDeadlineCanResumeSameCheckpointAfterManualRetry(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
-	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
-	doc, createJob, err := svc.CreateDocument(t.Context(), model.Document{
-		ID: "rename-deadline-source", Title: "Rename deadline", Format: "markdown",
-		Content: "this rule survives the rename",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDocumentSyncForRevision(t.Context(), doc.ID, doc.Revision, model.JobReady,
-		"brain-original", "snapshot-original"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetJobStatus(t.Context(), createJob.ID, model.JobReady, nil); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := svc.CreateRenamePlan(t.Context(), []model.RenameOperation{{
-		ResourceType: "document", From: doc.ID, To: "rename-deadline-target",
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	job, err := svc.ApplyRenamePlan(t.Context(), plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc.brainPollInterval = 5 * time.Second
-	svc.SetBrainExtractionTimeout(time.Second)
-	if err := svc.processOne(t.Context()); err == nil {
-		t.Fatal("rename unexpectedly completed while Brain extraction remained pending")
-	}
-	failed, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || failed.Status != model.JobFailed {
-		t.Fatalf("rename job after Brain timeout = %#v, err = %v", failed, err)
-	}
-	if failed.Error == nil || failed.Error.Code != "dependency_unavailable" || !failed.Error.Retryable {
-		t.Fatalf("rename timeout error = %#v, want retryable dependency_unavailable", failed.Error)
-	}
-	applying, err := db.GetRenamePlan(t.Context(), plan.ID)
-	if err != nil || applying.Status != "applying" {
-		t.Fatalf("rename plan after retryable Brain timeout = %#v, err = %v; want applying", applying, err)
-	}
-	renamed, err := db.GetDocument(t.Context(), "rename-deadline-target", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	brainID := renameBrainDocumentID(t, failed.Payload, renamed.ID, renamed.Revision)
-	if brainID != "brain-async" {
-		t.Fatalf("rename Brain checkpoint = %q, want brain-async", brainID)
-	}
-	revision, err := db.GetRevision(t.Context(), renamed.ID, 1)
-	if err != nil || revision.SnapshotOID == "" {
-		t.Fatalf("rename snapshot checkpoint = %#v, err = %v", revision, err)
-	}
-	if got := graph.submitCount(); got != 1 {
-		t.Fatalf("Brain submissions after timeout = %d, want one", got)
-	}
-
-	graph.setBeforeRetryStates(upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentReady,
-		Result: upstream.GraphIngestResult{
-			DocumentID: brainID, OriginURI: "manifold://documents/" + renamed.ID + "@" + renamed.Revision,
-			Revision: renamed.Revision,
-		},
-	})
-	svc.brainPollInterval = time.Millisecond
-	svc.SetBrainExtractionTimeout(time.Second)
-	if err := db.RetryJob(t.Context(), job.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.processOne(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || completed.Status != model.JobReady {
-		t.Fatalf("rename job after retry = %#v, err = %v", completed, err)
-	}
-	applied, err := db.GetRenamePlan(t.Context(), plan.ID)
-	if err != nil || applied.Status != "applied" {
-		t.Fatalf("rename plan after retry = %#v, err = %v", applied, err)
-	}
-	if got := renameBrainDocumentID(t, completed.Payload, renamed.ID, renamed.Revision); got != brainID {
-		t.Fatalf("rename retry changed Brain checkpoint from %q to %q", brainID, got)
-	}
-	if got := graph.submitCount(); got != 1 {
-		t.Fatalf("Brain submissions after retry = %d, want no resubmission", got)
-	}
-}
-
-func TestAsyncDocumentSyncManualRetryReopensTerminalFailedExtraction(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
-	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
-	svc.brainPollInterval = time.Millisecond
-	svc.SetBrainExtractionTimeout(time.Second)
-	doc, job, err := svc.CreateDocument(t.Context(), model.Document{
-		ID: "async-retry", Title: "Async retry", Format: "markdown", Content: "body",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	graph.setBeforeRetryStates(upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentFailed, BrainStatus: "failed",
-		Runs: []upstream.GraphIndexerRun{{IndexerID: "general", Status: "failed", Reason: "temporary extractor failure"}},
-	})
-	if err := svc.processOne(t.Context()); err == nil {
-		t.Fatal("terminal failed extraction unexpectedly completed")
-	}
-	failed, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || failed.Status != model.JobPartiallyReady {
-		t.Fatalf("terminal async failure job = %#v, err = %v", failed, err)
-	}
-	assertWorkflowPayloadField(t, failed.Payload, "brain_document_id", "brain-async")
-	if err := db.RetryJob(t.Context(), job.ID); err != nil {
-		t.Fatal(err)
-	}
-	graph.setAfterRetryStates(
-		upstream.GraphDocumentState{Status: upstream.GraphDocumentPending},
-		upstream.GraphDocumentState{
-			Status: upstream.GraphDocumentReady,
-			Result: upstream.GraphIngestResult{
-				DocumentID: "brain-async", OriginURI: "manifold://documents/async-retry@r1", Revision: "r1",
-			},
-		},
-	)
-	if err := svc.processOne(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	retried, err := db.GetJob(t.Context(), job.ID)
-	if err != nil || retried.Status != model.JobReady {
-		t.Fatalf("job after explicit Brain retry = %#v, err = %v", retried, err)
-	}
-	if graph.submitCount() != 1 || graph.retryCount() != 1 {
-		t.Fatalf("explicit retry submitted/retried %d/%d times, want one submit and one requeue",
-			graph.submitCount(), graph.retryCount())
-	}
-	if got := graph.retryKeys(); len(got) != 1 || got[0] != "job-"+job.ID+"-attempt-2" {
-		t.Fatalf("Brain retry keys = %#v, want a stable Manifold job attempt key", got)
-	}
-	current, err := db.GetDocument(t.Context(), doc.ID, false)
-	if err != nil || current.Status != model.JobReady {
-		t.Fatalf("document after explicit Brain retry = %#v, err = %v", current, err)
-	}
-}
-
 func TestRenameSyncProjectsGraphAgainstRenamedRevisionBeforeReady(t *testing.T) {
 	graph := &workflowGraph{resultFor: func(doc upstream.GraphDocument) upstream.GraphIngestResult {
 		return upstream.GraphIngestResult{
@@ -823,154 +495,6 @@ func TestRenameReservationsRejectConcurrentDocumentMutations(t *testing.T) {
 	}
 }
 
-func TestRenameCancellationRestartsFromSnapshotAndBrainCheckpoint(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "rename-async-checkpoint.sqlite")
-	documents := &workflowDocuments{}
-	firstGraph := &workflowAsyncGraph{
-		workflowGraph: &workflowGraph{},
-		submitStarted: make(chan struct{}, 1),
-	}
-	db, err := store.Open(t.Context(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstStoreOpen := true
-	t.Cleanup(func() {
-		if firstStoreOpen {
-			if err := db.Close(); err != nil {
-				t.Errorf("close first rename store: %v", err)
-			}
-		}
-	})
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	firstService := New(db, documents, firstGraph, "https://memory.example.test", logger, time.Millisecond)
-	firstService.brainPollInterval = time.Millisecond
-	firstService.SetBrainExtractionTimeout(time.Minute)
-
-	doc, createJob, err := firstService.CreateDocument(t.Context(), model.Document{
-		ID: "rename-checkpoint", Title: "Rename checkpoint", Format: "markdown",
-		Content: "rename-checkpoint remains durable",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetDocumentSyncForRevision(t.Context(), doc.ID, doc.Revision, model.JobReady,
-		"brain-original", "snapshot-original"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SetJobStatus(t.Context(), createJob.ID, model.JobReady, nil); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := firstService.CreateRenamePlan(t.Context(), []model.RenameOperation{{
-		ResourceType: "document", From: doc.ID, To: "renamed-checkpoint",
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	renameJob, err := firstService.ApplyRenamePlan(t.Context(), plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	workerCtx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- firstService.processOne(workerCtx) }()
-	select {
-	case <-firstGraph.submitStarted:
-	case <-time.After(3 * time.Second):
-		cancel()
-		<-done
-		t.Fatal("rename did not submit the rewritten document to Brain")
-	}
-	checkpointDeadline := time.Now().Add(3 * time.Second)
-	for {
-		currentJob, getErr := db.GetJob(t.Context(), renameJob.ID)
-		if getErr != nil {
-			cancel()
-			<-done
-			t.Fatal(getErr)
-		}
-		brainID := renameBrainDocumentID(t, currentJob.Payload, "renamed-checkpoint", "r2")
-		revision, revisionErr := db.GetRevision(t.Context(), "renamed-checkpoint", 2)
-		if brainID != "" && revisionErr == nil && revision.SnapshotOID != "" {
-			if brainID != "brain-async" {
-				cancel()
-				<-done
-				t.Fatalf("stored rename Brain document ID = %q, want brain-async", brainID)
-			}
-			break
-		}
-		if time.Now().After(checkpointDeadline) {
-			cancel()
-			<-done
-			t.Fatalf("rename checkpoints were not persisted: brainID=%q revision=%#v err=%v", brainID, revision, revisionErr)
-		}
-		time.Sleep(time.Millisecond)
-	}
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled rename worker error = %v, want context.Canceled", err)
-	}
-	if got := documents.snapshotCount(); got != 1 {
-		t.Fatalf("snapshot count before restart = %d, want one checkpoint", got)
-	}
-	if got := len(documents.writeCalls()); got != 1 {
-		t.Fatalf("write count before restart = %d, want one write", got)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	firstStoreOpen = false
-
-	recovered, err := store.Open(t.Context(), dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := recovered.Close(); err != nil {
-			t.Errorf("close recovered rename store: %v", err)
-		}
-	})
-	recoveredJob, err := recovered.GetJob(t.Context(), renameJob.ID)
-	if err != nil || recoveredJob.Status != model.JobAccepted {
-		t.Fatalf("rename job after restart = %#v, err = %v", recoveredJob, err)
-	}
-	secondGraph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
-	secondGraph.setBeforeRetryStates(upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentReady,
-		Result: upstream.GraphIngestResult{
-			DocumentID: "brain-async", OriginURI: "manifold://documents/renamed-checkpoint@r2", Revision: "r2",
-		},
-	})
-	resumedService := New(recovered, documents, secondGraph, "https://memory.example.test", logger, time.Millisecond)
-	resumedService.brainPollInterval = time.Millisecond
-	resumedService.SetBrainExtractionTimeout(time.Second)
-	if err := resumedService.processOne(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := recovered.GetJob(t.Context(), renameJob.ID)
-	if err != nil || completed.Status != model.JobReady {
-		t.Fatalf("rename job after checkpoint recovery = %#v, err = %v", completed, err)
-	}
-	plan, err = recovered.GetRenamePlan(t.Context(), plan.ID)
-	if err != nil || plan.Status != "applied" {
-		t.Fatalf("rename plan after checkpoint recovery = %#v, err = %v", plan, err)
-	}
-	renamed, err := recovered.GetDocument(t.Context(), "renamed-checkpoint", true)
-	if err != nil || renamed.Revision != "r2" || renamed.Status != model.JobReady {
-		t.Fatalf("renamed document after checkpoint recovery = %#v, err = %v", renamed, err)
-	}
-	if secondGraph.submitCount() != 0 || secondGraph.pollCount() != 1 {
-		t.Fatalf("restart submit/poll counts = %d/%d, want 0/1", secondGraph.submitCount(), secondGraph.pollCount())
-	}
-	if got := documents.snapshotCount(); got != 1 {
-		t.Fatalf("snapshot count after restart = %d, want persisted checkpoint reuse", got)
-	}
-	if got := len(documents.writeCalls()); got != 1 {
-		t.Fatalf("write count after restart = %d, want persisted checkpoint reuse", got)
-	}
-}
-
 func newWorkflowService(
 	t *testing.T,
 	dbPath string,
@@ -1029,17 +553,6 @@ func assertWorkflowPayloadField(t *testing.T, payload []byte, key, want string) 
 	if got != want {
 		t.Fatalf("payload field %q = %q in %s, want %q", key, got, payload, want)
 	}
-}
-
-func renameBrainDocumentID(t *testing.T, payload []byte, documentID, revision string) string {
-	t.Helper()
-	var fields struct {
-		BrainDocumentIDs map[string]string `json:"rename_brain_document_ids"`
-	}
-	if err := json.Unmarshal(payload, &fields); err != nil {
-		t.Fatalf("decode rename job payload %s: %v", payload, err)
-	}
-	return fields.BrainDocumentIDs[documentID+"@"+revision]
 }
 
 type workflowDocuments struct {
@@ -1118,143 +631,30 @@ type workflowGraph struct {
 	failIngests  int
 	failIngestAt int
 	resultFor    func(upstream.GraphDocument) upstream.GraphIngestResult
-}
-
-type workflowAsyncGraph struct {
-	*workflowGraph
-	asyncMu                  sync.Mutex
-	submitCalls              int
-	submitStarted            chan struct{}
-	brainDocumentID          string
-	resultCalls              int
-	beforeRetryStates        []upstream.GraphDocumentState
-	afterRetryStates         []upstream.GraphDocumentState
-	beforeRetryIndex         int
-	afterRetryIndex          int
-	pollErrors               []error
-	firstPollError           chan struct{}
-	blockAfterFirstPollError bool
-	retryCalls               int
-	retryIDs                 []string
-	retryKeyValues           []string
-	retryErr                 error
-}
-
-func (g *workflowAsyncGraph) SubmitDocument(_ context.Context, doc upstream.GraphDocument) (string, error) {
-	g.workflowGraph.mu.Lock()
-	g.workflowGraph.ingests = append(g.workflowGraph.ingests, doc)
-	g.workflowGraph.mu.Unlock()
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	g.submitCalls++
-	if g.submitStarted != nil {
-		select {
-		case g.submitStarted <- struct{}{}:
-		default:
-		}
-	}
-	if g.brainDocumentID == "" {
-		g.brainDocumentID = "brain-async"
-	}
-	return g.brainDocumentID, nil
-}
-
-func (g *workflowAsyncGraph) DocumentResult(ctx context.Context, documentID string) (upstream.GraphDocumentState, error) {
-	g.asyncMu.Lock()
-	g.resultCalls++
-	resultCall := g.resultCalls
-	if len(g.pollErrors) > 0 {
-		err := g.pollErrors[0]
-		g.pollErrors = g.pollErrors[1:]
-		firstPollError := g.firstPollError
-		blockAfterFirstPollError := g.blockAfterFirstPollError && resultCall > 1
-		g.asyncMu.Unlock()
-		if resultCall == 1 && firstPollError != nil {
-			select {
-			case firstPollError <- struct{}{}:
-			default:
-			}
-		}
-		if blockAfterFirstPollError {
-			<-ctx.Done()
-		}
-		return upstream.GraphDocumentState{}, err
-	}
-	defer g.asyncMu.Unlock()
-	if documentID != "" && g.brainDocumentID != "" && documentID != g.brainDocumentID {
-		return upstream.GraphDocumentState{}, fmt.Errorf("unexpected Brain document ID %q", documentID)
-	}
-	states := g.beforeRetryStates
-	index := &g.beforeRetryIndex
-	if g.retryCalls > 0 {
-		states = g.afterRetryStates
-		index = &g.afterRetryIndex
-	}
-	if len(states) == 0 {
-		return upstream.GraphDocumentState{Status: upstream.GraphDocumentPending}, nil
-	}
-	state := states[min(*index, len(states)-1)]
-	if *index < len(states)-1 {
-		*index++
-	}
-	return state, nil
-}
-
-func (g *workflowAsyncGraph) RetryDocument(_ context.Context, documentID, retryKey string) error {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	g.retryCalls++
-	g.retryIDs = append(g.retryIDs, documentID)
-	g.retryKeyValues = append(g.retryKeyValues, retryKey)
-	return g.retryErr
-}
-
-func (g *workflowAsyncGraph) setBeforeRetryStates(states ...upstream.GraphDocumentState) {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	g.beforeRetryStates = append([]upstream.GraphDocumentState(nil), states...)
-	g.beforeRetryIndex = 0
-}
-
-func (g *workflowAsyncGraph) setAfterRetryStates(states ...upstream.GraphDocumentState) {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	g.afterRetryStates = append([]upstream.GraphDocumentState(nil), states...)
-	g.afterRetryIndex = 0
-}
-
-func (g *workflowAsyncGraph) submitCount() int {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	return g.submitCalls
-}
-
-func (g *workflowAsyncGraph) pollCount() int {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	return g.resultCalls
-}
-
-func (g *workflowAsyncGraph) retryCount() int {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	return g.retryCalls
-}
-
-func (g *workflowAsyncGraph) retryKeys() []string {
-	g.asyncMu.Lock()
-	defer g.asyncMu.Unlock()
-	return append([]string(nil), g.retryKeyValues...)
+	// started, when set, receives a signal as an ingest begins; block keeps
+	// the ingest waiting until its context ends.
+	started chan struct{}
+	block   bool
 }
 
 func (g *workflowGraph) Health(context.Context) error { return nil }
 
-func (g *workflowGraph) IngestDocument(_ context.Context, doc upstream.GraphDocument) (upstream.GraphIngestResult, error) {
+func (g *workflowGraph) IngestDocument(ctx context.Context, doc upstream.GraphDocument) (upstream.GraphIngestResult, error) {
+	if g.started != nil {
+		select {
+		case g.started <- struct{}{}:
+		default:
+		}
+	}
+	if g.block {
+		<-ctx.Done()
+		return upstream.GraphIngestResult{}, ctx.Err()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.ingests = append(g.ingests, doc)
 	if len(g.ingests) <= g.failIngests || len(g.ingests) == g.failIngestAt {
-		return upstream.GraphIngestResult{}, errors.New("Brain ingest failed")
+		return upstream.GraphIngestResult{}, errors.New("graph ingest failed")
 	}
 	if g.resultFor != nil {
 		return g.resultFor(doc), nil
@@ -1280,12 +680,124 @@ func (g *workflowGraph) RetractFact(context.Context, string, string) ([]string, 
 	return nil, nil
 }
 
-func (g *workflowGraph) GetEntity(context.Context, string) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
 func (g *workflowGraph) ingestedDocuments() []upstream.GraphDocument {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]upstream.GraphDocument(nil), g.ingests...)
+}
+
+func TestRenameCancellationRestartsFromSnapshotCheckpoint(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rename-checkpoint.sqlite")
+	documents := &workflowDocuments{}
+	firstGraph := &workflowGraph{started: make(chan struct{}, 1), block: true}
+	db, err := store.Open(t.Context(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStoreOpen := true
+	t.Cleanup(func() {
+		if firstStoreOpen {
+			if err := db.Close(); err != nil {
+				t.Errorf("close first rename store: %v", err)
+			}
+		}
+	})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	firstService := New(db, documents, firstGraph, "https://memory.example.test", logger, time.Millisecond)
+
+	doc, createJob, err := firstService.CreateDocument(t.Context(), model.Document{
+		ID: "rename-checkpoint", Title: "Rename checkpoint", Format: "markdown",
+		Content: "rename-checkpoint remains durable",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDocumentSyncForRevision(t.Context(), doc.ID, doc.Revision, model.JobReady,
+		"graph-original", "snapshot-original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetJobStatus(t.Context(), createJob.ID, model.JobReady, nil); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := firstService.CreateRenamePlan(t.Context(), []model.RenameOperation{{
+		ResourceType: "document", From: doc.ID, To: "renamed-checkpoint",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renameJob, err := firstService.ApplyRenamePlan(t.Context(), plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workerCtx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- firstService.processOne(workerCtx) }()
+	select {
+	case <-firstGraph.started:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("rename did not start extracting the rewritten document")
+	}
+	revision, err := db.GetRevision(t.Context(), "renamed-checkpoint", 2)
+	if err != nil || revision.SnapshotOID == "" {
+		cancel()
+		<-done
+		t.Fatalf("rename checkpoint was not persisted before extraction: %#v, %v", revision, err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled rename worker error = %v, want context.Canceled", err)
+	}
+	if got := documents.snapshotCount(); got != 1 {
+		t.Fatalf("snapshot count before restart = %d, want one checkpoint", got)
+	}
+	if got := len(documents.writeCalls()); got != 1 {
+		t.Fatalf("write count before restart = %d, want one write", got)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	firstStoreOpen = false
+
+	recovered, err := store.Open(t.Context(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := recovered.Close(); err != nil {
+			t.Errorf("close recovered rename store: %v", err)
+		}
+	})
+	recoveredJob, err := recovered.GetJob(t.Context(), renameJob.ID)
+	if err != nil || recoveredJob.Status != model.JobAccepted {
+		t.Fatalf("rename job after restart = %#v, err = %v", recoveredJob, err)
+	}
+	secondGraph := &workflowGraph{}
+	resumedService := New(recovered, documents, secondGraph, "https://memory.example.test", logger, time.Millisecond)
+	if err := resumedService.processOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := recovered.GetJob(t.Context(), renameJob.ID)
+	if err != nil || completed.Status != model.JobReady {
+		t.Fatalf("rename job after checkpoint recovery = %#v, err = %v", completed, err)
+	}
+	plan, err = recovered.GetRenamePlan(t.Context(), plan.ID)
+	if err != nil || plan.Status != "applied" {
+		t.Fatalf("rename plan after checkpoint recovery = %#v, err = %v", plan, err)
+	}
+	renamed, err := recovered.GetDocument(t.Context(), "renamed-checkpoint", true)
+	if err != nil || renamed.Revision != "r2" || renamed.Status != model.JobReady {
+		t.Fatalf("renamed document after checkpoint recovery = %#v, err = %v", renamed, err)
+	}
+	if got := len(secondGraph.ingestedDocuments()); got != 1 {
+		t.Fatalf("ingests after restart = %d, want one", got)
+	}
+	if got := documents.snapshotCount(); got != 1 {
+		t.Fatalf("snapshot count after restart = %d, want persisted checkpoint reuse", got)
+	}
+	if got := len(documents.writeCalls()); got != 1 {
+		t.Fatalf("write count after restart = %d, want persisted checkpoint reuse", got)
+	}
 }

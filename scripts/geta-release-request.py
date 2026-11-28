@@ -9,11 +9,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-PROFILE_FILES = (
-    'docker-compose.yml',
-    'deploy/openviking/ov.conf',
-    'deploy/openviking/render-config.py',
-)
+PROFILE_FILES = ('docker-compose.yml',)
 
 
 def release_payload(environment, root, get_token):
@@ -24,12 +20,9 @@ def release_payload(environment, root, get_token):
         return {'token': get_token()}
     if not re.fullmatch(r'[0-9a-f]{40}', environment.get('DEPLOY_SHA', '')):
         raise ValueError('a full target commit is required')
-    images = {
-        'manifold': environment.get('MANIFOLD_IMAGE_DIGEST', ''),
-        'brain': environment.get('BRAIN_IMAGE_DIGEST', ''),
-    }
+    images = {'manifold': environment.get('MANIFOLD_IMAGE_DIGEST', '')}
     if any(not re.fullmatch(r'sha256:[0-9a-f]{64}', value) for value in images.values()):
-        raise ValueError('both immutable image digests are required')
+        raise ValueError('an immutable image digest is required')
     digest = hashlib.sha256()
     for name in PROFILE_FILES:
         digest.update(name.encode() + b'\0' + (root / name).read_bytes() + b'\0')

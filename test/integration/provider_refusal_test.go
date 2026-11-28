@@ -31,7 +31,7 @@ func TestProviderRefusalIsNamed(t *testing.T) {
 	}, "integration-provider-refusal-1", "", http.StatusAccepted)
 	jobID := nestedStringField(t, created.Body, "job", "id")
 
-	// The second attempt is an automatic recovery probe through Brain's retry.
+	// The second attempt is Manifold's automatic recovery probe.
 	job := awaitJob(t, ctx, c, jobID, func(job map[string]any) bool {
 		attempts, _ := job["attempts"].(float64)
 		return job["status"] == "partially_ready" && attempts >= 2
