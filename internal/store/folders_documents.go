@@ -408,10 +408,13 @@ func (s *Store) GetDocument(ctx context.Context, id string, includeContent bool)
 	var metadata, tags, created, updated string
 	var revision, etag int
 	var deleted int
+	// Search hits and path lookups read documents without content; copying
+	// the text out of SQLite would cost its full size on every call.
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(folder_id, ''), title, format, content, content_hash, revision, status,
+		SELECT id, COALESCE(folder_id, ''), title, format, CASE WHEN ?2 THEN content ELSE '' END,
+			content_hash, revision, status,
 			ov_uri, brain_id, metadata_json, tags_json, etag, deleted, created_at, updated_at
-		FROM documents WHERE id = ?`, id).Scan(
+		FROM documents WHERE id = ?1`, id, includeContent).Scan(
 		&doc.ID, &doc.FolderID, &doc.Title, &doc.Format, &doc.Content, &doc.ContentHash, &revision, &doc.Status,
 		&doc.OVURI, &doc.BrainID, &metadata, &tags, &etag, &deleted, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) || deleted != 0 {
@@ -419,9 +422,6 @@ func (s *Store) GetDocument(ctx context.Context, id string, includeContent bool)
 	}
 	if err != nil {
 		return model.Document{}, err
-	}
-	if !includeContent {
-		doc.Content = ""
 	}
 	doc.Revision = fmt.Sprintf("r%d", revision)
 	doc.Metadata = parseMap(metadata)

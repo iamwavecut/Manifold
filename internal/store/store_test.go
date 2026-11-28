@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -430,5 +431,36 @@ func TestConflictingFactsArePreservedForExplicitResolution(t *testing.T) {
 	}
 	if resolved.Status != "resolved" || resolved.Resolution == "" {
 		t.Fatalf("resolved conflict = %#v", resolved)
+	}
+}
+
+// Search canonicalization and path lookups read documents without content;
+// they must not copy the text of every hit out of SQLite.
+func TestDocumentReadsWithoutContentLeaveTheTextUnread(t *testing.T) {
+	s := openTestStore(t)
+	content := strings.Repeat("large document text ", 4<<20/20)
+	createTestDocument(t, s, "large-document", "markdown", content)
+
+	const calls = 8
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range calls {
+		doc, err := s.GetDocument(t.Context(), "large-document", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if doc.Content != "" || doc.Title != "large-document" || doc.Revision != "r1" {
+			t.Fatalf("document = %+v", doc)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	if perCall := (after.TotalAlloc - before.TotalAlloc) / calls; perCall > 256<<10 {
+		t.Fatalf("GetDocument without content allocated %d bytes per call for a %d-byte document", perCall, len(content))
+	}
+
+	full, err := s.GetDocument(t.Context(), "large-document", true)
+	if err != nil || full.Content != content {
+		t.Fatalf("GetDocument with content: %d bytes, err = %v", len(full.Content), err)
 	}
 }
