@@ -18,202 +18,41 @@ services:
     restart: unless-stopped
     logging: *logging
     init: true
+    stop_grace_period: 20s
+    # One process keeps the canonical database and the derived index. The Go
+    # runtime collects garbage harder as the heap nears GOMEMLIMIT, well
+    # before the container limit.
+    mem_limit: ${MANIFOLD_MEMORY_LIMIT:-1g}
     environment:
+      GOMEMLIMIT: ${MANIFOLD_GOMEMLIMIT:-384MiB}
       MANIFOLD_ADDR: :8080
       MANIFOLD_DB_PATH: /var/lib/manifold/manifold.db
+      MANIFOLD_INDEX_DB_PATH: /var/lib/manifold/index.db
       MANIFOLD_PUBLIC_URL: ${MANIFOLD_PUBLIC_URL:-http://localhost:8080}
       MANIFOLD_BOOTSTRAP_API_KEY: ${MANIFOLD_BOOTSTRAP_API_KEY:?set MANIFOLD_BOOTSTRAP_API_KEY}
       MANIFOLD_LOG_LEVEL: ${MANIFOLD_LOG_LEVEL:-info}
       MANIFOLD_MAX_BODY_BYTES: ${MANIFOLD_MAX_BODY_BYTES:-5242880}
-      MANIFOLD_HTTP_TIMEOUT: ${MANIFOLD_HTTP_TIMEOUT:-30s}
-      MANIFOLD_OPENVIKING_WRITE_TIMEOUT: ${MANIFOLD_OPENVIKING_WRITE_TIMEOUT:-5m}
-      MANIFOLD_BRAIN_INGEST_TIMEOUT: ${MANIFOLD_BRAIN_INGEST_TIMEOUT:-2m}
-      MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: ${MANIFOLD_BRAIN_EXTRACTION_TIMEOUT:-30m}
-      MANIFOLD_BRAIN_POLL_INTERVAL: ${MANIFOLD_BRAIN_POLL_INTERVAL:-2s}
+      MANIFOLD_PROVIDER_TIMEOUT: ${MANIFOLD_PROVIDER_TIMEOUT:-3m}
+      MANIFOLD_EXTRACTION_TIMEOUT: ${MANIFOLD_EXTRACTION_TIMEOUT:-30m}
+      MANIFOLD_EXTRACTION_CONCURRENCY: ${MANIFOLD_EXTRACTION_CONCURRENCY:-4}
+      MANIFOLD_EMBEDDING_DIMENSIONS: ${MANIFOLD_EMBEDDING_DIMENSIONS:-512}
       MANIFOLD_PROVIDER_RETRY_INTERVAL: ${MANIFOLD_PROVIDER_RETRY_INTERVAL:-15m}
       MANIFOLD_WORKER_CONCURRENCY: ${MANIFOLD_WORKER_CONCURRENCY:-2}
-      OPENVIKING_URL: http://openviking:1933
-      OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
-      BRAIN_URL: http://brain:3000
-      BRAIN_API_KEY: ${BRAIN_API_KEY:?set BRAIN_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
+      OPENAI_CHAT_EXTRA_BODY: ${OPENAI_CHAT_EXTRA_BODY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
       - "${MANIFOLD_PORT:-8080}:8080"
     volumes:
       - manifold-data:/var/lib/manifold
-    depends_on:
-      openviking:
-        condition: service_healthy
-      brain:
-        condition: service_healthy
-    networks:
-      - private
-      - edge
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "/usr/local/bin/manifold", "healthcheck"]
       interval: 15s
-      timeout: 3s
+      timeout: 4s
       retries: 5
-      start_period: 5s
-
-  openviking:
-    image: ghcr.io/volcengine/openviking:v0.5.0@sha256:c60a83cd79cfce80db5266acb8bdd0908eee8abe8ff559a5f786aa504c251ccf
-    restart: unless-stopped
-    logging: *logging
-    init: true
-    environment:
-      OPENVIKING_CONFIG_FILE: /app/.openviking/ov.conf
-      OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:?set OPENVIKING_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
-      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
-      OPENVIKING_VLM_EXTRA_BODY: ${OPENAI_CHAT_EXTRA_BODY:-}
-    # The rendered config gains vlm.extra_request_body from the environment;
-    # see deploy/openviking/render-config.py.
-    entrypoint: ["python", "/app/.openviking/render-config.py", "/app/.openviking/ov.template.conf"]
-    volumes:
-      - ./deploy/openviking/ov.conf:/app/.openviking/ov.template.conf:ro
-      - ./deploy/openviking/render-config.py:/app/.openviking/render-config.py:ro
-      - openviking-data:/app/.openviking/data
-    networks:
-      - private
-      - provider
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1933/health >/dev/null || exit 1"]
-      interval: 20s
-      timeout: 5s
-      retries: 8
-      start_period: 45s
-
-  brain:
-    build:
-      context: .
-      dockerfile: deploy/brain/Dockerfile
-      args:
-        BRAIN_REF: 6ba986054a546c71c93c39e0e118e0f3dddc983f
-    restart: unless-stopped
-    logging: *logging
-    init: true
-    stop_grace_period: 30s
-    environment:
-      PORT: 3000
-      SURREALDB_URL: ws://surrealdb:8000
-      SURREALDB_USERNAME: ${SURREALDB_USERNAME:-root}
-      SURREALDB_PASSWORD: ${SURREALDB_PASSWORD:?set SURREALDB_PASSWORD}
-      SURREALDB_NAMESPACE: manifold
-      SURREALDB_SCOPED_USER: brain_caller
-      SURREALDB_SCOPED_PASS: ${SURREALDB_SCOPED_PASS:?set SURREALDB_SCOPED_PASS}
-      BRAIN_BASELINES_DIR: /app/.cache/baselines
-      BRAIN_API_KEYS: ${BRAIN_API_KEYS_JSON:?set BRAIN_API_KEYS_JSON}
-      FORGET_HMAC_KEY: ${FORGET_HMAC_KEY:?set FORGET_HMAC_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
-      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
-      OPENAI_TIMEOUT_MS: ${BRAIN_OPENAI_TIMEOUT_MS:-300000}
-      OPENAI_MAX_RETRIES: ${BRAIN_OPENAI_MAX_RETRIES:-1}
-      OPENAI_CHAT_EXTRA_BODY: ${OPENAI_CHAT_EXTRA_BODY:-}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
-      EXTRACTOR_MAX_COMPLETION_TOKENS: ${BRAIN_EXTRACTOR_MAX_COMPLETION_TOKENS:-16384}
-      EXTRACTOR_SC_PASSES: ${BRAIN_EXTRACTOR_SC_PASSES:-3}
-      THROTTLE_LIMIT: ${BRAIN_THROTTLE_LIMIT:-600}
-      THROTTLE_EXPENSIVE_LIMIT: ${BRAIN_THROTTLE_EXPENSIVE_LIMIT:-600}
-      # Upstream hardcodes 10 searches per minute on /v1/search, and every
-      # Manifold search and context request is one Brain search on one key.
-      THROTTLE_SEARCH_LIMIT: ${BRAIN_THROTTLE_SEARCH_LIMIT:-600}
-      BRAIN_HEALTH_RESTART_FAILURES: ${BRAIN_HEALTH_RESTART_FAILURES:-20}
-      DOCUMENT_INGEST_ENABLED: "1"
-      DOCUMENT_MULTI_INDEXER_ENABLED: "1"
-      FACTS_API_ENABLED: "1"
-      # Brain v2.3 stores every conversational turn verbatim by default.
-      # Manifold sends documents, not turns, so keep that store closed.
-      EPISODE_SUBSTRATE_ENABLED: "0"
-      # Brain's decision lanes (`triage` among them) can keep a captured
-      # document raw: its run ends `skipped` and nothing is extracted, while
-      # Manifold counts the document as read. Fixed here, not read from .env.
-      DECISIONS_LANES: ""
-      # Brain gathers new documents for this many seconds before one
-      # extraction pass reads them (upstream default 20). Manifold submits one
-      # document per job and waits for it, so the window is dead time.
-      EXTRACTION_BATCH_WINDOW_SECONDS: ${BRAIN_EXTRACTION_BATCH_WINDOW_SECONDS:-1}
-      # Brain's job loops sleep this long after every claim attempt, and the
-      # backoff more when the queue is empty (upstream: 1000 and 5000 ms), so a
-      # new job waited up to six seconds for a worker.
-      WORKER_LOOP_POLL_MS: ${BRAIN_WORKER_LOOP_POLL_MS:-250}
-      WORKER_LOOP_EMPTY_BACKOFF_MS: ${BRAIN_WORKER_LOOP_EMPTY_BACKOFF_MS:-750}
-      # The search vector leg reads Brain's HNSW index (approximate KNN)
-      # instead of every fact row with its embedding, which took 5-6 s per
-      # search at 13k facts. Brain builds the indexes itself (CONCURRENTLY)
-      # when it first opens a tenant after start and serves the exact scan
-      # until they are ready. Provisioning follows the search flag unless
-      # BRAIN_HNSW_PROVISION_ENABLED is set, e.g. to build ahead of a flip.
-      SEARCH_HNSW_ENABLED: ${BRAIN_SEARCH_HNSW_ENABLED:-1}
-      HNSW_PROVISION_ENABLED: ${BRAIN_HNSW_PROVISION_ENABLED:-${BRAIN_SEARCH_HNSW_ENABLED:-1}}
-    volumes:
-      - brain-cache:/app/.cache
-    depends_on:
-      surrealdb:
-        condition: service_healthy
-    networks:
-      - private
-      - provider
-    healthcheck:
-      # Compose does not restart unhealthy containers. The probe terminates
-      # a Brain process that stops serving after it was healthy.
-      test: ["CMD", "brain-healthcheck"]
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 45s
-
-  surrealdb:
-    image: surrealdb/surrealdb:v3.3.5@sha256:3db515b88e79737aa828c05fbf1515748004ba57495ff89a013851cc3f1ad4b9
-    restart: unless-stopped
-    logging: *logging
-    user: root
-    command:
-      - start
-      - --user=${SURREALDB_USERNAME:-root}
-      - --pass=${SURREALDB_PASSWORD:?set SURREALDB_PASSWORD}
-      - --bind=0.0.0.0:8000
-      - rocksdb:/data/db
-    # Without a limit SurrealDB sizes its RocksDB block cache from host memory
-    # (half of it minus 1 GiB: 11.5 GB on a 23.5 GB host) and two nightly
-    # Brain jobs took it to 17 GB until the kernel killed it. The limit keeps
-    # a runaway query from exhausting the host; inside it the cache and the
-    # request guard below leave room for query memory.
-    mem_limit: ${SURREALDB_MEMORY_LIMIT:-10g}
-    environment:
-      # Log statements slower than this, without parameter values: the
-      # allow list names no parameter Brain binds, so document text and
-      # embeddings stay out of the log.
-      SURREAL_SLOW_QUERY_LOG_THRESHOLD: ${SURREALDB_SLOW_QUERY_LOG_THRESHOLD:-250ms}
-      SURREAL_SLOW_QUERY_LOG_PARAM_ALLOW: manifold_log_no_parameters
-      # Block cache, row cache and memtables in bytes (3 GiB); SurrealDB
-      # ignores a value that is not a plain byte count.
-      SURREAL_ROCKSDB_BLOCK_CACHE_SIZE: ${SURREALDB_BLOCK_CACHE_SIZE:-3221225472}
-      # Refuse new requests while tracked memory (Rust heap plus RocksDB
-      # caches) exceeds this; keep it below mem_limit for untracked memory.
-      SURREAL_MEMORY_THRESHOLD: ${SURREALDB_MEMORY_THRESHOLD:-8GiB}
-    volumes:
-      - surrealdb-data:/data/db
-    networks:
-      - private
-    healthcheck:
-      test: ["CMD", "/surreal", "is-ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 8
-
-networks:
-  edge:
-  provider:
-  private:
-    internal: true
+      start_period: 30s
 
 volumes:
   manifold-data:
-  openviking-data:
-  brain-cache:
-  surrealdb-data:

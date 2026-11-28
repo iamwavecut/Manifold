@@ -121,7 +121,7 @@ The command creates missing nested folders atomically and succeeds only after
 the durable job reaches `ready`. It returns nonzero for `partially_ready`,
 `failed`, or a wait timeout. It never blind-retries `etag_mismatch`; reread,
 merge, and issue a new update instead. It also refuses every mutation with
-`discovery_degraded` when OpenViking or Brain search is incomplete.
+`discovery_degraded` when semantic or graph search is incomplete.
 
 The CLI's default two-minute wait is independent of server processing limits.
 Use `remember --wait-timeout 20m ...` for longer extraction. On

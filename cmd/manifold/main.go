@@ -17,9 +17,10 @@ import (
 	"github.com/iamwavecut/Manifold/internal/auth"
 	"github.com/iamwavecut/Manifold/internal/buildinfo"
 	"github.com/iamwavecut/Manifold/internal/config"
+	"github.com/iamwavecut/Manifold/internal/engine"
+	"github.com/iamwavecut/Manifold/internal/llm"
 	"github.com/iamwavecut/Manifold/internal/service"
 	"github.com/iamwavecut/Manifold/internal/store"
-	"github.com/iamwavecut/Manifold/internal/upstream"
 	"github.com/iamwavecut/Manifold/web"
 )
 
@@ -36,6 +37,15 @@ func main() {
 }
 
 func run() error {
+	// The probe runs every few seconds; it must not open the database or
+	// depend on the rest of the configuration.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		addr := os.Getenv("MANIFOLD_ADDR")
+		if addr == "" {
+			addr = ":8080"
+		}
+		return healthcheck(context.Background(), addr)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -49,7 +59,7 @@ func run() error {
 			fmt.Printf("%s (%s) protocol=%d\n", version, commit, buildinfo.ProtocolRevision)
 			return nil
 		default:
-			return fmt.Errorf("unknown command %q; supported commands: openapi, version", os.Args[1])
+			return fmt.Errorf("unknown command %q; supported commands: openapi, version, healthcheck", os.Args[1])
 		}
 	}
 	return serve(cfg, logger)
@@ -70,14 +80,19 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("bootstrap API key: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: cfg.HTTPTimeout}
-	brainIngestHTTPClient := &http.Client{Timeout: cfg.BrainIngestTimeout}
-	writeHTTPClient := &http.Client{Timeout: cfg.OpenVikingWriteTimeout}
-	documents := upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient, writeHTTPClient)
-	graph := upstream.NewBrain(cfg.BrainURL, cfg.BrainKey, httpClient, brainIngestHTTPClient)
-	svc := service.New(db, documents, graph, cfg.PublicURL, logger, cfg.WorkerInterval, buildinfo.New(version, commit))
-	svc.SetBrainExtractionTimeout(cfg.BrainExtractionTimeout)
-	svc.SetBrainPollInterval(cfg.BrainPollInterval)
+	client := newModelClient(cfg)
+	index, err := openIndex(ctx, cfg, cfg.IndexPath, client, logger)
+	if err != nil {
+		return err
+	}
+	defer index.Close()
+	if err := seedIndex(ctx, index, db, logger); err != nil {
+		return err
+	}
+	if !client.Configured() {
+		logger.Warn("model provider is not configured; extraction and semantic search stay unavailable")
+	}
+	svc := newService(cfg, db, index, client, logger)
 	handler := manifoldapi.New(svc, authManager, cfg, logger, web.Handler()).Handler
 
 	server := &http.Server{
@@ -100,6 +115,9 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	}
 	workers.Go(func() {
 		svc.RunProviderRecovery(ctx, cfg.ProviderRetryInterval)
+	})
+	workers.Go(func() {
+		index.RunEmbedder(ctx)
 	})
 	serverError := make(chan error, 1)
 	go func() {
@@ -136,25 +154,72 @@ func writeOpenAPI(cfg config.Config, logger *slog.Logger) error {
 	}
 	defer db.Close()
 
-	httpClient := &http.Client{Timeout: cfg.HTTPTimeout}
-	brainIngestHTTPClient := &http.Client{Timeout: cfg.BrainIngestTimeout}
-	writeHTTPClient := &http.Client{Timeout: cfg.OpenVikingWriteTimeout}
-	svc := service.New(
-		db,
-		upstream.NewOpenViking(cfg.OpenVikingURL, cfg.OpenVikingKey, httpClient, writeHTTPClient),
-		upstream.NewBrain(cfg.BrainURL, cfg.BrainKey, httpClient, brainIngestHTTPClient),
-		cfg.PublicURL,
-		logger,
-		cfg.WorkerInterval,
-		buildinfo.New(version, commit),
-	)
-	api := manifoldapi.New(svc, auth.NewManager(db), cfg, logger, nil)
+	client := newModelClient(cfg)
+	index, err := openIndex(ctx, cfg, ":memory:", client, logger)
+	if err != nil {
+		return err
+	}
+	defer index.Close()
+	api := manifoldapi.New(newService(cfg, db, index, client, logger), auth.NewManager(db), cfg, logger, nil)
 	data, err := api.Spec.YAML()
 	if err != nil {
 		return fmt.Errorf("render OpenAPI: %w", err)
 	}
 	_, err = os.Stdout.Write(data)
 	return err
+}
+
+func newModelClient(cfg config.Config) *llm.Client {
+	return llm.New(llm.Config{
+		BaseURL:        cfg.ProviderURL,
+		APIKey:         cfg.ProviderKey,
+		ChatModel:      cfg.ChatModel,
+		EmbeddingModel: cfg.EmbeddingModel,
+		Dimensions:     cfg.EmbeddingDimensions,
+		ExtraBody:      cfg.ChatExtraBody,
+		HTTPClient:     &http.Client{Timeout: cfg.ProviderTimeout},
+	})
+}
+
+func openIndex(ctx context.Context, cfg config.Config, path string, client *llm.Client, logger *slog.Logger) (*engine.Engine, error) {
+	index, err := engine.Open(ctx, engine.Options{
+		Path:                  path,
+		EmbeddingModel:        cfg.EmbeddingModel,
+		Dimensions:            cfg.EmbeddingDimensions,
+		Model:                 client,
+		Logger:                logger,
+		ExtractionConcurrency: cfg.ExtractionConcurrency,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open index: %w", err)
+	}
+	return index, nil
+}
+
+// seedIndex fills a new index from the canonical database once. A restart
+// after a failed seed tries again, because the seed marks the index only
+// when its transaction commits.
+func seedIndex(ctx context.Context, index *engine.Engine, db *store.Store, logger *slog.Logger) error {
+	seeded, err := index.Seeded(ctx)
+	if err != nil {
+		return fmt.Errorf("read index state: %w", err)
+	}
+	if seeded {
+		return nil
+	}
+	started := time.Now()
+	if err := index.Seed(ctx, db); err != nil {
+		return fmt.Errorf("seed index: %w", err)
+	}
+	logger.Info("index seeded from the canonical database", "duration", time.Since(started).Round(time.Millisecond).String())
+	return nil
+}
+
+func newService(cfg config.Config, db *store.Store, index *engine.Engine, client *llm.Client, logger *slog.Logger) *service.Service {
+	svc := service.New(db, index.Documents(), index.Graph(), cfg.PublicURL, logger, cfg.WorkerInterval, buildinfo.New(version, commit))
+	svc.SetExtractionTimeout(cfg.ExtractionTimeout)
+	svc.SetProviderHealth(client.Health)
+	return svc
 }
 
 func newLogger(levelName string) *slog.Logger {

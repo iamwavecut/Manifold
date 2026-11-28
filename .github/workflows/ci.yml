@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
       - run: go test ./...
       - run: go test -race ./...
@@ -27,11 +27,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
       - uses: actions/setup-node@v7
         with:
-          node-version: "26.11.1"
+          node-version: "26.13.1"
           cache: npm
       - run: npm ci
       - run: npm run check
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
       - uses: actions/setup-python@v7
         with:
@@ -63,18 +63,6 @@ jobs:
           python-version: "3.14.8"
       - run: python3 scripts/test-deploy-production.py
       - run: python3 scripts/test-geta-release-request.py
-      - run: python3 scripts/test-brain-flags.py
-      - run: git init -q /tmp/brain
-      - run: git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
-      - run: git -C /tmp/brain fetch -q --depth 1 origin 6ba986054a546c71c93c39e0e118e0f3dddc983f
-      - run: git -C /tmp/brain checkout -q FETCH_HEAD
-      - run: test "$(git -C /tmp/brain rev-parse HEAD)" = 6ba986054a546c71c93c39e0e118e0f3dddc983f
-      - run: scripts/brain-apply-patches.sh /tmp/brain
-      - run: git -C /tmp/brain diff --check
-      # The image pins Brain's previous flag defaults; a changed catalog needs new pins.
-      - run: docker build --target builder -t brain-builder -f deploy/brain/Dockerfile .
-      - run: scripts/brain-catalog.sh brain-builder > /tmp/brain-catalog.json
-      - run: python3 scripts/brain-flags.py --check --baseline deploy/brain/flags/baseline.json --current /tmp/brain-catalog.json --adopt deploy/brain/flags/adopt.txt --out deploy/brain/flags/defaults.env
 
   integration:
     runs-on: ubuntu-latest
@@ -83,7 +71,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
       - run: scripts/integration.sh
 

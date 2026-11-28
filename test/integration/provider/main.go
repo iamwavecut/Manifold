@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,9 +14,24 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 func main() {
+	// The runtime image has no shell or HTTP client for a healthcheck or for
+	// the integration script's switches.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := probe("http://127.0.0.1:8081/health"); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 4 && os.Args[1] == "control" {
+		if err := control("http://127.0.0.1:8081", os.Args[2], os.Args[3]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
@@ -46,6 +63,50 @@ func main() {
 	}
 }
 
+func probe(url string) error {
+	client := http.Client{Timeout: 2 * time.Second}
+	response, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("provider health: HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+// control switches a running provider: "refuse <status>" (0 accepts again)
+// or "hold true|false".
+func control(base, action, value string) error {
+	var body string
+	switch action {
+	case "refuse":
+		status, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("refuse needs an HTTP status: %w", err)
+		}
+		body = fmt.Sprintf(`{"status":%d}`, status)
+	case "hold":
+		if value != "true" && value != "false" {
+			return fmt.Errorf("hold needs true or false, got %q", value)
+		}
+		body = `{"hold":` + value + `}`
+	default:
+		return fmt.Errorf("unknown control %q", action)
+	}
+	client := http.Client{Timeout: 5 * time.Second}
+	response, err := client.Post(base+"/control/"+action, "application/json", strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("control %s: HTTP %d", action, response.StatusCode)
+	}
+	return nil
+}
+
 // refusal is the HTTP status extraction requests are refused with; zero
 // accepts them. The integration run switches it to act out a provider account
 // without credit. Other requests keep working so only extraction is affected.
@@ -64,7 +125,7 @@ func controlRefusal(w http.ResponseWriter, r *http.Request) {
 }
 
 // hold, when set, keeps extraction requests unanswered until the release
-// closes it. The integration run uses it to keep Brain busy with a document.
+// closes it. The integration run uses it to keep one extraction in flight.
 var (
 	holdMu sync.Mutex
 	hold   chan struct{}
@@ -119,18 +180,19 @@ func embeddings(w http.ResponseWriter, r *http.Request) {
 	if dimensions <= 0 {
 		dimensions = 32
 	}
-	count := 1
-	if values, ok := request.Input.([]any); ok {
-		count = len(values)
-	}
-	data := make([]map[string]any, count)
-	for index := range data {
-		vector := make([]float64, dimensions)
-		for dimension := range vector {
-			vector[dimension] = float64((index+1)*(dimension%7+1)) / 100
+	var inputs []string
+	switch input := request.Input.(type) {
+	case string:
+		inputs = []string{input}
+	case []any:
+		for _, value := range input {
+			inputs = append(inputs, fmt.Sprint(value))
 		}
+	}
+	data := make([]map[string]any, len(inputs))
+	for index, input := range inputs {
 		data[index] = map[string]any{
-			"object": "embedding", "index": index, "embedding": vector,
+			"object": "embedding", "index": index, "embedding": embed(input, dimensions),
 		}
 	}
 	writeJSON(w, map[string]any{
@@ -139,6 +201,30 @@ func embeddings(w http.ResponseWriter, r *http.Request) {
 		"data":   data,
 		"usage":  map[string]int{"prompt_tokens": 1, "total_tokens": 1},
 	})
+}
+
+// embed hashes the words of text into a unit vector, so equal texts get equal
+// vectors and texts that share words lie close together.
+func embed(text string, dimensions int) []float64 {
+	vector := make([]float64, dimensions)
+	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		hash := fnv.New32a()
+		hash.Write([]byte(word))
+		vector[hash.Sum32()%uint32(dimensions)]++
+	}
+	var norm float64
+	for _, value := range vector {
+		norm += value * value
+	}
+	if norm == 0 {
+		vector[0], norm = 1, 1
+	}
+	for index := range vector {
+		vector[index] /= math.Sqrt(norm)
+	}
+	return vector
 }
 
 func chatCompletion(w http.ResponseWriter, r *http.Request) {
@@ -162,9 +248,6 @@ func chatCompletion(w http.ResponseWriter, r *http.Request) {
 			}
 			if fixture, ok := extractionFixture(request, schemaWrapper); ok {
 				content = fixture
-			}
-			if schemaWrapper["name"] == "entity_judge_verdict" {
-				content = map[string]string{"verdict": "different"}
 			}
 		}
 	}
@@ -215,15 +298,13 @@ func extractionFixture(request, schema map[string]any) (any, bool) {
 				continue
 			}
 			return map[string]any{
-				"clauses": []string{clause},
 				"entities": []map[string]any{
-					{"name": person, "type": "staff", "canonical": nil},
-					{"name": company, "type": "project", "canonical": nil},
+					{"name": person, "type": "staff", "aliases": []string{}},
+					{"name": company, "type": "organization", "aliases": []string{}},
 				},
-				"facts": []map[string]any{{"entityIndex": 0, "clauseIndex": 0,
-					"predicate": "works_at", "valueSpan": company, "confidence": 1}},
-				"edges": []map[string]any{{"fromEntityIndex": 0, "toEntityIndex": 1,
-					"kind": "works_at", "clauseIndex": 0, "confidence": 1}},
+				"facts": []map[string]any{{"entity": 0, "predicate": "works_at", "value": company,
+					"valid_from": "", "confidence": 1, "evidence": clause}},
+				"relations": []map[string]any{{"from": 0, "to": 1, "predicate": "works_at", "confidence": 1}},
 			}, true
 		}
 	}

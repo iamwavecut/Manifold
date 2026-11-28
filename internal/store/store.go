@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS relations (
 );
 
 -- Search canonicalization and graph projection look records up by their
--- Brain ID, and cascades and graph reads follow entity references.
+-- index ID, and cascades and graph reads follow entity references.
 CREATE INDEX IF NOT EXISTS entities_upstream_idx ON entities(upstream_id);
 CREATE INDEX IF NOT EXISTS facts_upstream_idx ON facts(upstream_id, origin);
 CREATE INDEX IF NOT EXISTS facts_entity_idx ON facts(entity_id);

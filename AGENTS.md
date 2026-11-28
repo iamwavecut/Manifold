@@ -3,10 +3,10 @@
 ## Product boundary
 
 - Manifold is a self-hosted REST and OpenAPI service. Agents connect through the bundled Manifold CLI and HTTP API, not gRPC or MCP. An absent MCP tool is not evidence of an unavailable service. Do not add, expose, document, or advertise MCP.
-- `internal/store` owns public IDs, workflow state, jobs, revisions, idempotency, and upstream mappings.
-- OpenViking owns canonical folder/document content and snapshot objects.
-- INITE Brain owns derived entities, facts, relations, provenance, and conflicts.
-- Upstream identifiers are opaque internal values. Never expose them in API, UI, logs, or skill output.
+- `internal/store` owns canonical documents and revisions, public IDs, workflow state, jobs, idempotency, and index mappings (`manifold.db`).
+- `internal/engine` owns the derived index (`index.db`): document chunks, extracted entities, facts and relations, full-text and vector search. It must stay rebuildable: a missing `index.db` is seeded from `manifold.db` at start without model calls for revisions already extracted.
+- `internal/llm` is the only client of the OpenAI-compatible model provider. Errors carry a refusal class and never the response body or the key.
+- Index identifiers are opaque internal values. Never expose them in API, UI, logs, or skill output.
 
 ## Identity invariants
 
@@ -41,8 +41,8 @@
 - Enforce the narrowest capability in `internal/auth`.
 - API-key secrets, session cookies, CSRF tokens, and idempotency keys may be cryptographically random. Never use XIDs as secrets.
 - UI sessions stay HttpOnly/SameSite and unsafe session requests require CSRF.
-- OpenViking and Brain need outbound provider access but no published ports. Keep data traffic on the internal `private` network and model API egress on the un-published `provider` network.
-- Canonicalize all retrieval hits through SQLite before returning them. Never expose internal OpenViking resources or unmapped Brain/OpenViking IDs.
+- Manifold runs as one container with no database server or sidecar. It needs outbound access to the model provider and publishes only the API port.
+- Canonicalize all retrieval hits through SQLite before returning them. Never expose index locators or unmapped index IDs.
 - Document creation by `folder_path` must create missing nested folders and the document in one SQLite transaction. Keep `folder_id` and `folder_path` mutually exclusive.
 - Path selectors use slash-aware `*`, `?`, and whole-segment `**`; validate them before querying.
 
@@ -72,17 +72,6 @@ docker compose --env-file .env.example config --quiet
 docker buildx build --platform linux/amd64,linux/arm64 --target build .
 ```
 
-Run `make integration` for changes that cross the API, durable worker, OpenViking, Brain, SurrealDB, or restart persistence. It uses only the repository's deterministic OpenAI-compatible test provider and destroys only its own `manifold-integration` Compose volumes.
-
-For changes to the pinned Brain integration, also verify:
-
-```bash
-git init -q /tmp/brain
-git -C /tmp/brain remote add origin https://github.com/inite-ai/inite-brain-service.git
-git -C /tmp/brain fetch -q --depth 1 origin 6ba986054a546c71c93c39e0e118e0f3dddc983f
-git -C /tmp/brain checkout -q FETCH_HEAD
-test "$(git -C /tmp/brain rev-parse HEAD)" = 6ba986054a546c71c93c39e0e118e0f3dddc983f
-scripts/brain-apply-patches.sh /tmp/brain
-```
+Run `make integration` for changes that cross the API, durable worker, embedded index, model provider, seeding, or restart persistence. It uses only the repository's deterministic OpenAI-compatible test provider and destroys only its own `manifold-integration` Compose volumes.
 
 Report skipped checks explicitly. Never claim a real-provider integration passed when only deterministic fakes ran.

@@ -211,7 +211,7 @@ type DerivedFactSnapshot struct {
 	EntityName string
 }
 
-// derivedFactSnapshotsQuery reads the derived fact with one Brain ID and its
+// derivedFactSnapshotsQuery reads the derived fact with one index ID and its
 // claims. CROSS JOIN fixes facts as the outer table: SQLite otherwise starts
 // from derived_graph_claims, whose object_kind index matches nearly every
 // claim, and reads all fact claims to find the few of one fact.

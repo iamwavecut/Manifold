@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/iamwavecut/Manifold/internal/model"
@@ -8,21 +11,41 @@ import (
 	"github.com/iamwavecut/Manifold/internal/upstream"
 )
 
-func refusedState(class string) upstream.GraphDocumentState {
-	return upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentFailed,
-		Runs: []upstream.GraphIndexerRun{{
-			IndexerID: "_general", Status: "failed", Refusal: class,
-		}},
-	}
+// refusingGraph fails extraction the way the engine reports a provider
+// refusal, or with failure when that is set.
+type refusingGraph struct {
+	*workflowGraph
+	mu      sync.Mutex
+	refusal string
+	failure error
 }
 
-func syncRefusedDocument(t *testing.T, db *store.Store, svc *Service, graph *workflowAsyncGraph, id, class string) model.Job {
+func (g *refusingGraph) IngestDocument(ctx context.Context, doc upstream.GraphDocument) (upstream.GraphIngestResult, error) {
+	g.mu.Lock()
+	refusal, failure := g.refusal, g.failure
+	g.mu.Unlock()
+	if failure != nil {
+		return upstream.GraphIngestResult{}, failure
+	}
+	if refusal != "" {
+		return upstream.GraphIngestResult{}, &upstream.DependencyError{
+			Dependency: "provider", Operation: "extract document", Status: 402, Refusal: refusal,
+		}
+	}
+	return g.workflowGraph.IngestDocument(ctx, doc)
+}
+
+func (g *refusingGraph) set(refusal string, failure error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.refusal, g.failure = refusal, failure
+}
+
+func newRefusingGraph() *refusingGraph { return &refusingGraph{workflowGraph: &workflowGraph{}} }
+
+func syncRefusedDocument(t *testing.T, db *store.Store, svc *Service, graph *refusingGraph, id, class string) model.Job {
 	t.Helper()
-	graph.asyncMu.Lock()
-	graph.retryCalls, graph.beforeRetryIndex = 0, 0
-	graph.beforeRetryStates = []upstream.GraphDocumentState{refusedState(class)}
-	graph.asyncMu.Unlock()
+	graph.set(class, nil)
 	_, job, err := svc.CreateDocument(t.Context(), model.Document{ID: id, Title: id, Format: "markdown", Content: "body of " + id})
 	if err != nil {
 		t.Fatal(err)
@@ -37,19 +60,8 @@ func syncRefusedDocument(t *testing.T, db *store.Store, svc *Service, graph *wor
 	return failed
 }
 
-func succeedAfterRetry(graph *workflowAsyncGraph) {
-	ready := upstream.GraphDocumentState{
-		Status: upstream.GraphDocumentReady,
-		Result: upstream.GraphIngestResult{DocumentID: "brain-async"},
-	}
-	graph.asyncMu.Lock()
-	defer graph.asyncMu.Unlock()
-	graph.beforeRetryStates = []upstream.GraphDocumentState{refusedState("billing")}
-	graph.afterRetryStates = []upstream.GraphDocumentState{ready}
-}
-
 func TestProviderCreditFailureIsNamedAndShownInStatus(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
+	graph := newRefusingGraph()
 	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
 
 	job := syncRefusedDocument(t, db, svc, graph, "unpaid", "billing")
@@ -74,7 +86,7 @@ func TestProviderCreditFailureIsNamedAndShownInStatus(t *testing.T) {
 }
 
 func TestOtherProviderRefusalsStayDependencyFailures(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
+	graph := newRefusingGraph()
 	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
 
 	job := syncRefusedDocument(t, db, svc, graph, "badkey", "auth")
@@ -85,12 +97,12 @@ func TestOtherProviderRefusalsStayDependencyFailures(t *testing.T) {
 }
 
 func TestRecoveryProbesOneBlockedSyncThenRetriesTheRest(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
+	graph := newRefusingGraph()
 	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
 	first := syncRefusedDocument(t, db, svc, graph, "first", "billing")
 	second := syncRefusedDocument(t, db, svc, graph, "second", "billing")
 	third := syncRefusedDocument(t, db, svc, graph, "third", "billing")
-	succeedAfterRetry(graph)
+	graph.set("", nil)
 
 	retried, err := svc.RecoverProviderBlocked(t.Context())
 	if err != nil || retried != 1 {
@@ -118,12 +130,9 @@ func TestRecoveryProbesOneBlockedSyncThenRetriesTheRest(t *testing.T) {
 }
 
 func TestRecoveryIgnoresOtherFailuresAndSupersededRevisions(t *testing.T) {
-	graph := &workflowAsyncGraph{workflowGraph: &workflowGraph{}}
+	graph := newRefusingGraph()
 	db, svc := newWorkflowService(t, ":memory:", &workflowDocuments{}, graph)
-	graph.beforeRetryStates = []upstream.GraphDocumentState{{
-		Status: upstream.GraphDocumentFailed,
-		Runs:   []upstream.GraphIndexerRun{{IndexerID: "_general", Status: "failed", Reason: "incomplete extraction"}},
-	}}
+	graph.set("", errors.New("incomplete extraction"))
 	if _, _, err := svc.CreateDocument(t.Context(), model.Document{ID: "broken", Title: "Broken", Format: "markdown", Content: "body"}); err != nil {
 		t.Fatal(err)
 	}

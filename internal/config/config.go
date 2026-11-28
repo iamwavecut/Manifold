@@ -1,32 +1,38 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	Addr                   string
-	DBPath                 string
-	PublicURL              string
-	BootstrapAPIKey        string
-	LogLevel               string
-	MaxBodyBytes           int64
-	OpenVikingURL          string
-	OpenVikingKey          string
-	BrainURL               string
-	BrainKey               string
-	HTTPTimeout            time.Duration
-	BrainIngestTimeout     time.Duration
-	BrainExtractionTimeout time.Duration
-	BrainPollInterval      time.Duration
-	OpenVikingWriteTimeout time.Duration
-	WorkerInterval         time.Duration
-	WorkerConcurrency      int
-	ProviderRetryInterval  time.Duration
+	Addr            string
+	DBPath          string
+	IndexPath       string
+	PublicURL       string
+	BootstrapAPIKey string
+	LogLevel        string
+	MaxBodyBytes    int64
+
+	// The OpenAI-compatible model provider for extraction and embeddings.
+	ProviderURL           string
+	ProviderKey           string
+	ChatModel             string
+	ChatExtraBody         map[string]any
+	EmbeddingModel        string
+	EmbeddingDimensions   int
+	ProviderTimeout       time.Duration
+	ExtractionTimeout     time.Duration
+	ExtractionConcurrency int
+
+	WorkerInterval        time.Duration
+	WorkerConcurrency     int
+	ProviderRetryInterval time.Duration
 }
 
 func Load() (Config, error) {
@@ -34,48 +40,35 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	httpTimeout, err := envDuration("MANIFOLD_HTTP_TIMEOUT", 30*time.Second)
+	providerTimeout, err := positiveDuration("MANIFOLD_PROVIDER_TIMEOUT", 3*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
-	brainIngestTimeout, err := envDuration("MANIFOLD_BRAIN_INGEST_TIMEOUT", 2*time.Minute)
+	extractionTimeout, err := positiveDuration("MANIFOLD_EXTRACTION_TIMEOUT", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
-	if brainIngestTimeout <= 0 {
-		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_INGEST_TIMEOUT must be greater than zero")
-	}
-	extractionTimeout, err := envDuration("MANIFOLD_BRAIN_EXTRACTION_TIMEOUT", 30*time.Minute)
+	dimensions, err := boundedInt("MANIFOLD_EMBEDDING_DIMENSIONS", 512, 1, 4096)
 	if err != nil {
 		return Config{}, err
 	}
-	if extractionTimeout <= 0 {
-		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_EXTRACTION_TIMEOUT must be greater than zero")
-	}
-	pollInterval, err := envDuration("MANIFOLD_BRAIN_POLL_INTERVAL", 2*time.Second)
+	extractionConcurrency, err := boundedInt("MANIFOLD_EXTRACTION_CONCURRENCY", 4, 1, 16)
 	if err != nil {
 		return Config{}, err
 	}
-	if pollInterval <= 0 {
-		return Config{}, fmt.Errorf("MANIFOLD_BRAIN_POLL_INTERVAL must be greater than zero")
-	}
-	writeTimeout, err := envDuration("MANIFOLD_OPENVIKING_WRITE_TIMEOUT", 5*time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
-	if writeTimeout <= 0 {
-		return Config{}, fmt.Errorf("MANIFOLD_OPENVIKING_WRITE_TIMEOUT must be greater than zero")
+	var extraBody map[string]any
+	if raw := strings.TrimSpace(os.Getenv("OPENAI_CHAT_EXTRA_BODY")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &extraBody); err != nil || extraBody == nil {
+			return Config{}, fmt.Errorf("OPENAI_CHAT_EXTRA_BODY must be a JSON object")
+		}
 	}
 	workerInterval, err := envDuration("MANIFOLD_WORKER_INTERVAL", time.Second)
 	if err != nil {
 		return Config{}, err
 	}
-	workerConcurrency, err := envInt64("MANIFOLD_WORKER_CONCURRENCY", 2)
+	workerConcurrency, err := boundedInt("MANIFOLD_WORKER_CONCURRENCY", 2, 1, 16)
 	if err != nil {
 		return Config{}, err
-	}
-	if workerConcurrency < 1 || workerConcurrency > 16 {
-		return Config{}, fmt.Errorf("MANIFOLD_WORKER_CONCURRENCY must be between 1 and 16")
 	}
 	providerRetry, err := envDuration("MANIFOLD_PROVIDER_RETRY_INTERVAL", 15*time.Minute)
 	if err != nil {
@@ -84,30 +77,63 @@ func Load() (Config, error) {
 	if providerRetry < 0 {
 		return Config{}, fmt.Errorf("MANIFOLD_PROVIDER_RETRY_INTERVAL must be zero (off) or greater")
 	}
+	dbPath := env("MANIFOLD_DB_PATH", "manifold.db")
 	cfg := Config{
-		Addr:                   env("MANIFOLD_ADDR", ":8080"),
-		DBPath:                 env("MANIFOLD_DB_PATH", "manifold.db"),
-		PublicURL:              strings.TrimRight(env("MANIFOLD_PUBLIC_URL", "http://localhost:8080"), "/"),
-		BootstrapAPIKey:        os.Getenv("MANIFOLD_BOOTSTRAP_API_KEY"),
-		LogLevel:               env("MANIFOLD_LOG_LEVEL", "info"),
-		MaxBodyBytes:           maxBody,
-		OpenVikingURL:          strings.TrimRight(env("OPENVIKING_URL", ""), "/"),
-		OpenVikingKey:          os.Getenv("OPENVIKING_API_KEY"),
-		BrainURL:               strings.TrimRight(env("BRAIN_URL", ""), "/"),
-		BrainKey:               os.Getenv("BRAIN_API_KEY"),
-		HTTPTimeout:            httpTimeout,
-		BrainIngestTimeout:     brainIngestTimeout,
-		BrainExtractionTimeout: extractionTimeout,
-		BrainPollInterval:      pollInterval,
-		OpenVikingWriteTimeout: writeTimeout,
-		WorkerInterval:         workerInterval,
-		WorkerConcurrency:      int(workerConcurrency),
-		ProviderRetryInterval:  providerRetry,
+		Addr:                  env("MANIFOLD_ADDR", ":8080"),
+		DBPath:                dbPath,
+		IndexPath:             env("MANIFOLD_INDEX_DB_PATH", defaultIndexPath(dbPath)),
+		PublicURL:             strings.TrimRight(env("MANIFOLD_PUBLIC_URL", "http://localhost:8080"), "/"),
+		BootstrapAPIKey:       os.Getenv("MANIFOLD_BOOTSTRAP_API_KEY"),
+		LogLevel:              env("MANIFOLD_LOG_LEVEL", "info"),
+		MaxBodyBytes:          maxBody,
+		ProviderURL:           strings.TrimRight(env("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
+		ProviderKey:           strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		ChatModel:             env("OPENAI_CHAT_MODEL", "gpt-4.1-mini"),
+		ChatExtraBody:         extraBody,
+		EmbeddingModel:        env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+		EmbeddingDimensions:   dimensions,
+		ProviderTimeout:       providerTimeout,
+		ExtractionTimeout:     extractionTimeout,
+		ExtractionConcurrency: extractionConcurrency,
+		WorkerInterval:        workerInterval,
+		WorkerConcurrency:     workerConcurrency,
+		ProviderRetryInterval: providerRetry,
 	}
 	if cfg.MaxBodyBytes < 1024 {
 		return Config{}, fmt.Errorf("MANIFOLD_MAX_BODY_BYTES must be at least 1024")
 	}
 	return cfg, nil
+}
+
+// defaultIndexPath keeps the derived index beside the canonical database.
+func defaultIndexPath(dbPath string) string {
+	path, _, _ := strings.Cut(strings.TrimPrefix(dbPath, "file:"), "?")
+	if path == "" || path == ":memory:" {
+		return ":memory:"
+	}
+	return filepath.Join(filepath.Dir(path), "index.db")
+}
+
+func positiveDuration(name string, fallback time.Duration) (time.Duration, error) {
+	value, err := envDuration(name, fallback)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", name)
+	}
+	return value, nil
+}
+
+func boundedInt(name string, fallback, low, high int64) (int, error) {
+	value, err := envInt64(name, fallback)
+	if err != nil {
+		return 0, err
+	}
+	if value < low || value > high {
+		return 0, fmt.Errorf("%s must be between %d and %d", name, low, high)
+	}
+	return int(value), nil
 }
 
 func env(name, fallback string) string {

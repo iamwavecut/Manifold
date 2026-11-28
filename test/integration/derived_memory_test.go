@@ -92,7 +92,7 @@ func TestDocumentExtractionProducesCanonicalGraph(t *testing.T) {
 	updated := c.expectStatus(t, ctx, http.MethodPut, "/api/v1/documents/"+id, map[string]any{"content": second}, "derived-update", document.Header.Get("ETag"), http.StatusAccepted)
 	waitForJob(t, ctx, c, nestedStringField(t, updated.Body, "job", "id"), "ready")
 	checkFact("Borealis Labs", "r2")
-	// Identical text at a new origin corroborates an existing Brain fact.
+	// Identical text at a new revision corroborates the existing fact.
 	// Its candidate must reference the serving fact, not the hidden audit row.
 	document = c.expectStatus(t, ctx, http.MethodGet, "/api/v1/documents/"+id, nil, "", "", http.StatusOK)
 	updated = c.expectStatus(t, ctx, http.MethodPut, "/api/v1/documents/"+id, map[string]any{"content": second}, "derived-confirm", document.Header.Get("ETag"), http.StatusAccepted)

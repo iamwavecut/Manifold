@@ -18,11 +18,11 @@ import (
 )
 
 var (
-	ErrDerivedGraphIncomplete     = errors.New("Brain graph result omitted committed record details")
-	ErrDerivedGraphSourceMismatch = errors.New("Brain graph result source does not match the captured document revision")
+	ErrDerivedGraphIncomplete     = errors.New("graph result omitted committed record details")
+	ErrDerivedGraphSourceMismatch = errors.New("graph result source does not match the captured document revision")
 )
 
-// materializeGraphDocument stores the Brain result for doc and retracts what
+// materializeGraphDocument stores the graph result for doc and retracts what
 // the document no longer claims. A sync job passes its shared hold on
 // graphPhase, which ends once the projection is stored.
 func (s *Service) materializeGraphDocument(
@@ -105,7 +105,7 @@ func (h *graphPhaseHold) release() {
 	}
 }
 
-// retractOrphanedDerivedGraph withdraws from Brain what documentID claimed and
+// retractOrphanedDerivedGraph withdraws from the graph what documentID claimed and
 // no live document claims any more: first its facts, then its relations.
 func (s *Service) retractOrphanedDerivedGraph(ctx context.Context, documentID string) error {
 	s.graphPhase.Lock()
@@ -116,32 +116,28 @@ func (s *Service) retractOrphanedDerivedGraph(ctx context.Context, documentID st
 	return s.retractOrphanedDerivedRelations(ctx, documentID)
 }
 
-// derivedFactRetractionReason must differ from Brain's "superseded": Brain
-// revives a predecessor fact only when its retraction reason is "superseded".
+// derivedFactRetractionReason records why Manifold withdrew a derived fact.
 const derivedFactRetractionReason = "manifold_source_withdrawn"
 
-// maxDerivedFactRetractions bounds the Brain calls per fact. A fact that a
-// later fact superseded needs a second call after Brain revives it.
+// maxDerivedFactRetractions bounds the graph calls per fact. A fact that a
+// later fact superseded needs a second call after the graph revives it.
 const maxDerivedFactRetractions = 3
 
-// derivedRetractionConcurrency bounds the Brain retractions in flight for one
-// document. Retracting a hundred replaced facts one at a time took five
-// seconds of every such document sync.
+// derivedRetractionConcurrency bounds the retractions in flight for one
+// document.
 const derivedRetractionConcurrency = 4
 
-// maxRetractionAttempts bounds the calls for one retraction. Concurrent
-// retractions abort in Brain with a SurrealDB transaction conflict (HTTP 500)
-// on about one call in ten, sometimes several times in a row, and a
-// retraction is idempotent, so a failed or throttled call is repeated.
+// maxRetractionAttempts bounds the calls for one retraction. A retraction is
+// idempotent, so a call that failed with a retryable error is repeated.
 const maxRetractionAttempts = 6
 
-// retractOrphanedDerivedFacts retracts in Brain the derived facts that the
-// document claimed and that no live document claims at its current revision,
-// so deleted or replaced document content stops reaching Brain search. Brain
-// can make a superseded predecessor current again when it retracts its
-// successor; such a predecessor is retracted as well unless a live document
-// claims it. Each wave retracts distinct facts concurrently, and the facts
-// that Brain revives join the next wave.
+// retractOrphanedDerivedFacts retracts in the graph the derived facts that
+// the document claimed and that no live document claims at its current
+// revision, so deleted or replaced document content stops reaching search.
+// The graph makes a superseded predecessor current again when it retracts
+// its successor; such a predecessor is retracted as well unless a live
+// document claims it. Each wave retracts distinct facts concurrently, and
+// the facts that the graph revives join the next wave.
 func (s *Service) retractOrphanedDerivedFacts(ctx context.Context, documentID string) error {
 	queue, err := s.store.OrphanedDerivedFacts(ctx, documentID)
 	if err != nil {
@@ -173,8 +169,8 @@ func (s *Service) retractOrphanedDerivedFacts(ctx context.Context, documentID st
 			case err == nil:
 			case errors.As(err, &dependency) && dependency.Status == http.StatusNotFound:
 			case errors.As(err, &dependency) && dependency.Status == http.StatusForbidden:
-				// Brain reserves some predicates for brain:admin. The public
-				// projection already hides the fact; keep the job moving.
+				// The graph refused the retraction. The public projection
+				// already hides the fact; keep the job moving.
 				s.logger.Warn("derived fact retraction is not permitted", "document_id", documentID, "fact_id", fact.ID)
 				continue
 			default:
@@ -207,7 +203,7 @@ type retraction struct {
 	err     error
 }
 
-// retractUpstreamAll retracts the n Brain records that upstreamID names with
+// retractUpstreamAll retracts the n graph records that upstreamID names with
 // at most derivedRetractionConcurrency calls in flight, and returns each
 // result at its index. A failure does not cancel the other calls.
 func (s *Service) retractUpstreamAll(ctx context.Context, n int, upstreamID func(int) string) []retraction {
@@ -226,37 +222,34 @@ func (s *Service) retractUpstreamAll(ctx context.Context, n int, upstreamID func
 	return results
 }
 
-// retractUpstream retracts one Brain fact or relation and returns the facts
-// that Brain revived. It repeats a call that failed with a retryable error.
+// retractUpstream retracts one graph fact or relation and returns the facts
+// that the graph revived. It repeats a call that failed with a retryable
+// error.
 func (s *Service) retractUpstream(ctx context.Context, upstreamID string) ([]string, error) {
 	for attempt := 1; ; attempt++ {
 		revived, err := s.graph.RetractFact(ctx, upstreamID, derivedFactRetractionReason)
 		if err == nil || attempt == maxRetractionAttempts || !retryableUpstreamError(err) {
 			return revived, err
 		}
-		if waitErr := waitForContext(ctx, brainRetryDelay(err, s.retractionRetryDelay(attempt))); waitErr != nil {
+		if waitErr := waitForContext(ctx, upstreamRetryDelay(err, retractionRetryDelay(attempt))); waitErr != nil {
 			return nil, err
 		}
 	}
 }
 
-// retractionRetryDelay is the wait after the given failed attempt: the Brain
-// poll delay, which doubles from initialBrainPollInterval up to the poll
-// interval, randomized over its upper half. Retractions that conflicted with
-// each other would conflict again after equal waits.
-func (s *Service) retractionRetryDelay(attempt int) time.Duration {
-	delay := s.brainPollDelay(attempt - 1)
+// retractionRetryDelay is the wait after the given failed attempt: 250 ms,
+// doubling up to 2 s, randomized over its upper half so that retractions
+// that failed together do not retry together.
+func retractionRetryDelay(attempt int) time.Duration {
+	delay := min(250*time.Millisecond<<(attempt-1), 2*time.Second)
 	return delay - rand.N(delay/2+1)
 }
 
-// retractOrphanedDerivedRelations retracts in Brain the derived relations that
-// documentID claimed and that no live document claims at its current revision.
-// Brain serves a live relation as a fact-shaped line in search, so a withdrawn
-// relation would keep ranking and use up candidate slots. Brain closes the
-// edge and reopens it when a later document states the same relation; the
-// route does not revive other rows, so one call per relation is enough. A
-// Brain without the edge route answers 404, which counts as done like a
-// missing fact.
+// retractOrphanedDerivedRelations retracts in the graph the derived relations
+// that documentID claimed and that no live document claims at its current
+// revision. The graph reopens a relation when a later document states it
+// again and revives no other rows, so one call per relation is enough. An
+// unknown relation answers 404, which counts as done like a missing fact.
 func (s *Service) retractOrphanedDerivedRelations(ctx context.Context, documentID string) error {
 	relations, err := s.store.OrphanedDerivedRelations(ctx, documentID)
 	if err != nil {

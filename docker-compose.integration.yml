@@ -5,46 +5,25 @@ services:
     build:
       context: .
       dockerfile: deploy/test-provider/Dockerfile
-    environment:
-      EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-1536}
-    networks:
-      - private
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/health"]
+      test: ["CMD", "/usr/local/bin/provider", "healthcheck"]
       interval: 5s
       timeout: 2s
       retries: 10
-
-  openviking:
-    environment:
-      OPENAI_BASE_URL: http://provider:8081/v1
-      OPENAI_API_KEY: deterministic-provider-key
-      OPENAI_CHAT_MODEL: deterministic-chat
-      OPENAI_EMBEDDING_MODEL: deterministic-embedding
-      OPENVIKING_VLM_EXTRA_BODY: '{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}'
-    depends_on:
-      provider:
-        condition: service_healthy
-
-  brain:
-    environment:
-      OPENAI_BASE_URL: http://provider:8081/v1
-      OPENAI_API_KEY: deterministic-provider-key
-      OPENAI_CHAT_MODEL: deterministic-chat
-      OPENAI_EMBEDDING_MODEL: deterministic-embedding
-      DOCUMENT_INGEST_ENABLED: "1"
-      DOCUMENT_MULTI_INDEXER_ENABLED: "1"
-      FACTS_API_ENABLED: "1"
-      CHAT_ROUTE_NLI_ENABLED: "false"
-      BRAIN_HEALTH_RESTART_FAILURES: 2
-      OPENAI_CHAT_EXTRA_BODY: '{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}'
-    depends_on:
-      provider:
-        condition: service_healthy
 
   manifold:
     environment:
       MANIFOLD_PUBLIC_URL: http://127.0.0.1:${MANIFOLD_PORT:-18080}
       # The convergence phase shortens it to give up on a held extraction.
-      MANIFOLD_BRAIN_EXTRACTION_TIMEOUT: ${MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT:-3m}
+      MANIFOLD_EXTRACTION_TIMEOUT: ${MANIFOLD_INTEGRATION_EXTRACTION_TIMEOUT:-3m}
       MANIFOLD_PROVIDER_RETRY_INTERVAL: 5s
+      # The reseed phase moves Manifold to an empty index file.
+      MANIFOLD_INDEX_DB_PATH: ${MANIFOLD_INTEGRATION_INDEX_PATH:-/var/lib/manifold/index.db}
+      OPENAI_BASE_URL: http://provider:8081/v1
+      OPENAI_API_KEY: deterministic-provider-key
+      OPENAI_CHAT_MODEL: deterministic-chat
+      OPENAI_EMBEDDING_MODEL: deterministic-embedding
+      OPENAI_CHAT_EXTRA_BODY: '{"reasoning":{"enabled":false},"provider":{"require_parameters":true}}'
+    depends_on:
+      provider:
+        condition: service_healthy

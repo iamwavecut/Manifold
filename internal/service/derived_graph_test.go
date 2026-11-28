@@ -541,7 +541,6 @@ func TestWithdrawnDocumentFactsAreRetractedInBrain(t *testing.T) {
 	defer db.Close()
 	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
 	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
-	svc.SetBrainPollInterval(time.Millisecond)
 	doc, _, err := db.CreateDocument(t.Context(), model.Document{
 		ID: "withdrawn-source", Title: "Withdrawn source", Format: "markdown", Content: "First revision.",
 		OVURI: "viking://resources/manifold/withdrawn-source.md",
@@ -636,7 +635,6 @@ func TestWithdrawnDocumentRelationsAreRetractedInBrain(t *testing.T) {
 	defer db.Close()
 	graph := &retractingGraphStore{revived: map[string][]string{}, failures: map[string]error{}}
 	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
-	svc.SetBrainPollInterval(time.Millisecond)
 	create := func(id string) model.Document {
 		t.Helper()
 		doc, _, err := db.CreateDocument(t.Context(), model.Document{
@@ -793,7 +791,6 @@ func TestDerivedFactRetractionOutlastsRepeatedConflicts(t *testing.T) {
 	defer db.Close()
 	graph := &slowRetractingGraphStore{calls: map[string]int{}, conflicts: map[string]int{"fact-1": 4, "fact-2": 3}}
 	svc := New(db, fakeDocumentStore{}, graph, "", slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
-	svc.SetBrainPollInterval(time.Millisecond)
 	doc, _, err := db.CreateDocument(t.Context(), model.Document{
 		ID: "conflicting-facts", Title: "Conflicting facts", Format: "markdown", Content: "First revision.",
 		OVURI: "viking://resources/manifold/conflicting-facts.md",

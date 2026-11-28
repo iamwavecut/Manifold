@@ -1,13 +1,19 @@
+// Package upstream defines the stores Manifold derives from its canonical
+// database: the document index and the knowledge graph.
 package upstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/iamwavecut/Manifold/internal/model"
 )
 
+// DocumentStore keeps a path tree of canonical documents and searches their
+// text by meaning. Locators are opaque to callers; folder locators end with
+// a slash.
 type DocumentStore interface {
 	Health(context.Context) error
 	Exists(context.Context, string) (bool, error)
@@ -19,51 +25,17 @@ type DocumentStore interface {
 	Search(context.Context, string, string, int) ([]model.SearchHit, error)
 }
 
+// GraphStore extracts and keeps entities, facts and relations.
 type GraphStore interface {
 	Health(context.Context) error
 	IngestDocument(context.Context, GraphDocument) (GraphIngestResult, error)
 	Search(context.Context, string, int, bool) ([]model.SearchHit, error)
 	IngestFact(context.Context, model.Fact, model.Entity) (string, string, error)
 	IngestRelation(context.Context, model.Relation, model.Entity, model.Entity) (string, error)
-	// RetractFact retracts an upstream fact and returns the upstream IDs of the
-	// facts that the provider made current again because the retracted fact
-	// had superseded them.
+	// RetractFact retracts a fact or relation and returns the IDs of the facts
+	// that became current again because the retracted fact had superseded
+	// them.
 	RetractFact(context.Context, string, string) ([]string, error)
-	GetEntity(context.Context, string) (map[string]any, error)
-}
-
-// AsyncGraphStore extends GraphStore for providers that stage document
-// extraction and expose a later result read. The returned document ID is
-// the durable checkpoint key; it is not a queue operation ID.
-type AsyncGraphStore interface {
-	GraphStore
-	SubmitDocument(context.Context, GraphDocument) (string, error)
-	DocumentResult(context.Context, string) (GraphDocumentState, error)
-	RetryDocument(context.Context, string, string) error
-}
-
-type GraphDocumentStatus string
-
-const (
-	GraphDocumentPending GraphDocumentStatus = "pending"
-	GraphDocumentReady   GraphDocumentStatus = "ready"
-	GraphDocumentPartial GraphDocumentStatus = "partial"
-	GraphDocumentFailed  GraphDocumentStatus = "failed"
-)
-
-type GraphIndexerRun struct {
-	IndexerID string
-	Status    string
-	Reason    string
-	// Refusal is why the model provider refused the run, when it did.
-	Refusal string
-}
-
-type GraphDocumentState struct {
-	Status      GraphDocumentStatus
-	BrainStatus string
-	Runs        []GraphIndexerRun
-	Result      GraphIngestResult
 }
 
 type GraphDocument struct {
@@ -76,6 +48,8 @@ type GraphDocument struct {
 	OccurredAt string
 }
 
+// GraphIngestResult lists what one document revision states. The graph IDs
+// of its records keep their historical field names; they are opaque.
 type GraphIngestResult struct {
 	DocumentID string
 	OriginURI  string
@@ -86,7 +60,6 @@ type GraphIngestResult struct {
 	Entities   []GraphEntity
 	Facts      []GraphFact
 	Relations  []GraphRelation
-	Raw        map[string]any
 }
 
 type GraphEntity struct {
@@ -123,7 +96,10 @@ type DependencyError struct {
 	Status     int
 	Retryable  bool
 	RetryAfter time.Duration
-	Cause      error
+	// Refusal is why the model provider refused the call: "billing", "auth",
+	// "rate_limit", "outage", or "" when it did not refuse.
+	Refusal string
+	Cause   error
 }
 
 func (e *DependencyError) Error() string {
@@ -137,17 +113,12 @@ func (e *DependencyError) Unwrap() error {
 	return e.Cause
 }
 
-// ProviderRefusal reports why the model provider refused an extraction:
-// "billing", "auth", "rate_limit", "outage", or "" when it did not.
-func ProviderRefusal(state GraphDocumentState) string {
-	for _, run := range state.Runs {
-		if run.Status != "failed" {
-			continue
-		}
-		switch run.Refusal {
-		case "billing", "auth", "rate_limit", "outage":
-			return run.Refusal
-		}
+// ProviderRefusal reports why the model provider refused the call behind
+// err: "billing", "auth", "rate_limit", "outage", or "" when it did not.
+func ProviderRefusal(err error) string {
+	var dependency *DependencyError
+	if errors.As(err, &dependency) {
+		return dependency.Refusal
 	}
 	return ""
 }

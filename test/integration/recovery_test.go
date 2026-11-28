@@ -21,10 +21,7 @@ func TestRecoverDependencyFailure(t *testing.T) {
 	c := newClient(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
-	jobID := string(data)
-	c.expectStatus(t, ctx, http.MethodPost, "/api/v1/jobs/"+jobID+"/retry", nil,
-		"integration-dependency-retry", "", http.StatusAccepted)
-	waitForJob(t, ctx, c, jobID, "ready")
+	retryUnlessRecovered(t, ctx, c, string(data), "integration-dependency-retry")
 	document := c.expectStatus(t, ctx, http.MethodGet, "/api/v1/documents/dependency-failure", nil,
 		"", "", http.StatusOK)
 	if document.Body["status"] != "ready" || document.Body["revision"] != "r1" {
